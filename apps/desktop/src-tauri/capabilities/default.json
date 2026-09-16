@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Local desktop window. File authority is provided exclusively by Rust commands.",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-start-dragging"]
+  "permissions": ["core:default", "core:window:allow-start-dragging", "updater:default", "process:allow-restart"]
 }

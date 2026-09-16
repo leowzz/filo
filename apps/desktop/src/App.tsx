@@ -40,10 +40,13 @@ import { AppHeader } from "./AppHeader";
 import { FileBrowser, type EntrySort } from "./FileBrowser";
 import { OverviewPage } from "./OverviewPage";
 import { SettingsPage } from "./SettingsPage";
+import { useAppUpdater } from "./useAppUpdater";
+import { UpdateProgressDialog } from "./AppUpdateCard";
 import { Sidebar } from "./Sidebar";
 import { StorageActionDialog, type Dialog } from "./StorageActionDialog";
 
 export default function App() {
+  const updater = useAppUpdater();
   const state = useBrowser();
   const client = useQueryClient();
   const volumesQuery = useQuery({
@@ -98,7 +101,7 @@ export default function App() {
     version_id: null,
   };
   const [search, setSearch] = useState("");
-  const [preview, setPreview] = useState<Entry | null>(null);
+  const [preview, setPreview] = useState<Entry[] | null>(null);
   const [contentSearch, setContentSearch] = useState(false);
   const [s3Manager, setS3Manager] = useState<{
     locator: Locator;
@@ -215,15 +218,20 @@ export default function App() {
     setSelection(entry.locator.logical_path);
     if (!state.showDetails) state.toggleDetails();
   }
-  const [uploadRequest, setUploadRequest] = useState<Locator | null>(null);
+  const [uploadRequest, setUploadRequest] = useState<{
+    remote: Locator;
+    paths?: string[];
+  } | null>(null);
   const fileTransfer = useMutation({
     mutationFn: async ({
       remote,
       upload,
+      paths,
       conflictPolicy = "reject",
     }: {
       remote: Locator;
       upload: boolean;
+      paths?: string[];
       conflictPolicy?: ConflictPolicy;
     }) => {
       const id = ++uploadSequence.current;
@@ -239,17 +247,15 @@ export default function App() {
           );
         }
       };
-      const batch = await api.transferLocalFile(
-        remote,
-        upload,
-        (job) => {
-          revealUpload(job);
-          client.setQueryData<TransferJob[]>(["transfers"], (current) =>
-            updateTransfer(current, job),
-          );
-        },
-        conflictPolicy,
-      );
+      const onProgress = (job: TransferJob) => {
+        revealUpload(job);
+        client.setQueryData<TransferJob[]>(["transfers"], (current) =>
+          updateTransfer(current, job),
+        );
+      };
+      const batch = paths
+        ? await api.uploadDroppedFiles(remote, paths, onProgress, conflictPolicy)
+        : await api.transferLocalFile(remote, upload, onProgress, conflictPolicy);
       // Fast tasks may finish before their progress channel is delivered.
       for (const job of batch?.jobs ?? []) {
         revealUpload(job);
@@ -306,7 +312,9 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      {updater.busy && <UpdateProgressDialog updater={updater} />}
       <Sidebar
+        version={updater.version}
         volumes={volumes}
         volume={volume}
         pendingTransfers={pendingTransfers}
@@ -339,10 +347,10 @@ export default function App() {
           setDeleteDialog={setDeleteDialog}
           onFileTransfer={(request) =>
             request.upload
-              ? setUploadRequest(request.remote)
+              ? setUploadRequest({ remote: request.remote })
               : fileTransfer.mutate({ ...request, conflictPolicy: "overwrite" })
           }
-          onPreview={() => selected && setPreview(selected)}
+          onPreview={() => setPreview(selectedEntries)}
           onContentSearch={() => setContentSearch(true)}
           onManage={(object) => setS3Manager({ locator: object && selected ? selected.locator : parent, object })}
           onRefresh={() => void entriesQuery.refetch()}
@@ -359,6 +367,12 @@ export default function App() {
           <div className="error-banner" role="alert">
             {errorMessage(volumesQuery.error)}
             <button onClick={() => void volumesQuery.refetch()}>重试</button>
+          </div>
+        )}
+        {updater.availableVersion && state.page !== "settings" && (
+          <div className="notice" role="status">
+            <Info size={16} />Filo {updater.availableVersion} 已可用
+            <button onClick={() => state.setPage("settings")}>查看更新</button>
           </div>
         )}
         {!desktop && (
@@ -406,6 +420,13 @@ export default function App() {
               setSort={setSort}
               selection={selection}
               selectedEntries={selectedEntries}
+              onPreview={() => setPreview(selectedEntries)}
+              uploadPending={fileTransfer.isPending}
+              onFileDrop={(paths) => {
+                setMenu(null);
+                setUploadRequest({ remote: parent, paths });
+              }}
+              onDropError={setNotice}
               menu={menu}
               setMenu={setMenu}
               openEntry={openEntry}
@@ -416,18 +437,18 @@ export default function App() {
         )}
 
         {state.page === "transfers" && <TransfersPage volumes={volumes} />}
-        {state.page === "settings" && <SettingsPage />}
+        {state.page === "settings" && <SettingsPage updater={updater} />}
       </main>
 
       {preview && (
-        <PreviewDialog entry={preview} onClose={() => setPreview(null)} />
+        <PreviewDialog entries={preview} onClose={() => setPreview(null)} />
       )}
       {contentSearch && volume && (
         <ContentSearchDialog
           parent={parent}
           showHidden={state.showHidden}
           onClose={() => setContentSearch(false)}
-          onPreview={setPreview}
+          onPreview={(entry) => setPreview([entry])}
         />
       )}
       {s3Manager && volume && (
@@ -446,7 +467,7 @@ export default function App() {
           onClose={closeEntryMenu}
           onOpen={() => openEntry(menuEntry)}
           onDetails={() => showDetails(menuEntry)}
-          onPreview={() => setPreview(menuEntry)}
+          onPreview={() => setPreview(selectedEntries)}
           onManage={() =>
             setS3Manager({ locator: menuEntry.locator, object: true })
           }
@@ -473,10 +494,13 @@ export default function App() {
       )}
       {uploadRequest && (
         <UploadDialog
+          paths={uploadRequest.paths}
+          destination={`${volumes.find((item) => item.id === uploadRequest.remote.volume_id)?.name ?? ""}/${uploadRequest.remote.logical_path}`}
           onClose={() => setUploadRequest(null)}
           onStart={(conflictPolicy) => {
             fileTransfer.mutate({
-              remote: uploadRequest,
+              remote: uploadRequest.remote,
+              paths: uploadRequest.paths,
               upload: true,
               conflictPolicy,
             });

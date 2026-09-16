@@ -8,6 +8,27 @@
 .preview-content {
   min-width: 0;
 }
+.selection-preview-stats {
+  display: grid;
+  gap: 16px;
+  margin: 20px 0;
+}
+.selection-preview-stats > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+.selection-preview-stats dt {
+  color: #777;
+  font-size: 13px;
+}
+.selection-preview-stats dd {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
 .image-preview {
   display: block;
   max-width: 100%;

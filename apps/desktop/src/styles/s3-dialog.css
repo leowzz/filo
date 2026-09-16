@@ -58,6 +58,70 @@
   color: #747474;
   overflow-wrap: anywhere;
 }
+.s3-test-success {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 10px;
+  color: #238344;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.s3-test-success > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.s3-test-confetti {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: min(260px, 100%);
+  height: 110px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.s3-test-confetti > i {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  width: 5px;
+  height: 8px;
+  border-radius: 1px;
+  background: #34a853;
+  opacity: 0;
+  animation: s3-test-confetti 1000ms var(--confetti-delay) ease-out both;
+}
+.s3-test-confetti > i:nth-child(3n + 1) {
+  background: #e6ae32;
+}
+.s3-test-confetti > i:nth-child(3n + 2) {
+  background: #5b9bea;
+}
+@keyframes s3-test-confetti {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) rotate(0deg) scale(0.5);
+  }
+  15% {
+    opacity: 1;
+  }
+  55% {
+    opacity: 1;
+    transform: translate(calc(var(--confetti-x) * 0.7), var(--confetti-rise))
+      rotate(calc(var(--confetti-spin) * 0.6));
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--confetti-x), 10px) rotate(var(--confetti-spin));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .s3-test-confetti {
+    display: none;
+  }
+}
 .s3-advanced {
   margin-top: 12px;
   font-size: 12px;

@@ -1,8 +1,10 @@
-import { ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { SlidersHorizontal } from "lucide-react";
 import { useBrowser } from "./store";
 import { TransferSettingsCard } from "./TransferSettingsCard";
+import { AppUpdateCard } from "./AppUpdateCard";
+import type { AppUpdater } from "./useAppUpdater";
 
-export function SettingsPage() {
+export function SettingsPage({ updater }: { updater: AppUpdater }) {
   const state = useBrowser();
   return (
     <div className="page-scroll simple-page">
@@ -36,21 +38,7 @@ export function SettingsPage() {
           />
         </label>
       </section>
-      <section className="settings-card">
-        <h2>
-          <ShieldCheck size={19} />
-          关于这个版本
-        </h2>
-        <p>Filo 0.1.0 · LocalFS + S3</p>
-        <p>
-          存储连接保存在设备上的 SQLite
-          数据库。只能访问通过系统选择器添加的目录，不跟随符号链接；删除操作需要确认。
-        </p>
-        <p>
-          支持本地与 S3
-          之间的单文件上传、下载、复制和移动；暂不提供文件预览和目录递归传输。
-        </p>
-      </section>
+      <AppUpdateCard updater={updater} />
     </div>
   );
 }

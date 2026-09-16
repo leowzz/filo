@@ -11,6 +11,7 @@ import { useBrowser } from "./store";
 import { type Volume } from "./types";
 
 export function Sidebar({
+  version,
   volumes,
   volume,
   pendingTransfers,
@@ -18,6 +19,7 @@ export function Sidebar({
   openVolume,
   onLocationMenu,
 }: {
+  version: string;
   volumes: Volume[];
   volume?: Volume;
   pendingTransfers: number;
@@ -114,7 +116,7 @@ export function Sidebar({
           onClick={() => state.setPage("settings")}
         >
           <Settings2 size={17} />
-          设置<span className="muted">v0.1.0</span>
+          设置<span className="muted">v{version}</span>
         </button>
       </div>
     </aside>

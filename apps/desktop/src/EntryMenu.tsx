@@ -137,18 +137,18 @@ export function EntryMenu({
         <Info size={14} />
         显示简介
       </button>
-      {entries.length === 1 && entry.kind === "file" && (
-        <>
-          <button role="menuitem" onClick={() => perform(onPreview)}>
-            预览
-          </button>
-          {volume.root.type === "s3" && (
-            <button role="menuitem" onClick={() => perform(onManage)}>
-              对象管理…
-            </button>
-          )}
-        </>
+      {(entries.length > 1 || entry.kind === "file") && (
+        <button role="menuitem" onClick={() => perform(onPreview)}>
+          预览
+        </button>
       )}
+      {entries.length === 1 &&
+        entry.kind === "file" &&
+        volume.root.type === "s3" && (
+          <button role="menuitem" onClick={() => perform(onManage)}>
+            对象管理…
+          </button>
+        )}
       {canOperate && (
         <>
           <div className="menu-separator" />

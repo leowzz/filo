@@ -6,6 +6,8 @@ use storage_repository::Repository;
 use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
+mod dropped_files;
+
 #[tauri::command]
 async fn get_transfer_settings(
     service: State<'_, StorageService>,
@@ -336,7 +338,24 @@ fn main() {
         )
         .init();
     let result = tauri::Builder::default()
+        .manage(dropped_files::DroppedFiles::default())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                window
+                    .state::<dropped_files::DroppedFiles>()
+                    .record(window.label(), paths);
+            }
+        })
+        .on_webview_event(|webview, event| {
+            if let tauri::WebviewEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                webview
+                    .state::<dropped_files::DroppedFiles>()
+                    .record(webview.window().label(), paths);
+            }
+        })
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let data = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data)?;
@@ -357,6 +376,7 @@ fn main() {
             save_s3_storage,
             test_s3_connection,
             transfer_local_file,
+            dropped_files::upload_dropped_files,
             list_connections,
             list_volumes,
             create_local_storage,

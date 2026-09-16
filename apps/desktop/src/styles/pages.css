@@ -333,6 +333,19 @@
   background: #fff;
   margin-bottom: 20px;
 }
+.update-progress {
+  margin: auto;
+  padding: 24px;
+  width: min(420px, calc(100vw - 40px));
+  border: 1px solid #dedede;
+  border-radius: 8px;
+  background: #fff;
+  color: #383838;
+}
+.update-progress::backdrop { background: #0005; }
+.update-progress h2 { font-size: 16px; }
+.update-progress p { margin: 12px 0; font-size: 13px; }
+.update-progress progress { width: 100%; accent-color: var(--accent); }
 .settings-card h2 {
   display: flex;
   align-items: center;

@@ -8,6 +8,7 @@
 
 ```bash
 pnpm install
+cp .env.example .env  # 首次检出；已有 .env 时保留现有配置
 make dev
 ```
 
@@ -66,13 +67,26 @@ macOS 配置数据库位于 `~/Library/Application Support/dev.filo.desktop/filo
 make check      # TypeScript、ESLint、Rust fmt / Clippy
 make test       # Rust 单元与集成测试
 pnpm build     # 前端生产构建
-make build     # Tauri app bundle
+make build     # 当前平台安装包与 SHA-256；不修改版本
 make dev       # 本地开发；macOS 自动固定签名，保留前端热更新和 Rust 重编译
+make version-check # 校验 .env、.env.example 与所有项目版本
+make test-release  # 发布脚本回归（临时仓库，不创建真实项目 tag）
+make release V=v0.1.1 # 同步版本、创建本地版本提交和 annotated tag；不推送
 ```
 
 本地开发统一使用 `make dev`（或 `pnpm dev`）。macOS 启动时从 `APPLE_SIGNING_IDENTITY` 环境变量、项目 `.env` 或 `~/.config/filo/signing/identity.txt` 读取已有证书；显式环境变量优先，值为空时回退到 `identity.txt`。每次 Cargo 编译成功后，将开发可执行文件复制到 `target/debug/dev-bundle/Filo.app`，固定签名并校验后启动；Rust 修改会自动重复这个流程，前端继续连接 Vite 热更新。Cargo 原始编译产物不被签名修改。证书缺失、无效或签名失败时停止，不退回临时签名；其他平台沿用普通 Tauri 开发流程。
 
-初次 Rust 构建需要下载并编译桌面依赖。macOS app bundle 位于 `target/release/bundle/macos/Filo.app`；尚未配置发行签名或公证。
+初次 Rust 构建需要下载并编译桌面依赖。macOS app bundle 位于 `target/release/bundle/macos/Filo.app`，DMG 位于相邻的 `dmg/`；Windows 安装包位于 `target/release/bundle/nsis/`。
+
+### 版本、自动构建与更新
+
+`.env` 的 `version=vX.Y.Z` 是本机版本来源，允许保留其他配置且不提交；新检出与 CI 从 `.env.example` 重建。`make release` 默认递增 patch，`V` 可显式指定版本，也支持 `-alpha.N`、`-beta.N`、`-rc.N`。发布前要求工作区干净，构建只校验版本。pnpm 锁文件不存储 workspace 自身版本，Cargo 锁文件仅同步本项目 packages。
+
+推送版本提交和对应 tag 后，GitHub Actions 会校验、测试并构建 macOS Universal（Apple Silicon + Intel）和 Windows x64 安装包。只有两端都成功且所有产物完整、SHA-256 匹配时才公开 Release。预发布不进入稳定更新通道。
+
+正式构建启动后自动检查最新正式版；「设置 → 软件更新」可手动检查及安装。安装前须完成或取消传输，安装后重启。开发模式与浏览器预览不请求更新。首次正式 Release 尚未发布时，检查会提示暂时无法检查更新。
+
+更新包使用项目独立密钥签名；这不代表已配置 Apple Developer ID、公证或 Windows Authenticode。Apple 配置为空时 CI 使用 ad-hoc 签名，下载后可能被 macOS 拦截；Windows 未配置发布者签名。版本规则、Secrets、产物列表、发布重试与验证范围见 [发布指南](docs/releasing.md)。
 
 ### macOS 文件夹授权
 

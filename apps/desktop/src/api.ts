@@ -53,6 +53,24 @@ export const api = {
       },
     );
   },
+  uploadDroppedFiles: (
+    remote: Locator,
+    paths: string[],
+    onProgress: (job: TransferJob) => void,
+    conflictPolicy: ConflictPolicy,
+  ) => {
+    const channel = new Channel<TransferJob>();
+    channel.onmessage = onProgress;
+    return invoke<{ jobs: TransferJob[]; failures: string[] }>(
+      "upload_dropped_files",
+      {
+        remote,
+        paths,
+        conflictPolicy,
+        onProgress: channel,
+      },
+    );
+  },
   volumes: () =>
     desktop ? invoke<Volume[]>("list_volumes") : Promise.resolve([]),
   addLocal: (readOnly: boolean) =>

@@ -233,9 +233,9 @@ export function AppHeader({
           <div className="toolbar-actions">
             <button
               className="icon-button"
-              title="预览"
+              title="预览（空格）"
               aria-label="预览"
-              disabled={selected?.kind !== "file"}
+              disabled={selectedEntries.length < 2 && selected?.kind !== "file"}
               onClick={onPreview}
             >
               <Eye size={19} />

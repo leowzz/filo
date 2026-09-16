@@ -1,5 +1,5 @@
-import { ChevronDown, Link2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { CheckCircle2, ChevronDown, Link2 } from "lucide-react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "./api";
 import { Modal } from "./components";
@@ -136,6 +136,7 @@ export function S3Form({
   };
   const test = useMutation({
     mutationFn: () => api.testS3(volume?.id ?? null, input),
+    onMutate: () => setTested(false),
     onSuccess: () => setTested(true),
   });
   const save = useMutation({
@@ -424,9 +425,25 @@ export function S3Form({
         </p>
       )}
       {tested && (
-        <p className="field-help" role="status">
-          连接成功，可以访问所选 Bucket / Prefix。
-        </p>
+        <div className="s3-test-success" role="status">
+          <CheckCircle2 size={16} aria-hidden="true" />
+          <span>连接成功，可以访问所选 Bucket / Prefix。</span>
+          <span className="s3-test-confetti" aria-hidden="true">
+            {Array.from({ length: 18 }, (_, index) => (
+              <i
+                key={index}
+                style={
+                  {
+                    "--confetti-x": `${((index * 47) % 221) - 110}px`,
+                    "--confetti-rise": `${-35 - ((index * 19) % 50)}px`,
+                    "--confetti-spin": `${index % 2 ? 240 : -240}deg`,
+                    "--confetti-delay": `${(index % 5) * 35}ms`,
+                  } as CSSProperties
+                }
+              />
+            ))}
+          </span>
+        </div>
       )}
       <div className="modal-footer">
         <button

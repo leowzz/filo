@@ -189,7 +189,7 @@ impl StorageService {
         } else {
             None
         };
-        // Use a new keychain item so a database failure never invalidates the old connection.
+        // Use a new credential reference so a database failure never invalidates the old connection.
         let reference = Uuid::new_v4().to_string();
         self.store_credentials(reference.clone(), credentials)
             .await?;
@@ -233,7 +233,7 @@ impl StorageService {
         }
     }
 
-    /// `path` is supplied exclusively by a native file picker in the Tauri command.
+    /// `path` is authorized by a native file picker or drop event in the Tauri command.
     /// Its authorization expires with this task; it is never added as a saved location.
     pub async fn transfer_selected_file(
         &self,

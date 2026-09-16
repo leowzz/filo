@@ -33,6 +33,23 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app"]
+    "targets": [
+      "app"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVCMUJGRUVENTNGQjAzRUIKUldUckEvdFQ3ZjRiV3h5K1R4VWxmNjhmWE5DMHROYkdLWUhScDBWT2JMVFNwMzdGQytlc25YUzgK",
+      "endpoints": [
+        "https://github.com/leowzz/filo/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

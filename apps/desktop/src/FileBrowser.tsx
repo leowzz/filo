@@ -6,6 +6,7 @@ import {
   HardDrive,
   LoaderCircle,
   MoreHorizontal,
+  Upload,
 } from "lucide-react";
 import { Thumbnail } from "./PreviewDialog";
 import { errorMessage } from "./api";
@@ -13,6 +14,7 @@ import { formatDate, formatSize, typeName } from "./components";
 import { useBrowser } from "./store";
 import { type Entry, type Volume } from "./types";
 import { useFileSelection } from "./useFileSelection";
+import { useExternalFileDrop } from "./useExternalFileDrop";
 
 import { useEffect } from "react";
 import type { useDirectoryQuery } from "./useDirectoryQuery";
@@ -31,6 +33,10 @@ export function FileBrowser({
   setSort,
   selection,
   selectedEntries,
+  onPreview,
+  uploadPending,
+  onFileDrop,
+  onDropError,
   menu,
   setMenu,
   openEntry,
@@ -46,6 +52,10 @@ export function FileBrowser({
   setSort: (sort: EntrySort) => void;
   selection: ReturnType<typeof useFileSelection>;
   selectedEntries: Entry[];
+  onPreview: () => void;
+  uploadPending: boolean;
+  onFileDrop: (paths: string[]) => void;
+  onDropError: (message: string) => void;
   menu: string | null;
   setMenu: (path: string | null) => void;
   openEntry: (entry: Entry) => void;
@@ -59,6 +69,13 @@ export function FileBrowser({
 }) {
   const state = useBrowser();
   const { selectedPaths } = selection;
+  const dropMessage = useExternalFileDrop({
+    areaRef: selection.areaRef,
+    readOnly: volume.read_only,
+    busy: uploadPending,
+    onDrop: onFileDrop,
+    onError: onDropError,
+  });
   const rows = useVirtualRows(selection.areaRef, entries.length);
   useEffect(() => {
     if (
@@ -81,7 +98,7 @@ export function FileBrowser({
     <>
       <div className="browser-body">
         <div
-          className="file-area"
+          className={`file-area${dropMessage ? " file-drop-active" : ""}`}
           ref={selection.areaRef}
           tabIndex={-1}
           onPointerDown={(event) => {
@@ -89,7 +106,27 @@ export function FileBrowser({
             if (event.defaultPrevented) setMenu(null);
           }}
           onClickCapture={selection.onClickCapture}
-          onKeyDown={selection.onKeyDown}
+          onKeyDown={(event) => {
+            if (
+              event.key === " " &&
+              !event.altKey &&
+              !event.ctrlKey &&
+              !event.metaKey &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing &&
+              !event.defaultPrevented &&
+              event.target instanceof HTMLElement &&
+              (event.target === event.currentTarget ||
+                event.target.matches("[data-entry-path]")) &&
+              (selectedEntries.length > 1 ||
+                selectedEntries[0]?.kind === "file")
+            ) {
+              event.preventDefault();
+              if (!event.repeat) onPreview();
+              return;
+            }
+            selection.onKeyDown(event);
+          }}
         >
           {entriesQuery.isPending ? (
             <div className="empty-state">
@@ -270,6 +307,12 @@ export function FileBrowser({
             />
           )}
         </div>
+        {dropMessage && (
+          <div className="file-drop-overlay" role="status">
+            <Upload size={28} aria-hidden="true" />
+            <strong>{dropMessage}</strong>
+          </div>
+        )}
         {state.showDetails && (
           <DetailsPanel
             volume={volume}

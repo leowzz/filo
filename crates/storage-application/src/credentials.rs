@@ -1,6 +1,9 @@
 use storage_domain::*;
 
-/// Injectable so integration tests never touch a user's keychain.
+#[cfg(any(target_os = "macos", test))]
+mod vault;
+
+/// Injectable so ordinary tests never touch a user's keychain.
 pub trait CredentialStore: Send + Sync {
     fn get(&self, reference: &str) -> StorageResult<S3Credentials>;
     fn set(&self, reference: &str, credentials: &S3Credentials) -> StorageResult<()>;
@@ -14,6 +17,20 @@ fn error() -> StorageError {
         "无法访问系统凭据库，请解锁钥匙串或重新输入 S3 凭据",
     )
 }
+#[cfg(target_os = "macos")]
+impl CredentialStore for SystemCredentialStore {
+    fn get(&self, reference: &str) -> StorageResult<S3Credentials> {
+        vault::system().get(reference)
+    }
+    fn set(&self, reference: &str, credentials: &S3Credentials) -> StorageResult<()> {
+        vault::system().set(reference, credentials)
+    }
+    fn delete(&self, reference: &str) -> StorageResult<()> {
+        vault::system().delete(reference)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
 impl CredentialStore for SystemCredentialStore {
     fn get(&self, reference: &str) -> StorageResult<S3Credentials> {
         let value = keyring::Entry::new("dev.filo.desktop.s3", reference)
