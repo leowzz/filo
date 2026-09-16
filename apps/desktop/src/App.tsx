@@ -58,6 +58,7 @@ import { TransferDialog } from "./TransferDialog";
 import { TransfersPage } from "./TransfersPage";
 import { DeleteEntryDialog } from "./DeleteEntryDialog";
 import { EntryMenu } from "./EntryMenu";
+import { useFileSelection } from "./useFileSelection";
 
 type Dialog =
   { type: "add" } | { type: "folder" } | { type: "rename"; entry: Entry };
@@ -91,7 +92,6 @@ export default function App() {
     queryFn: () => api.entries(parent),
     enabled: !!volume && state.page === "browser",
   });
-  const [selection, setSelection] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [name, setName] = useState("");
@@ -132,9 +132,23 @@ export default function App() {
         return (b.modified_at ?? "").localeCompare(a.modified_at ?? "");
       return a.name.localeCompare(b.name, "zh-CN", { numeric: true });
     });
-  const selected = entries.find(
-    (entry) => entry.locator.logical_path === selection,
+  const selection = useFileSelection(
+    JSON.stringify([
+      state.page,
+      parent.volume_id,
+      path,
+      search,
+      state.showHidden,
+    ]),
+    entries.map((entry) => entry.locator.logical_path),
   );
+  const { setSelection, selectedPaths } = selection;
+  const selectedEntries = entries.filter((entry) =>
+    selectedPaths.has(entry.locator.logical_path),
+  );
+  const selected =
+    selectedEntries.length === 1 ? selectedEntries[0] : undefined;
+  const multipleSelected = selectedEntries.length > 1;
   const mutation = useMutation({
     mutationFn: async () => {
       if (dialog?.type === "add") return api.addLocal(readOnly);
@@ -645,7 +659,17 @@ export default function App() {
               </div>
             )}
             <div className="browser-body">
-              <div className="file-area">
+              <div
+                className="file-area"
+                ref={selection.areaRef}
+                tabIndex={-1}
+                onPointerDown={(event) => {
+                  selection.onPointerDown(event);
+                  if (event.defaultPrevented) setMenu(null);
+                }}
+                onClickCapture={selection.onClickCapture}
+                onKeyDown={selection.onKeyDown}
+              >
                 {entriesQuery.isPending ? (
                   <div className="empty-state">
                     <LoaderCircle className="spin" size={27} />
@@ -688,11 +712,18 @@ export default function App() {
                       {entries.map((entry) => (
                         <tr
                           key={entry.locator.logical_path}
-                          className={selected === entry ? "selected" : ""}
+                          data-entry-path={entry.locator.logical_path}
+                          className={
+                            selectedPaths.has(entry.locator.logical_path)
+                              ? "selected"
+                              : ""
+                          }
                           tabIndex={0}
-                          aria-selected={selected === entry}
-                          onClick={() => {
-                            setSelection(entry.locator.logical_path);
+                          aria-selected={selectedPaths.has(
+                            entry.locator.logical_path,
+                          )}
+                          onClick={(event) => {
+                            selection.select(entry.locator.logical_path, event);
                             setMenu(null);
                           }}
                           onDoubleClick={() => openEntry(entry)}
@@ -780,23 +811,49 @@ export default function App() {
                       </p>
                     </div>
                   )}
+                {selection.rectangle && (
+                  <div
+                    className="selection-rectangle"
+                    aria-hidden="true"
+                    style={{
+                      left: selection.rectangle.x,
+                      top: selection.rectangle.y,
+                      width: selection.rectangle.width,
+                      height: selection.rectangle.height,
+                    }}
+                  />
+                )}
               </div>
               {state.showDetails && (
                 <aside className="details-panel">
                   <div className="details-heading">
-                    {selected ? "项目详情" : "存储详情"}
+                    {multipleSelected
+                      ? "所选项目"
+                      : selected
+                        ? "项目详情"
+                        : "存储详情"}
                     <Info size={15} />
                   </div>
                   <div className={`detail-icon ${selected ? "" : "drive"}`}>
-                    {selected ? (
+                    {multipleSelected ? (
+                      <Copy size={48} strokeWidth={1.2} />
+                    ) : selected ? (
                       <EntryIcon entry={selected} size={54} />
                     ) : (
                       <HardDrive size={48} strokeWidth={1.2} />
                     )}
                   </div>
-                  <h3>{selected?.name ?? volume.name}</h3>
+                  <h3>
+                    {multipleSelected
+                      ? `已选择 ${selectedEntries.length} 项`
+                      : (selected?.name ?? volume.name)}
+                  </h3>
                   <span className="pill">
-                    {selected ? typeName(selected) : "本地文件系统"}
+                    {multipleSelected
+                      ? "多个项目"
+                      : selected
+                        ? typeName(selected)
+                        : "本地文件系统"}
                   </span>
                   <dl>
                     <dt>位置</dt>
@@ -818,7 +875,11 @@ export default function App() {
                         <dt>当前目录</dt>
                         <dd>{path || "/"}</dd>
                         <dt>项目数</dt>
-                        <dd>{entriesQuery.data?.length ?? "—"}</dd>
+                        <dd>
+                          {multipleSelected
+                            ? selectedEntries.length
+                            : (entriesQuery.data?.length ?? "—")}
+                        </dd>
                       </>
                     )}
                     <dt>访问权限</dt>
@@ -865,7 +926,10 @@ export default function App() {
             </nav>
             <footer className="statusbar">
               <span>
-                {entries.length} 个项目{selected ? " · 已选择 1 项" : ""}
+                {entries.length} 个项目
+                {selectedEntries.length > 0
+                  ? ` · 已选择 ${selectedEntries.length} 项`
+                  : ""}
                 {!state.showHidden &&
                 (entriesQuery.data ?? []).some((entry) =>
                   entry.name.startsWith("."),

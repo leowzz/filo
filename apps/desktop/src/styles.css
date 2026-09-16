@@ -292,10 +292,20 @@ svg {
   min-height: 0;
 }
 .file-area {
+  position: relative;
   min-width: 0;
   flex: 1;
   overflow: auto;
   padding: 0 10px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.selection-rectangle {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  border: 1px solid var(--selection);
+  background: #007aff26;
 }
 .file-table {
   width: 100%;
