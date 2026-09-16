@@ -28,6 +28,11 @@ coverage/
 !.env.*.sample
 !.env.*.template
 
+# Local signing certificate backups and their passwords
+/.local/signing/
+*.p12
+*.pfx
+
 # Local application database, including SQLite sidecar files
 # Restrict to Filo's runtime filename so test fixtures can still be committed.
 filo.sqlite

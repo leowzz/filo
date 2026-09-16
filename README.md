@@ -58,10 +58,10 @@ make check      # TypeScript、ESLint、Rust fmt / Clippy
 make test       # Rust 单元与集成测试
 pnpm build     # 前端生产构建
 make build     # Tauri app bundle
-make demo      # 本机演示包；macOS 要求 .env 中配置固定签名
+make demo      # 本机演示包；读取 ~/.config/filo/signing/identity.txt
 ```
 
-快速生成本机演示包：复制 `.env.example` 为 `.env`，在 macOS 上运行 `security find-identity -v -p codesigning`，将选定证书的名称或指纹填入 `APPLE_SIGNING_IDENTITY`，然后执行 `make demo`，打开 `target/debug/bundle/macos/Filo.app`。环境变量优先于 `.env`；证书不存在或签名失败时构建失败，不退回临时签名。`.env` 不提交，其他机器需选择自己的证书。此入口生成 macOS `.app`，不用于其他平台分发。
+快速生成本机演示包：在 macOS 上运行 `security find-identity -v -p codesigning`，将选定证书的名称或指纹写入 `~/.config/filo/signing/identity.txt`，然后执行 `make demo`，打开 `target/debug/bundle/macos/Filo.app`。也可通过 `.env` 或环境变量中的 `APPLE_SIGNING_IDENTITY` 覆盖身份；环境变量优先于 `.env`，值为空时读取 `identity.txt`。证书不存在或签名失败时构建失败，不退回临时签名。此入口生成 macOS `.app`，不用于其他平台分发。
 
 初次 Rust 构建需要下载并编译桌面依赖。macOS app bundle 位于 `target/release/bundle/macos/Filo.app`；尚未配置发行签名或公证。
 
@@ -70,3 +70,7 @@ make demo      # 本机演示包；macOS 要求 .env 中配置固定签名
 下载、桌面、文稿等受保护目录首次访问时由 macOS 请求授权。未配置证书的演示包只有临时签名，代码重建会改变其签名身份，系统可能再次请求授权。日常查看效果使用 `make demo` 并保持同一个签名证书和应用标识；切换签名后的首次访问仍可能需要授权。本地自签证书仅用于本机调试，不代表完成发行签名或公证。依据：[Apple 对签名身份的说明](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements)、[Tauri 签名配置](https://v2.tauri.app/distribute/sign/macos/)。
 
 前端开发使用 `make dev` 的热更新；该模式的 Rust 重建仍可能改变临时签名。目录列表与复制/移动目标目录不再因切回窗口或网络重连自动读取，外部修改文件后请点击刷新；应用内操作完成后仍会刷新列表。拒绝访问后不会自动重试，可授权后手动重试。
+
+本机签名文件统一保存在项目外的 `~/.config/filo/signing/`，采用与 Dayflow 相同的目录和命名方式：`certificate.p12` 包含加密的证书与私钥，`password.txt` 保存导出密码，`identity.txt` 保存构建使用的证书名称或指纹。目录权限为 `700`，文件权限为 `600`。迁移备份时需保留证书与密码，向他人提供证书文件时不要同时提供密码。
+
+迁移到另一台 Mac 时，将签名目录放到新用户的 `~/.config/filo/signing/`，在「钥匙串访问」中导入 `certificate.p12` 并输入导出密码。`make demo` 读取 `identity.txt` 并使用钥匙串签名，不直接读取 `.p12`；迁移保留同一身份，不删除原钥匙串中的证书。不要重新生成证书代替迁移，否则签名身份会变化，新机器上的文件夹访问权限仍需重新授权。

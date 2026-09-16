@@ -121,3 +121,5 @@
 验证：TypeScript、ESLint、前端生产构建与签名演示包构建通过；`codesign --verify --deep --strict` 通过。在临时副本修改 Info.plist 并重新签名后，代码哈希发生变化，designated requirement 保持一致，严格签名验证通过；副本已清理。系统实际授权是否跨后续构建保留仍需用户授权后的使用验证，没有替用户点击系统授权按钮。
 
 依据：[Apple TN3127](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements)、[Tauri macOS 签名](https://v2.tauri.app/distribute/sign/macos/)。
+
+签名文件后续统一迁移至 `~/.config/filo/signing/`，沿用 Dayflow 命名：`certificate.p12`、`password.txt`、`identity.txt`。迁移前后证书与密码文件内容一致，旧项目目录中的副本已移走。`make demo` 在 `APPLE_SIGNING_IDENTITY` 未设置或为空时读取该目录的 `identity.txt`；签名仍使用钥匙串中的原证书。
