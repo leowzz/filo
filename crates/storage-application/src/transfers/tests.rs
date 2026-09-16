@@ -44,6 +44,131 @@ struct GatedSource {
     gate: Arc<tokio::sync::Semaphore>,
 }
 
+#[tokio::test]
+async fn selected_folder_upload_preserves_tree_and_applies_conflict_policies() {
+    let fixture = Fixture::new().await;
+    let external = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(external.path().join("folder/nested/empty")).unwrap();
+    std::fs::write(external.path().join("folder/nested/file"), b"content").unwrap();
+    std::fs::write(external.path().join("folder/.hidden"), b"hidden").unwrap();
+    std::fs::write(external.path().join("private"), b"private").unwrap();
+    std::fs::create_dir(fixture.destination.path().join("uploads")).unwrap();
+    let remote = StorageLocator {
+        volume_id: fixture.destination_id,
+        logical_path: "uploads".into(),
+        version_id: None,
+    };
+    let target = fixture.destination.path().join("uploads/folder");
+    for (policy, state) in [
+        (ConflictPolicy::Reject, TransferState::Completed),
+        (ConflictPolicy::Reject, TransferState::Failed),
+        (ConflictPolicy::Skip, TransferState::Skipped),
+        (ConflictPolicy::Rename, TransferState::Completed),
+        (ConflictPolicy::Overwrite, TransferState::Completed),
+    ] {
+        let job = fixture
+            .service
+            .transfer_selected_file_with_policy(
+                external.path().join("folder"),
+                remote.clone(),
+                true,
+                policy,
+                Arc::new(|_| {}),
+            )
+            .await
+            .unwrap();
+        let result = fixture.result(job.id).await;
+        assert_eq!(result.state, state, "{:?}", result.error_message);
+        assert!(!fixture
+            .service
+            .temporary_backends
+            .lock()
+            .await
+            .contains_key(&job.source.volume_id));
+        if state == TransferState::Completed {
+            assert_eq!(result.bytes_total, Some(13));
+            assert_eq!(result.bytes_transferred, 13);
+            let uploaded = fixture
+                .destination
+                .path()
+                .join(&result.destination.logical_path);
+            assert!(uploaded.join("nested/empty").is_dir());
+            assert_eq!(
+                std::fs::read(uploaded.join("nested/file")).unwrap(),
+                b"content"
+            );
+            assert_eq!(std::fs::read(uploaded.join(".hidden")).unwrap(), b"hidden");
+        }
+        if policy == ConflictPolicy::Rename {
+            assert_eq!(result.destination.logical_path, "uploads/folder (1)");
+        }
+        if policy == ConflictPolicy::Overwrite {
+            assert_eq!(std::fs::read(target.join("only-target")).unwrap(), b"keep");
+        } else {
+            std::fs::write(target.join("nested/file"), b"old").unwrap();
+            std::fs::write(target.join("only-target"), b"keep").unwrap();
+        }
+    }
+    assert!(!fixture.destination.path().join("uploads/private").exists());
+    assert_eq!(
+        std::fs::read(external.path().join("folder/nested/file")).unwrap(),
+        b"content"
+    );
+    assert_eq!(
+        fixture
+            .service
+            .repository
+            .list_volumes()
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn selected_folder_upload_rejects_symlinks_before_writing() {
+    let fixture = Fixture::new().await;
+    let external = tempfile::tempdir().unwrap();
+    std::fs::create_dir(external.path().join("folder")).unwrap();
+    std::fs::write(external.path().join("private"), b"private").unwrap();
+    std::os::unix::fs::symlink("../private", external.path().join("folder/link")).unwrap();
+    let remote = StorageLocator {
+        volume_id: fixture.destination_id,
+        logical_path: "".into(),
+        version_id: None,
+    };
+    let job = fixture
+        .service
+        .transfer_selected_file_with_policy(
+            external.path().join("folder"),
+            remote.clone(),
+            true,
+            ConflictPolicy::Reject,
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+    let result = fixture.result(job.id).await;
+    assert_eq!(result.state, TransferState::Failed);
+    assert_eq!(result.error_code, Some(StorageErrorCode::Unsupported));
+    assert!(!fixture.destination.path().join("folder").exists());
+    std::os::unix::fs::symlink("folder", external.path().join("linked-folder")).unwrap();
+    assert!(fixture
+        .service
+        .transfer_selected_file_with_policy(
+            external.path().join("linked-folder"),
+            remote,
+            true,
+            ConflictPolicy::Reject,
+            Arc::new(|_| {}),
+        )
+        .await
+        .is_err());
+    assert!(fixture.service.temporary_backends.lock().await.is_empty());
+}
+
 #[async_trait::async_trait]
 impl StorageBackend for GatedSource {
     fn volume_id(&self) -> Uuid {

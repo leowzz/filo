@@ -9,14 +9,14 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-export const targets = ["universal-apple-darwin", "x86_64-pc-windows-msvc"];
+export const targets = ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"];
 export function assetNames(version, target) {
   if (!targets.includes(target)) throw new Error(`不支持的发布目标：${target}`);
   return target === targets[0]
     ? [
-        `Filo_${version}_universal.dmg`,
-        `Filo_${version}_universal.app.tar.gz`,
-        `Filo_${version}_universal.app.tar.gz.sig`,
+        `Filo_${version}_aarch64.dmg`,
+        `Filo_${version}_aarch64.app.tar.gz`,
+        `Filo_${version}_aarch64.app.tar.gz.sig`,
       ]
     : [`Filo_${version}_x64-setup.exe`, `Filo_${version}_x64-setup.exe.sig`];
 }
@@ -115,7 +115,6 @@ export function updaterManifest(
     pub_date: date,
     platforms: {
       "darwin-aarch64": entry(assetNames(version, targets[0])[1]),
-      "darwin-x86_64": entry(assetNames(version, targets[0])[1]),
       "windows-x86_64": entry(assetNames(version, targets[1])[0]),
     },
   };

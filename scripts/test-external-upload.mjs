@@ -11,13 +11,16 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
   window.calls = [];
   window.jobs = [];
   window.listeners = new Map();
+  window.unhandled = [];
+  window.failedUnlistens = 0;
+  window.addEventListener('unhandledrejection', event => window.unhandled.push(String(event.reason)));
   const callbacks = new Map();
   let sequence = 0;
   const volume = (id, readOnly) => ({ id, connection_id: id, name: id, read_only: readOnly,
     root: { type: 's3', bucket: id, prefix: '' },
     capabilities: { hierarchy: 'virtual_prefix', rename: 'copy_then_delete', create_directory: !readOnly,
       delete: !readOnly, trash: false, native_open: false, native_copy: true } });
-  window.emitDropEvent = (type, inside = true, paths = ['/external/a.txt', '/external/b.txt']) => {
+  window.emitDropEvent = (type, inside = true, paths = ['/external/a.txt', '/external/folder']) => {
     const rect = document.querySelector('.file-area').getBoundingClientRect();
     const position = { x: (inside ? rect.left + 40 : 20) * devicePixelRatio, y: (rect.top + 80) * devicePixelRatio };
     for (const [id, listener] of window.listeners) {
@@ -33,8 +36,18 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
     invoke: async (command, args) => {
       if (command === 'recent_backend_errors') return [];
       window.calls.push({ command, args });
-      if (command === 'plugin:event|listen') { const id = ++sequence; window.listeners.set(id, args); return id; }
-      if (command === 'plugin:event|unlisten') { window.listeners.delete(args.eventId); return; }
+      if (command === 'plugin:event|listen') {
+        if (window.failListenEvent === args.event) throw new Error('fixture setup failure');
+        const id = ++sequence; window.listeners.set(id, args); return id;
+      }
+      if (command === 'plugin:event|unlisten') {
+        window.listeners.delete(args.eventId);
+        if (window.failUnlisten) {
+          window.failedUnlistens++;
+          throw new Error('fixture teardown failure');
+        }
+        return;
+      }
       if (command === 'list_volumes') return [volume('Writable', false), volume('Read only', true)];
       if (command === 'list_connections') return [];
       if (command === 'directory_stamp') return '1';
@@ -49,7 +62,7 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
           error_code: null, error_message: null }));
         window.jobs.push(...jobs);
         jobs.forEach(job => args.onProgress.onmessage(job));
-        return { jobs, failures: window.partialFailure ? ['folder：目前仅支持拖入文件'] : [] };
+        return { jobs, failures: window.partialFailure ? ['folder：无法读取项目，请检查是否存在及访问权限'] : [] };
       }
       if (command === 'transfer_local_file') return null;
       throw new Error('Unexpected IPC: ' + command);
@@ -92,6 +105,9 @@ assert.equal(
   false,
 );
 
+await page.evaluate(() => {
+  window.failUnlisten = true;
+});
 await page.dblclick('tr[data-entry-path="nested"]');
 await page.waitForFunction(() =>
   document.querySelector(".pathbar").textContent.includes("nested"),
@@ -102,13 +118,24 @@ await page.waitForFunction(
       (item) => item.event === "tauri://drag-leave",
     ).length === 1,
 );
+await page.waitForFunction(() => window.failedUnlistens >= 4);
+// Cross an event-loop turn so unhandledrejection has time to dispatch.
+await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+assert.deepEqual(
+  await page.evaluate(() => window.unhandled),
+  [],
+  "Opening an S3 directory must consume all async listener cleanup failures",
+);
+await page.evaluate(() => {
+  window.failUnlisten = false;
+});
 await page.evaluate(() => window.emitDropEvent("drop"));
 await page.waitForSelector(".upload-dialog");
 assert.match(
   await page.evaluate(
     () => document.querySelector(".upload-dialog").textContent,
   ),
-  /将 2 个文件上传到 Writable\/nested/,
+  /将 2 个项目上传到 Writable\/nested，文件夹将保留目录结构/,
 );
 assert.deepEqual(
   await page.evaluate(() =>
@@ -117,7 +144,7 @@ assert.deepEqual(
       (node) => node.textContent,
     ),
   ),
-  ["a.txt", "b.txt"],
+  ["a.txt", "folder"],
 );
 await page.evaluate(() =>
   window.emitDropEvent("drop", true, ["/external/other.txt"]),
@@ -169,7 +196,8 @@ const layout = await page.evaluate(() => {
   };
 });
 assert.deepEqual(layout, { fits: true, aligned: true });
-await page.screenshot({ path: "/tmp/filo-external-upload.png" });
+if (globalThis.filoCaptureScreenshot)
+  await page.screenshot({ path: "/tmp/filo-external-upload.png" });
 await page.click('button:text-is("开始上传")');
 await page.waitForSelector(".transfer-tasks-popover");
 const uploads = await page.evaluate(() =>
@@ -183,7 +211,7 @@ const uploads = await page.evaluate(() =>
 );
 assert.equal(uploads.length, 1);
 assert.deepEqual(uploads[0], {
-  paths: ["/external/a.txt", "/external/b.txt"],
+  paths: ["/external/a.txt", "/external/folder"],
   remote: { volume_id: "Writable", logical_path: "nested", version_id: null },
   policy: "rename",
 });
@@ -251,6 +279,33 @@ await page.click('button[aria-label="上传文件"]');
 await page.click('button:text-is("选择文件…")');
 await page.waitForFunction(() =>
   window.calls.some((call) => call.command === "transfer_local_file"),
+);
+const rollback = await page.evaluate(async () => {
+  const { listenFileDrop } = await import("/src/fileDropEvents.ts");
+  const before = [...window.listeners.keys()];
+  window.failListenEvent = "tauri://drag-drop";
+  window.failUnlisten = true;
+  let message;
+  try {
+    await listenFileDrop(() => {});
+  } catch (error) {
+    message = error.message;
+  } finally {
+    window.failListenEvent = null;
+    window.failUnlisten = false;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return {
+    message,
+    restored:
+      JSON.stringify(before) === JSON.stringify([...window.listeners.keys()]),
+    unhandled: window.unhandled,
+  };
+});
+assert.deepEqual(
+  rollback,
+  { message: "fixture setup failure", restored: true, unhandled: [] },
+  "Partial listener setup rolls back all registrations even when cleanup rejects",
 );
 console.log(
   "PASS: native event bridge, HiDPI hit testing, enter/leave/outside/modal guards, multi-file drop, cancellation, nested destination, conflict policy, picker bypass, progress, partial failure, read-only guard, listener cleanup and original picker flow",

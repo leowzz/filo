@@ -40,8 +40,10 @@ git push origin v0.2.0
 
 | 目标 | Runner | 产物 |
 | --- | --- | --- |
-| macOS Universal | macos-14 | `.dmg`、`.app.tar.gz`、归档 `.sig` |
+| macOS Apple Silicon（aarch64） | macos-14 | `.dmg`、`.app.tar.gz`、归档 `.sig` |
 | Windows x64 | windows-2022 | NSIS `.exe`、`.exe.sig` |
+
+两个平台在 metadata 成功后并行运行，`fail-fast: false` 保证单个平台失败不会取消另一平台；publish 等待两者全部成功。macOS 只安装和编译 `aarch64-apple-darwin` 目标，不再构建 Intel 或 Universal，产物名称使用 `_aarch64` 后缀。
 
 每个文件（含签名文件）都有 `.sha256`，共 10 个上传文件；正式版另加 `latest.json`。CI 中间产物保存 30 天，位于 `target/release-assets/<target>/`，本地普通构建位于 `target/release/bundle/`。普通构建不需要 updater 私钥；发布构建额外叠加 `tauri.updater.conf.json`，缺更新签名私钥直接失败。
 
@@ -62,7 +64,11 @@ GitHub 仓库 Settings → Secrets and variables → Actions：
 | `APPLE_SIGNING_IDENTITY` | 签名 identity；公证时使用 Developer ID Application |
 | `APPLE_ID`、`APPLE_PASSWORD`、`APPLE_TEAM_ID` | 可选公证组；密码为 app-specific password |
 
-macOS 发布必须提供 Apple 证书组三项，缺项或使用 ad-hoc 身份 `-` 时在编译前失败。公证组三项全有或全无，公证要求 Developer ID Application 证书。未配置的可选公证 Secrets 会从构建进程环境中移除，避免空字符串被 Tauri 误判为已配置。由 Tauri 按官方流程导入证书并执行打包签名与公证；自签证书不代表 Gatekeeper 信任。没有内嵌 PKG，因此不需要 Installer 证书。本机开发签名继续使用 `~/.config/filo/signing/`，不与 updater 密钥混用。
+macOS 发布必须提供 Apple 证书组三项，缺项或使用 ad-hoc 身份 `-` 时在发布编译前失败。公证组三项全有或全无，公证要求 Developer ID Application 证书。未配置的可选公证 Secrets 会从构建进程环境中移除，避免空字符串被 Tauri 误判为已配置。
+
+发布脚本将 P12 导入临时钥匙串，检查 identity 与证书匹配、有效期和私钥访问，并试签验证后才启动发布编译。Tauri 直接使用导入证书的指纹，避免其自动 P12 导入流程无法识别自签证书名称。仅在 GitHub 托管的临时 runner 上为自签证书添加 code-signing 信任；构建成功或失败都会移除该信任、恢复钥匙串搜索列表并删除临时文件。本机运行不修改证书信任设置。
+
+自签证书不代表 Gatekeeper 信任。没有内嵌 PKG，因此不需要 Installer 证书。本机开发签名继续使用 `~/.config/filo/signing/`，不与 updater 密钥混用。
 
 项目 updater 公钥已固定在 `apps/desktop/src-tauri/tauri.conf.json`。初始私钥备份保存在 `~/.config/filo/updater/private.key`，密码位于同目录 `password.txt`，目录权限 700，私钥及密码权限 600。两者都不在仓库中，应另做安全备份；已有客户端发布后不能随意更换公钥。恢复 CI 时可使用：
 
@@ -75,7 +81,7 @@ gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD --repo leowzz/filo < ~/.config/
 
 ## 自动更新行为
 
-更新源为公开仓库的 `https://github.com/leowzz/filo/releases/latest/download/latest.json`。源代码仓库必须保持公开；不要把 GitHub token 放进客户端。manifest URL 指向明确版本资产，签名字段为签名文件内容。`darwin-aarch64` 与 `darwin-x86_64` 共用 Universal `.app.tar.gz`；Windows 使用 NSIS `.exe`，不能将 DMG 当成 macOS 更新包。
+更新源为公开仓库的 `https://github.com/leowzz/filo/releases/latest/download/latest.json`。源代码仓库必须保持公开；不要把 GitHub token 放进客户端。manifest URL 指向明确版本资产，签名字段为签名文件内容。macOS 仅发布 `darwin-aarch64` 的 `.app.tar.gz`，不提供 Intel Mac 更新；Windows 使用 NSIS `.exe`，不能将 DMG 当成 macOS 更新包。
 
 alpha、beta、RC 被标记为 prerelease，不生成稳定通道 manifest、不设置 Latest，默认手动安装；与正式版共用应用身份和数据目录。稳定客户端不会安装预发布。较旧正式版的补发不会抢占更新的 Latest。
 

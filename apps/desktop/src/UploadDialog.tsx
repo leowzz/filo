@@ -16,11 +16,15 @@ export function UploadDialog({
 }) {
   const [policy, setPolicy] = useState<ConflictPolicy>("reject");
   return (
-    <Modal title="上传文件" className="upload-dialog" onClose={onClose}>
+    <Modal
+      title={paths ? "上传文件或文件夹" : "上传文件"}
+      className="upload-dialog"
+      onClose={onClose}
+    >
       {paths && (
         <>
           <p className="modal-description">
-            将 {paths.length} 个文件上传到 {destination}
+            将 {paths.length} 个项目上传到 {destination}，文件夹将保留目录结构
           </p>
           <ul className="batch-items">
             {paths.map((path, index) => (

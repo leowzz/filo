@@ -1,6 +1,6 @@
 import { useEffect, useEffectEvent, useState, type RefObject } from "react";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { desktop, errorMessage } from "./api";
+import { listenFileDrop } from "./fileDropEvents";
 
 export function useExternalFileDrop({
   areaRef,
@@ -17,8 +17,8 @@ export function useExternalFileDrop({
 }) {
   const [hovering, setHovering] = useState(false);
   const handleDrop = useEffectEvent((paths: string[]) => {
-    if (readOnly) onError("当前目录为只读，无法上传文件");
-    else if (busy) onError("正在提交上传任务，请稍后再拖入文件");
+    if (readOnly) onError("当前目录为只读，无法上传");
+    else if (busy) onError("正在提交上传任务，请稍后再拖入");
     else if (paths.length > 0) onDrop(paths);
   });
   const reportError = useEffectEvent((error: unknown) =>
@@ -28,7 +28,7 @@ export function useExternalFileDrop({
     if (!desktop) return;
     let stopped = false;
     const listening = Promise.resolve().then(() =>
-      getCurrentWebview().onDragDropEvent(({ payload }) => {
+      listenFileDrop((payload) => {
         if (stopped) return;
         if (payload.type === "leave") {
           setHovering(false);

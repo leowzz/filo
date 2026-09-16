@@ -162,10 +162,14 @@ impl StorageBackend for OpenDalLocalBackend {
             .join(&locator.logical_path)
             .to_string_lossy()
             .into_owned();
-        // Conservatively protect aliases on the default case-insensitive macOS filesystem.
+        // Consumers compare hierarchy using '/', including across connected roots.
+        // Only Windows treats backslashes as separators; Unix allows them in names.
+        #[cfg(windows)]
+        let path = path.replace('\\', "/");
+        // Conservatively protect aliases on default case-insensitive filesystems.
         Some((
             "local".into(),
-            if cfg!(target_os = "macos") {
+            if cfg!(any(target_os = "macos", windows)) {
                 path.to_lowercase()
             } else {
                 path

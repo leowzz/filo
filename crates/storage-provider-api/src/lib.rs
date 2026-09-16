@@ -56,6 +56,8 @@ pub trait StorageBackend: Send + Sync {
         self.list(parent).await
     }
     /// Physical namespace and path, used to detect overlapping connected roots.
+    /// Paths use '/' hierarchy separators, including on Windows. Providers must
+    /// normalize filesystem aliases consistently across connected roots.
     fn storage_path(&self, _locator: &StorageLocator) -> Option<(String, String)> {
         None
     }

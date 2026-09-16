@@ -41,7 +41,7 @@ jobs:
       matrix:
         include:
           - os: macos-14
-            target: universal-apple-darwin
+            target: aarch64-apple-darwin
           - os: windows-2022
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
@@ -59,9 +59,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Install macOS architecture targets
+      - name: Install macOS architecture target
         if: runner.os == 'macOS'
-        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+        run: rustup target add aarch64-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}

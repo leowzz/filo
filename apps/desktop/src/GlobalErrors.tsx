@@ -18,8 +18,8 @@ export class AppErrorBoundary extends Component<
   static getDerivedStateFromError() {
     return { failed: true };
   }
-  componentDidCatch() {
-    reportAppError("render");
+  componentDidCatch(error: Error) {
+    reportAppError("render", "", undefined, error);
   }
   render() {
     if (this.state.failed)
@@ -51,7 +51,7 @@ export function GlobalErrors() {
   const details = errors
     .map(
       (error) =>
-        `${sources[error.source]}${error.location ? ` · ${error.location}` : ""}\n诊断编号：${error.id}\n发生次数：${error.count}`,
+        `${sources[error.source]}${error.location ? ` · ${error.location}` : ""}\n诊断编号：${error.id}\n发生次数：${error.count}${error.details ? `\n${error.details}` : ""}`,
     )
     .join("\n\n");
   if (!active) return null;

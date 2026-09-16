@@ -73,16 +73,16 @@ pub async fn upload_dropped_files(
             .to_string_lossy()
             .into_owned();
         match tokio::fs::symlink_metadata(&path).await {
-            Ok(metadata) if metadata.is_file() => {}
+            Ok(metadata) if metadata.is_file() || metadata.is_dir() => {}
             Ok(_) => {
                 batch.failures.push(format!(
-                    "{name}：目前仅支持拖入文件，不支持文件夹或符号链接"
+                    "{name}：仅支持普通文件和文件夹，不支持符号链接或特殊文件"
                 ));
                 continue;
             }
             Err(_) => {
                 batch.failures.push(format!(
-                    "{name}：无法读取文件，请检查文件是否存在及访问权限"
+                    "{name}：无法读取项目，请检查是否存在及访问权限"
                 ));
                 continue;
             }

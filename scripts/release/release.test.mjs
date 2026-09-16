@@ -342,15 +342,16 @@ test("artifacts, hashes and manifest cover every supported platform", (t) => {
   const dir = assets(t);
   assert.equal(verifyArtifacts(dir, "1.2.3").length, 10);
   const manifest = updaterManifest(dir, "1.2.3", "leowzz/filo");
-  assert.equal(Object.keys(manifest.platforms).length, 3);
+  assert.deepEqual(Object.keys(manifest.platforms).sort(), [
+    "darwin-aarch64",
+    "windows-x86_64",
+  ]);
   assert.equal(
     manifest.platforms["darwin-aarch64"].url,
-    manifest.platforms["darwin-x86_64"].url,
+    "https://github.com/leowzz/filo/releases/download/v1.2.3/Filo_1.2.3_aarch64.app.tar.gz",
   );
-  assert.match(
-    manifest.platforms["darwin-aarch64"].url,
-    /v1.2.3\/.*\.app.tar.gz$/,
-  );
+  assert.throws(() => assetNames("1.2.3", "universal-apple-darwin"), /不支持/);
+  assert.throws(() => assetNames("1.2.3", "x86_64-apple-darwin"), /不支持/);
   assert.equal(
     manifest.platforms["windows-x86_64"].signature,
     "fixture Filo_1.2.3_x64-setup.exe.sig",

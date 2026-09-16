@@ -9,6 +9,7 @@ import {
   targets,
 } from "./artifacts.mjs";
 import { releaseSigningEnvironment } from "./signing.mjs";
+import { withMacSigning } from "./macos-signing.mjs";
 
 try {
   if (existsSync(envPath())) process.loadEnvFile(envPath());
@@ -20,7 +21,7 @@ try {
   if (release) {
     if (!targets.includes(target))
       throw new Error(
-        "发布需要 RELEASE_TARGET：macOS Universal 或 Windows x64。",
+        "发布需要 RELEASE_TARGET：macOS Apple Silicon 或 Windows x64。",
       );
     if ((target === targets[0]) !== (process.platform === "darwin"))
       throw new Error("发布目标与构建主机不匹配。");
@@ -64,7 +65,11 @@ try {
     );
   }
   args.push("--", "--locked");
-  pnpm(args, { env: buildEnv });
+  if (release && process.platform === "darwin") {
+    withMacSigning(buildEnv, (env) => pnpm(args, { env }));
+  } else {
+    pnpm(args, { env: buildEnv });
+  }
   if (release) {
     const output = join(root, "target/release-assets", target);
     rmSync(output, { recursive: true, force: true });

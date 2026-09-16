@@ -117,10 +117,12 @@ await page.evaluate(() => {
 await page.click('button:text-is("测试连接")');
 await page.waitForSelector(".s3-test-success");
 await page.click('button[aria-label="关闭"]');
-// Browser runtime failures are reported without echoing arbitrary payloads.
+// Browser runtime failures retain useful context while redacting credentials.
 await page.evaluate(() => {
   setTimeout(() => {
-    throw new Error("fixture-secret-payload");
+    throw new Error(
+      "fixture script failure secret_access_key=fixture-secret-payload",
+    );
   }, 0);
 });
 await page.waitForSelector(".global-error-dialog[open]");
@@ -128,7 +130,7 @@ assert.match(
   await page.evaluate(
     () => document.querySelector(".global-error-dialog pre").textContent,
   ),
-  /界面脚本异常/,
+  /fixture script failure secret_access_key=\[已隐藏\]/,
 );
 assert.equal(
   await page.evaluate(() =>
@@ -147,7 +149,30 @@ assert.match(
   await page.evaluate(
     () => document.querySelector(".global-error-dialog pre").textContent,
   ),
-  /未处理的异步异常/,
+  /未处理的异步异常[\s\S]*Error: fixture-rejection/,
+);
+await page.evaluate(() => {
+  void Promise.reject({
+    code: "permission_denied",
+    message: "fixture second rejection",
+    token: "fixture-private-token",
+  });
+});
+await page.waitForFunction(() =>
+  document
+    .querySelector(".global-error-dialog pre")
+    .textContent.includes("fixture second rejection"),
+);
+const rejectionDetails = await page.evaluate(
+  () => document.querySelector(".global-error-dialog pre").textContent,
+);
+assert.match(rejectionDetails, /fixture-rejection/);
+assert.match(rejectionDetails, /permission_denied: fixture second rejection/);
+assert.equal(rejectionDetails.includes("fixture-private-token"), false);
+assert.equal(
+  (rejectionDetails.match(/发生次数：1/g) ?? []).length,
+  2,
+  "Different reasons must not be merged",
 );
 await page.click('button:text-is("知道了")');
 // Render a crashing subtree using the production boundary; no debug-only app command is needed.
@@ -181,6 +206,34 @@ await page.evaluate(() => {
   window.boundaryFixture.unmount();
   document.getElementById("boundary-fixture").remove();
 });
+const diagnosticCases = await page.evaluate(async () => {
+  const { describeError } = await import("/src/errorDiagnostics.ts");
+  const circular = { message: "circular fixture" };
+  circular.self = circular;
+  return {
+    structured: describeError({
+      message:
+        'failed Authorization="Bearer private-token" password=private-password https://user:pass@example.test/?token=private-query',
+      stack:
+        "Error: ignored\n at load (https://user:pass@example.test/src/listing.ts?token=private-query:42:9)",
+    }),
+    circular: describeError(circular),
+    hostile: describeError({
+      get message() {
+        throw new Error("private getter");
+      },
+    }),
+    bounded: describeError("x".repeat(10000)).length,
+  };
+});
+assert.match(diagnosticCases.structured, /listing.ts:42:9/);
+assert.doesNotMatch(
+  diagnosticCases.structured,
+  /private-|user:pass|example.test/,
+);
+assert.equal(diagnosticCases.circular, "circular fixture");
+assert.equal(diagnosticCases.hostile, "无法读取异常详情");
+assert.equal(diagnosticCases.bounded, 2000);
 console.log(
   "PASS: startup replay/deduplication, backend panic dialog above modal, busy state cleared, retry, narrow layout, runtime error, unhandled rejection, render fallback",
 );

@@ -2,18 +2,21 @@ use super::*;
 use std::path::PathBuf;
 use storage_provider_api::{StagedWrite, StorageReader};
 
-/// A file picker authorizes one file, never all its siblings.
-struct SelectedFileBackend {
+/// Native selection authorizes one path and, for uploaded folders, its descendants.
+/// Siblings are never authorized and folder access is always read-only.
+struct SelectedPathBackend {
     inner: OpenDalLocalBackend,
     path: String,
+    directory: bool,
 }
 
-impl SelectedFileBackend {
+impl SelectedPathBackend {
     fn check(&self, locator: &StorageLocator) -> StorageResult<()> {
-        if normalize_path(&locator.logical_path)? != self.path {
+        let path = normalize_path(&locator.logical_path)?;
+        if path != self.path && !(self.directory && path.starts_with(&format!("{}/", self.path))) {
             return Err(StorageError::new(
                 StorageErrorCode::AccessDenied,
-                "只允许访问系统选择器选中的文件",
+                "只允许访问选中的文件或文件夹",
             ));
         }
         Ok(())
@@ -26,7 +29,7 @@ impl SelectedFileBackend {
     }
 }
 #[async_trait::async_trait]
-impl StorageBackend for SelectedFileBackend {
+impl StorageBackend for SelectedPathBackend {
     fn storage_path(&self, locator: &StorageLocator) -> Option<(String, String)> {
         self.inner.storage_path(locator)
     }
@@ -59,8 +62,18 @@ impl StorageBackend for SelectedFileBackend {
         self.check(&expected.locator)?;
         self.inner.stage_replace(expected).await
     }
-    async fn list(&self, _: &StorageLocator) -> StorageResult<Vec<StorageEntry>> {
-        Err(Self::denied())
+    async fn list(&self, locator: &StorageLocator) -> StorageResult<Vec<StorageEntry>> {
+        self.list_for_mutation(locator).await
+    }
+    async fn list_for_mutation(
+        &self,
+        locator: &StorageLocator,
+    ) -> StorageResult<Vec<StorageEntry>> {
+        self.check(locator)?;
+        if !self.directory {
+            return Err(Self::denied());
+        }
+        self.inner.list_for_mutation(locator).await
     }
     async fn create_dir(&self, _: &StorageLocator) -> StorageResult<()> {
         Err(Self::denied())
@@ -234,6 +247,7 @@ impl StorageService {
     }
 
     /// `path` is authorized by a native file picker or drop event in the Tauri command.
+    /// Uploads accept files and folders; downloads retain single-file authorization.
     /// Its authorization expires with this task; it is never added as a saved location.
     pub async fn transfer_selected_file(
         &self,
@@ -264,7 +278,7 @@ impl StorageService {
         }
         let parent = path
             .parent()
-            .ok_or_else(|| configuration("请选择本地文件"))?;
+            .ok_or_else(|| configuration("请选择本地文件或文件夹"))?;
         let root = tokio::fs::canonicalize(parent)
             .await
             .map_err(|_| configuration("无法访问所选目录"))?;
@@ -276,7 +290,7 @@ impl StorageService {
         let volume = StorageVolume {
             id: Uuid::new_v4(),
             connection_id: Uuid::new_v4(),
-            name: "所选本地文件".into(),
+            name: "所选本地项目".into(),
             root: VolumeRoot::Local { root_path: root },
             read_only: upload,
         };
@@ -285,9 +299,12 @@ impl StorageService {
             logical_path: name.into(),
             version_id: None,
         };
-        let backend = Arc::new(SelectedFileBackend {
-            inner: OpenDalLocalBackend::new(&volume).await?,
+        let inner = OpenDalLocalBackend::new(&volume).await?;
+        let directory = upload && inner.stat(&local).await?.kind == StorageEntryKind::Directory;
+        let backend = Arc::new(SelectedPathBackend {
+            inner,
             path: name.into(),
+            directory,
         });
         let (source, destination) = if upload {
             let prefix = normalize_path(&remote.logical_path)?;
@@ -323,6 +340,50 @@ impl StorageService {
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn selected_folder_authorizes_only_reading_its_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("selected/nested")).unwrap();
+        std::fs::write(dir.path().join("selected/nested/file"), b"child").unwrap();
+        std::fs::write(dir.path().join("selected-other"), b"private").unwrap();
+        let volume = StorageVolume {
+            id: Uuid::new_v4(),
+            connection_id: Uuid::new_v4(),
+            name: "selected".into(),
+            root: VolumeRoot::Local {
+                root_path: std::fs::canonicalize(dir.path()).unwrap(),
+            },
+            read_only: true,
+        };
+        let backend = SelectedPathBackend {
+            inner: OpenDalLocalBackend::new(&volume).await.unwrap(),
+            path: "selected".into(),
+            directory: true,
+        };
+        let locator = |path: &str| StorageLocator {
+            volume_id: volume.id,
+            logical_path: path.into(),
+            version_id: None,
+        };
+        assert_eq!(backend.list(&locator("selected")).await.unwrap().len(), 1);
+        assert!(backend
+            .open_read(&locator("selected/nested/file"))
+            .await
+            .is_ok());
+        for path in ["", "selected-other", "selected/../selected-other"] {
+            assert!(backend.stat(&locator(path)).await.is_err());
+            assert!(backend.open_read(&locator(path)).await.is_err());
+            assert!(backend.list_for_mutation(&locator(path)).await.is_err());
+        }
+        assert!(backend.stage_write(&locator("selected/new")).await.is_err());
+        assert!(backend.create_dir(&locator("selected/new")).await.is_err());
+        assert!(backend
+            .delete(&locator("selected/nested/file"))
+            .await
+            .is_err());
+        assert!(!backend.capabilities().write);
+    }
+
+    #[tokio::test]
     async fn selected_file_never_authorizes_siblings_or_directory_mutations() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("selected"), b"selected").unwrap();
@@ -336,9 +397,10 @@ mod tests {
             },
             read_only: false,
         };
-        let backend = SelectedFileBackend {
+        let backend = SelectedPathBackend {
             inner: OpenDalLocalBackend::new(&volume).await.unwrap(),
             path: "selected".into(),
+            directory: false,
         };
         let selected = StorageLocator {
             volume_id: volume.id,

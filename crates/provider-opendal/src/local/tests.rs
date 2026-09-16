@@ -68,6 +68,39 @@ fn locator(backend: &OpenDalLocalBackend, path: &str) -> StorageLocator {
     }
 }
 #[tokio::test]
+async fn physical_paths_use_the_same_hierarchy_across_connected_roots() {
+    let (directory, backend) = fixture(false).await;
+    std::fs::create_dir_all(directory.path().join("Folder/Nested")).unwrap();
+    let alias = OpenDalLocalBackend::new(&StorageVolume {
+        id: Uuid::new_v4(),
+        connection_id: Uuid::new_v4(),
+        name: "nested alias".into(),
+        root: VolumeRoot::Local {
+            root_path: std::fs::canonicalize(directory.path().join("Folder/Nested")).unwrap(),
+        },
+        read_only: false,
+    })
+    .await
+    .unwrap();
+    let parent = backend.storage_path(&locator(&backend, "Folder")).unwrap();
+    let direct = backend
+        .storage_path(&locator(&backend, "Folder/Nested/新文件.txt"))
+        .unwrap();
+    let nested = alias.storage_path(&locator(&alias, "新文件.txt")).unwrap();
+    assert_eq!(direct, nested);
+    assert!(nested.1.starts_with(&format!("{}/", parent.1)));
+    #[cfg(any(target_os = "macos", windows))]
+    assert_eq!(
+        parent,
+        backend.storage_path(&locator(&backend, "FOLDER")).unwrap()
+    );
+    #[cfg(unix)]
+    assert_ne!(
+        backend.storage_path(&locator(&backend, "Folder/Nested")),
+        backend.storage_path(&locator(&backend, "Folder\\Nested")),
+    );
+}
+#[tokio::test]
 async fn trash_preserves_directory_contents_and_checks_authority() {
     let (directory, backend) = fixture(false).await;
     let recycle = tempfile::tempdir().unwrap();
