@@ -13,7 +13,9 @@ import { useBrowser } from "./store";
 import { type Entry, type Volume } from "./types";
 import { useFileSelection } from "./useFileSelection";
 
-import type { UseQueryResult } from "@tanstack/react-query";
+import { useEffect } from "react";
+import type { useDirectoryQuery } from "./useDirectoryQuery";
+import { useVirtualRows } from "./useVirtualRows";
 import { DetailsPanel } from "./DetailsPanel";
 
 export type EntrySort = "name" | "size" | "modified";
@@ -37,10 +39,7 @@ export function FileBrowser({
   volume: Volume;
   path: string;
   entries: Entry[];
-  entriesQuery: Pick<
-    UseQueryResult<Entry[]>,
-    "data" | "isPending" | "isError" | "error" | "refetch"
-  >;
+  entriesQuery: ReturnType<typeof useDirectoryQuery>;
   search: string;
   sort: EntrySort;
   setSort: (sort: EntrySort) => void;
@@ -59,6 +58,24 @@ export function FileBrowser({
 }) {
   const state = useBrowser();
   const { selectedPaths } = selection;
+  const rows = useVirtualRows(selection.areaRef, entries.length);
+  useEffect(() => {
+    if (
+      rows.end >= entries.length - 10 &&
+      entriesQuery.hasNextPage &&
+      !entriesQuery.isFetching &&
+      !entriesQuery.isError
+    ) {
+      void entriesQuery.fetchNextPage();
+    }
+  }, [
+    rows.end,
+    entries.length,
+    entriesQuery.hasNextPage,
+    entriesQuery.isFetching,
+    entriesQuery.isError,
+    entriesQuery.fetchNextPage,
+  ]);
   return (
     <>
       <div className="browser-body">
@@ -78,7 +95,7 @@ export function FileBrowser({
               <LoaderCircle className="spin" size={27} />
               <h3>正在读取文件</h3>
             </div>
-          ) : entriesQuery.isError ? (
+          ) : entriesQuery.isError && entries.length === 0 ? (
             <div className="empty-state error" role="alert">
               <CircleHelp size={32} />
               <h3>暂时无法打开目录</h3>
@@ -112,14 +129,21 @@ export function FileBrowser({
                 </tr>
               </thead>
               <tbody>
-                {entries.map((entry) => (
+                {rows.before > 0 && (
+                  <tr className="virtual-spacer" aria-hidden="true">
+                    <td colSpan={5} style={{ height: rows.before }} />
+                  </tr>
+                )}
+                {entries.slice(rows.start, rows.end).map((entry, index) => (
                   <tr
                     key={entry.locator.logical_path}
                     data-entry-path={entry.locator.logical_path}
                     className={
                       selectedPaths.has(entry.locator.logical_path)
                         ? "selected"
-                        : ""
+                        : (rows.start + index) % 2 === 0
+                          ? "stripe"
+                          : ""
                     }
                     tabIndex={0}
                     aria-selected={selectedPaths.has(
@@ -195,8 +219,29 @@ export function FileBrowser({
                     </td>
                   </tr>
                 ))}
+                {rows.after > 0 && (
+                  <tr className="virtual-spacer" aria-hidden="true">
+                    <td colSpan={5} style={{ height: rows.after }} />
+                  </tr>
+                )}
               </tbody>
             </table>
+          )}
+          {entriesQuery.isFetchingNextPage && (
+            <p className="directory-more" role="status">
+              正在加载更多…
+            </p>
+          )}
+          {entriesQuery.isError && entries.length > 0 && (
+            <div className="directory-more error-text" role="alert">
+              {errorMessage(entriesQuery.error)}
+              <button onClick={() => void entriesQuery.fetchNextPage()}>
+                重试加载
+              </button>
+              <button onClick={() => void entriesQuery.refetch()}>
+                刷新目录
+              </button>
+            </div>
           )}
           {!entriesQuery.isPending &&
             !entriesQuery.isError &&
@@ -229,7 +274,7 @@ export function FileBrowser({
             volume={volume}
             path={path}
             selectedEntries={selectedEntries}
-            entryCount={entriesQuery.data?.length}
+            entryCount={entriesQuery.total}
           />
         )}
       </div>
@@ -261,13 +306,11 @@ export function FileBrowser({
       </nav>
       <footer className="statusbar">
         <span>
-          {entries.length} 个项目
+          {entriesQuery.hasNextPage
+            ? `已加载 ${entries.length} / ${entriesQuery.total} 项 · 全选仅选择已加载项`
+            : `${entriesQuery.total} 个项目`}
           {selectedEntries.length > 0
             ? ` · 已选择 ${selectedEntries.length} 项`
-            : ""}
-          {!state.showHidden &&
-          (entriesQuery.data ?? []).some((entry) => entry.name.startsWith("."))
-            ? " · 隐藏文件已收起"
             : ""}
         </span>
         <span>

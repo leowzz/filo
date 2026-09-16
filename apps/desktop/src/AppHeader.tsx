@@ -53,6 +53,7 @@ export function AppHeader({
   isFetching,
   transfers,
   uploadIds,
+  recentUpload,
   transfersLoading,
   transfersError,
   onRetryTransfers,
@@ -77,6 +78,7 @@ export function AppHeader({
   isFetching: boolean;
   transfers: TransferJob[];
   uploadIds: Set<string>;
+  recentUpload: { id: number; jobIds: string[] } | null;
   transfersLoading: boolean;
   transfersError: boolean;
   onRetryTransfers: () => void;
@@ -300,6 +302,7 @@ export function AppHeader({
       <TransferTasksMenu
         jobs={transfers}
         uploadIds={uploadIds}
+        recentUpload={recentUpload}
         loading={transfersLoading}
         error={transfersError}
         onRetry={onRetryTransfers}

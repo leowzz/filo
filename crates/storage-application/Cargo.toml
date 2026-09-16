@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+tempfile.workspace = true
 storage-domain.workspace = true
 storage-provider-api.workspace = true
 storage-repository.workspace = true

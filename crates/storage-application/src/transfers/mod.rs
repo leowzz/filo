@@ -6,6 +6,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub type TransferObserver = Arc<dyn Fn(TransferJob) + Send + Sync>;
+mod conflicts;
 mod execution;
 pub(crate) mod scheduler;
 
@@ -55,8 +56,20 @@ impl StorageService {
     pub async fn start_transfer(
         &self,
         kind: TransferKind,
+        source: StorageLocator,
+        destination: StorageLocator,
+        observer: TransferObserver,
+    ) -> StorageResult<TransferJob> {
+        self.start_transfer_with_policy(kind, source, destination, ConflictPolicy::Reject, observer)
+            .await
+    }
+
+    pub async fn start_transfer_with_policy(
+        &self,
+        kind: TransferKind,
         mut source: StorageLocator,
         mut destination: StorageLocator,
+        policy: ConflictPolicy,
         observer: TransferObserver,
     ) -> StorageResult<TransferJob> {
         source.logical_path = normalize_path(&source.logical_path)?;
@@ -67,7 +80,9 @@ impl StorageService {
                 "请选择文件或文件夹，并填写目标名称",
             ));
         }
-        plan(kind, &source, &destination)?;
+        if policy != ConflictPolicy::Rename {
+            plan(kind, &source, &destination)?;
+        }
         let mut transfers = self.transfers.lock().await;
         if transfers.len() >= 100 {
             return Err(StorageError::new(
@@ -80,12 +95,14 @@ impl StorageService {
         let source_backend = self.backend(source.volume_id).await?;
         let destination_backend = self.backend(destination.volume_id).await?;
         let entry = source_backend.stat(&source).await?;
-        crate::tree::check_overlap(
-            source_backend.as_ref(),
-            destination_backend.as_ref(),
-            &source,
-            &destination,
-        )?;
+        if policy != ConflictPolicy::Rename {
+            crate::tree::check_overlap(
+                source_backend.as_ref(),
+                destination_backend.as_ref(),
+                &source,
+                &destination,
+            )?;
+        }
         check_permissions(
             kind,
             &entry,
@@ -121,7 +138,9 @@ impl StorageService {
         let service = self.clone();
         let queued = job.clone();
         tokio::spawn(async move {
-            service.run_transfer(queued, token, observer).await;
+            service
+                .run_transfer_with_policy(queued, token, observer, policy)
+                .await;
         });
         Ok(job)
     }
@@ -137,11 +156,23 @@ impl StorageService {
         Ok(())
     }
 
+    #[cfg(test)]
     async fn run_transfer(
+        &self,
+        job: TransferJob,
+        token: CancellationToken,
+        observer: TransferObserver,
+    ) {
+        self.run_transfer_with_policy(job, token, observer, ConflictPolicy::Reject)
+            .await;
+    }
+
+    async fn run_transfer_with_policy(
         &self,
         mut job: TransferJob,
         token: CancellationToken,
         observer: TransferObserver,
+        policy: ConflictPolicy,
     ) {
         // Shared mutation access allows independent transfers; ordinary mutations
         // retain exclusive access. Cancellation only interrupts preparation here:
@@ -150,6 +181,16 @@ impl StorageService {
             let guard = self.mutation_lock.read().await;
             let source = self.backend(job.source.volume_id).await?;
             let destination = self.backend(job.destination.volume_id).await?;
+            // Auto-renaming reserves the parent, including all candidate names.
+            let mut reserved_destination = job.destination.clone();
+            if policy == ConflictPolicy::Rename {
+                reserved_destination.logical_path = reserved_destination
+                    .logical_path
+                    .rsplit_once('/')
+                    .map(|(parent, _)| parent)
+                    .unwrap_or("")
+                    .into();
+            }
             let permit = self
                 .transfer_scheduler
                 .acquire(vec![
@@ -158,7 +199,7 @@ impl StorageService {
                         &job.source,
                         job.kind == TransferKind::Move,
                     ),
-                    scheduler::Access::new(destination.as_ref(), &job.destination, true),
+                    scheduler::Access::new(destination.as_ref(), &reserved_destination, true),
                 ])
                 .await;
             Ok::<_, StorageError>((guard, permit))
@@ -169,11 +210,15 @@ impl StorageService {
             result = prepare => result,
         };
         let result = match prepared {
-            Ok((_guard, _permit)) => self.execute_transfer(&mut job, &token, &observer).await,
+            Ok((_guard, _permit)) => {
+                self.execute_transfer(&mut job, &token, &observer, policy)
+                    .await
+            }
             Err(error) => Err(error),
         };
         match result {
-            Ok(()) => job.state = TransferState::Completed,
+            Ok(()) if job.state != TransferState::Skipped => job.state = TransferState::Completed,
+            Ok(()) => {}
             Err(error) => {
                 job.state = if error.code == StorageErrorCode::Cancelled {
                     TransferState::Cancelled

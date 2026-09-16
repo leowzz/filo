@@ -75,7 +75,7 @@ impl Repository {
     }
 
     pub async fn save_transfer(&self, job: &TransferJob) -> StorageResult<()> {
-        sqlx::query("INSERT INTO transfer_jobs (id, kind, source_json, destination_json, state, bytes_total, bytes_transferred, error_code, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET state = excluded.state, bytes_total = excluded.bytes_total, bytes_transferred = excluded.bytes_transferred, error_code = excluded.error_code, error_message = excluded.error_message, updated_at = excluded.updated_at")
+        sqlx::query("INSERT INTO transfer_jobs (id, kind, source_json, destination_json, state, bytes_total, bytes_transferred, error_code, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET destination_json = excluded.destination_json, state = excluded.state, bytes_total = excluded.bytes_total, bytes_transferred = excluded.bytes_transferred, error_code = excluded.error_code, error_message = excluded.error_message, updated_at = excluded.updated_at")
             .bind(job.id.to_string())
             .bind(serde_json::to_value(job.kind).map_err(database_error)?.as_str().unwrap_or_default())
             .bind(serde_json::to_string(&job.source).map_err(database_error)?)

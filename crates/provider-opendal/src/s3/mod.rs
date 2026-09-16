@@ -4,12 +4,15 @@ use storage_domain::*;
 use storage_provider_api::{StagedWrite, StorageBackend, StorageReader, TransferLimits};
 use uuid::Uuid;
 
+mod checksum;
 mod io;
+mod listing;
 use io::{digest, publish, reader};
 
 #[cfg(test)]
 mod tests;
 
+#[derive(Clone)]
 pub struct OpenDalS3Backend {
     volume_id: Uuid,
     read_only: bool,
@@ -260,6 +263,12 @@ impl StorageBackend for OpenDalS3Backend {
                 .into(),
         ))
     }
+    async fn open_listing(
+        &self,
+        parent: &StorageLocator,
+    ) -> StorageResult<Box<dyn storage_provider_api::DirectoryReader>> {
+        self.directory_reader(parent).await
+    }
     async fn list(&self, parent: &StorageLocator) -> StorageResult<Vec<StorageEntry>> {
         self.list_checked(parent, false).await
     }
@@ -363,6 +372,10 @@ impl StorageBackend for OpenDalS3Backend {
     }
     async fn open_read(&self, locator: &StorageLocator) -> StorageResult<StorageReader> {
         reader(&self.operator, &self.path(locator, false)?, &self.limits).await
+    }
+    async fn stage_replace(&self, expected: &StorageEntry) -> StorageResult<Box<dyn StagedWrite>> {
+        self.prepare_write_mode(&expected.locator, Some(expected))
+            .await
     }
     async fn stage_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>> {
         OpenDalS3Backend::prepare_write(self, locator).await

@@ -4,6 +4,7 @@ use opendal::{services::Fs, ErrorKind, Operator};
 use storage_domain::*;
 use storage_provider_api::{StagedWrite, StorageBackend, StorageReader};
 use uuid::Uuid;
+mod listing;
 mod paths;
 mod rename;
 mod staged_write;
@@ -12,6 +13,7 @@ use rename::rename_no_replace;
 #[cfg(test)]
 mod tests;
 
+#[derive(Clone)]
 pub struct OpenDalLocalBackend {
     volume_id: Uuid,
     root: PathBuf,
@@ -258,6 +260,17 @@ impl StorageBackend for OpenDalLocalBackend {
         OpenDalLocalBackend::prepare_write(self, locator).await
     }
 
+    async fn stage_replace(&self, expected: &StorageEntry) -> StorageResult<Box<dyn StagedWrite>> {
+        self.prepare_write_mode(&expected.locator, Some(expected.clone()))
+            .await
+    }
+
+    async fn open_listing(
+        &self,
+        parent: &StorageLocator,
+    ) -> StorageResult<Box<dyn storage_provider_api::DirectoryReader>> {
+        self.directory_reader(parent).await
+    }
     async fn list(&self, parent: &StorageLocator) -> StorageResult<Vec<StorageEntry>> {
         let logical = self.check_locator(parent)?;
         let path = self.checked_path(&logical, false).await?;

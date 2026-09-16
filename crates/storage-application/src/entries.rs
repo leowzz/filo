@@ -30,6 +30,16 @@ impl StorageService {
             .await
     }
     pub async fn rename_entry(&self, source: StorageLocator, name: String) -> StorageResult<()> {
+        self.rename_entry_with_policy(source, name, ConflictPolicy::Reject)
+            .await
+            .map(|_| ())
+    }
+    pub async fn rename_entry_with_policy(
+        &self,
+        source: StorageLocator,
+        name: String,
+        policy: ConflictPolicy,
+    ) -> StorageResult<TransferState> {
         validate_name(&name)?;
         let normalized = normalize_path(&source.logical_path)?;
         if normalized.is_empty() {
@@ -47,13 +57,16 @@ impl StorageService {
             ..source.clone()
         };
         let backend = self.backend(source.volume_id).await?;
-        if backend.stat(&source).await?.kind == StorageEntryKind::VirtualPrefix {
+        if backend.stat(&source).await?.kind == StorageEntryKind::VirtualPrefix
+            || policy != ConflictPolicy::Reject
+        {
             let (sender, receiver) = tokio::sync::oneshot::channel();
             let sender = std::sync::Mutex::new(Some(sender));
-            self.start_transfer(
+            self.start_transfer_with_policy(
                 TransferKind::Move,
                 source,
                 target,
+                policy,
                 std::sync::Arc::new(move |job| {
                     if !job.state.active() {
                         if let Some(sender) = sender.lock().unwrap().take() {
@@ -66,19 +79,20 @@ impl StorageService {
             let job = receiver.await.map_err(|_| {
                 StorageError::new(StorageErrorCode::Internal, "重命名任务中断，请查看传输任务")
             })?;
-            if job.state != TransferState::Completed {
+            if !matches!(job.state, TransferState::Completed | TransferState::Skipped) {
                 return Err(StorageError::new(
                     job.error_code.unwrap_or(StorageErrorCode::Io),
                     job.error_message.unwrap_or_else(|| "重命名未完成".into()),
                 ));
             }
-            return Ok(());
+            return Ok(job.state);
         }
         let _guard = self.mutation_lock.write().await;
         self.backend(source.volume_id)
             .await?
             .rename(&source, &target)
-            .await
+            .await?;
+        Ok(TransferState::Completed)
     }
     pub async fn delete_entry(
         &self,

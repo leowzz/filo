@@ -20,6 +20,7 @@ impl StorageService {
         job: &mut TransferJob,
         token: &CancellationToken,
         observer: &TransferObserver,
+        policy: ConflictPolicy,
     ) -> StorageResult<()> {
         if token.is_cancelled() {
             return Err(cancelled());
@@ -28,6 +29,38 @@ impl StorageService {
         let destination = self.backend(job.destination.volume_id).await?;
         let before = source.stat(&job.source).await?;
         check_permissions(job.kind, &before, source.as_ref(), destination.as_ref())?;
+        let mut existing =
+            super::conflicts::existing(destination.as_ref(), &job.destination).await?;
+        if existing.is_some() {
+            match policy {
+                ConflictPolicy::Skip => {
+                    job.state = TransferState::Skipped;
+                    return Ok(());
+                }
+                ConflictPolicy::Rename => {
+                    job.destination = super::conflicts::available_name(
+                        destination.as_ref(),
+                        &job.destination,
+                        tree::directory(&before),
+                    )
+                    .await?;
+                    existing = None;
+                    self.report(job, observer).await?;
+                }
+                ConflictPolicy::Overwrite => {
+                    let target = existing.as_ref().unwrap();
+                    if tree::directory(&before) != tree::directory(target)
+                        || target.kind == StorageEntryKind::Symlink
+                    {
+                        return Err(StorageError::new(
+                            StorageErrorCode::Conflict,
+                            "文件与文件夹不能互相覆盖，请选择自动改名或跳过",
+                        ));
+                    }
+                }
+                ConflictPolicy::Reject => {}
+            }
+        }
         tree::check_overlap(
             source.as_ref(),
             destination.as_ref(),
@@ -36,13 +69,27 @@ impl StorageService {
         )?;
         if tree::directory(&before) {
             return self
-                .execute_tree(job, token, observer, source.as_ref(), destination.as_ref())
+                .execute_tree(
+                    job,
+                    token,
+                    observer,
+                    source.as_ref(),
+                    destination.as_ref(),
+                    policy,
+                )
                 .await;
         }
         job.bytes_total = before.size;
         job.state = TransferState::Running;
         self.report(job, observer).await?;
-        match plan(job.kind, &job.source, &job.destination)? {
+        let strategy = if existing.is_some() && policy == ConflictPolicy::Overwrite {
+            OperationPlan::StreamCopy {
+                delete_source: job.kind == TransferKind::Move,
+            }
+        } else {
+            plan(job.kind, &job.source, &job.destination)?
+        };
+        match strategy {
             OperationPlan::ProviderRename => {
                 if token.is_cancelled() {
                     return Err(cancelled());
@@ -59,6 +106,7 @@ impl StorageService {
                     destination.as_ref(),
                     &before,
                     &job.destination.clone(),
+                    policy,
                 )
                 .await?;
                 if delete_source {
@@ -90,10 +138,18 @@ impl StorageService {
         destination: &dyn StorageBackend,
         before: &StorageEntry,
         target: &StorageLocator,
+        policy: ConflictPolicy,
     ) -> StorageResult<(u64, Vec<u8>)> {
         job.state = TransferState::Running;
         let mut reader = source.open_read(&before.locator).await?;
-        let mut writer = destination.stage_write(target).await?;
+        let mut writer = if policy == ConflictPolicy::Overwrite {
+            match super::conflicts::existing(destination, target).await? {
+                Some(expected) => destination.stage_replace(&expected).await?,
+                None => destination.stage_write(target).await?,
+            }
+        } else {
+            destination.stage_write(target).await?
+        };
         let initial_bytes = job.bytes_transferred;
         let mut buffer = vec![0; BUFFER_SIZE];
         let mut hash = Sha256::new();
@@ -124,14 +180,20 @@ impl StorageService {
         }
         job.state = TransferState::Verifying;
         self.report(job, observer).await?;
-        let (size, target_hash) = digest(writer.reader().await?, token).await?;
-        if size != job.bytes_transferred - initial_bytes
-            || hash.finalize().as_slice() != target_hash
-        {
-            return Err(StorageError::new(
-                StorageErrorCode::Io,
-                "目标文件校验失败，源文件已保留",
-            ));
+        let size = job.bytes_transferred - initial_bytes;
+        let target_hash = hash.finalize().to_vec();
+        if !writer.verifies_on_commit() {
+            let verified = tokio::select! {
+                biased;
+                _ = token.cancelled() => return Err(cancelled()),
+                result = async { digest(writer.reader().await?, token).await } => result?,
+            };
+            if verified != (size, target_hash.clone()) {
+                return Err(StorageError::new(
+                    StorageErrorCode::Io,
+                    "目标文件校验失败，源文件已保留",
+                ));
+            }
         }
         unchanged(before, &source.stat(&before.locator).await?)?;
         if token.is_cancelled() {
@@ -144,6 +206,7 @@ impl StorageService {
         Ok((size, target_hash))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn execute_tree(
         &self,
         job: &mut TransferJob,
@@ -151,6 +214,7 @@ impl StorageService {
         observer: &TransferObserver,
         source: &dyn StorageBackend,
         destination: &dyn StorageBackend,
+        policy: ConflictPolicy,
     ) -> StorageResult<()> {
         job.state = TransferState::Running;
         job.bytes_total = None;
@@ -159,9 +223,9 @@ impl StorageService {
         job.bytes_total = Some(entries.iter().filter_map(|entry| entry.size).sum());
         job.state = TransferState::Running;
         self.report(job, observer).await?;
-        // Creating the root reserves a new destination; existing folders are never merged.
+        // Reserve a new root, or merge an existing folder when explicitly requested.
         tree::check_cancel(token)?;
-        destination.create_dir(&job.destination).await?;
+        super::conflicts::directory(destination, &job.destination, policy).await?;
         let result = async {
             let mut verified = Vec::new();
             for entry in entries.iter().skip(1) {
@@ -172,10 +236,19 @@ impl StorageService {
                     ..job.destination.clone()
                 };
                 if tree::directory(entry) {
-                    destination.create_dir(&target).await?;
+                    super::conflicts::directory(destination, &target, policy).await?;
                 } else {
                     let hash = self
-                        .copy_file(job, token, observer, source, destination, entry, &target)
+                        .copy_file(
+                            job,
+                            token,
+                            observer,
+                            source,
+                            destination,
+                            entry,
+                            &target,
+                            policy,
+                        )
                         .await?;
                     verified.push((target, hash));
                 }

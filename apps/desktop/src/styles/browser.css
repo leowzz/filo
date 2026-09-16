@@ -93,7 +93,7 @@
 .file-table td:last-child {
   border-radius: 0 5px 5px 0;
 }
-.file-table tbody tr:nth-child(odd) {
+.file-table tbody tr.stripe {
   background: #f4f4f4;
 }
 .file-table tbody tr:hover {
@@ -306,4 +306,17 @@
 .status-separator {
   color: #ccc;
   margin: 0 5px;
+}
+
+.file-table tbody tr.virtual-spacer {
+  background: transparent;
+}
+.file-table tr.virtual-spacer td {
+  padding: 0;
+  border: 0;
+}
+.directory-more {
+  padding: 12px;
+  text-align: center;
+  font-size: 12px;
 }

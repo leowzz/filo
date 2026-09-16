@@ -16,3 +16,5 @@
 - [S3 与本机 RustFS：配置、实现与验证](11-s3.md)
 - [批量与文件夹操作：行为、边界与验证](12-batch-and-folders.md)
 - [上传和下载速度设置](13-transfer-speed.md)
+
+- [冲突处理与大目录](13-conflicts-and-paging.md)：覆盖/跳过/自动改名、分页、虚拟列表与验证入口。

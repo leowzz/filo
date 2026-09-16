@@ -28,6 +28,9 @@ import {
   type TransferKind,
   type Volume,
 } from "./types";
+import { UploadDialog } from "./UploadDialog";
+import type { ConflictPolicy } from "./types";
+import { useDirectoryQuery } from "./useDirectoryQuery";
 import { useFileSelection } from "./useFileSelection";
 
 import { AppHeader } from "./AppHeader";
@@ -54,6 +57,11 @@ export default function App() {
   const pendingTransfers =
     transfersQuery.data?.filter(activeTransfer).length ?? 0;
   const [uploadIds, setUploadIds] = useState<Set<string>>(() => new Set());
+  const uploadSequence = useRef(0);
+  const [recentUpload, setRecentUpload] = useState<{
+    id: number;
+    jobIds: string[];
+  } | null>(null);
   const previousTransfers = useRef<TransferJob[] | undefined>(undefined);
   useEffect(() => {
     const jobs = transfersQuery.data;
@@ -86,16 +94,11 @@ export default function App() {
     logical_path: path,
     version_id: null,
   };
-  const entriesQuery = useQuery({
-    queryKey: ["entries", parent.volume_id, path],
-    queryFn: () => api.entries(parent),
-    enabled: !!volume && state.page === "browser",
-  });
   const [search, setSearch] = useState("");
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [name, setName] = useState("");
+  const [renamePolicy, setRenamePolicy] = useState<ConflictPolicy>("reject");
   const [readOnly, setReadOnly] = useState(false);
-  const [addingS3, setAddingS3] = useState(false);
   const [notice, setNotice] = useState("");
   const [menu, setMenu] = useState<string | null>(null);
   const [menuPosition, setMenuPosition] = useState<{
@@ -119,19 +122,22 @@ export default function App() {
     kind: TransferKind;
   } | null>(null);
   const closeLocationMenu = useCallback(() => setLocationMenu(null), []);
-  const entries = (entriesQuery.data ?? [])
-    .filter(
-      (entry) =>
-        (state.showHidden || !entry.name.startsWith(".")) &&
-        entry.name.toLowerCase().includes(search.toLowerCase()),
-    )
-    .sort((a, b) => {
-      if (isDirectory(a) !== isDirectory(b)) return isDirectory(a) ? -1 : 1;
-      if (sort === "size") return (b.size ?? 0) - (a.size ?? 0);
-      if (sort === "modified")
-        return (b.modified_at ?? "").localeCompare(a.modified_at ?? "");
-      return a.name.localeCompare(b.name, "zh-CN", { numeric: true });
-    });
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+  const entriesQuery = useDirectoryQuery(
+    parent,
+    {
+      search: debouncedSearch,
+      show_hidden: state.showHidden,
+      folders_only: false,
+      sort,
+    },
+    !!volume && state.page === "browser",
+  );
+  const entries = entriesQuery.entries;
   const selection = useFileSelection(
     JSON.stringify([
       state.page,
@@ -139,6 +145,7 @@ export default function App() {
       path,
       search,
       state.showHidden,
+      sort,
     ]),
     entries.map((entry) => entry.locator.logical_path),
   );
@@ -153,15 +160,21 @@ export default function App() {
       if (dialog?.type === "add") return api.addLocal(readOnly);
       if (dialog?.type === "folder") return api.createDirectory(parent, name);
       if (dialog?.type === "rename")
-        return api.rename(dialog.entry.locator, name);
+        return api.rename(dialog.entry.locator, name, renamePolicy);
     },
     onSettled: () => client.invalidateQueries({ queryKey: ["entries"] }),
     onSuccess: async (added) => {
       await client.invalidateQueries({ queryKey: ["volumes"] });
       await client.invalidateQueries({ queryKey: ["entries"] });
-      if (added) navigate(added.id, "");
+      if (added && typeof added === "object") navigate(added.id, "");
       if (dialog?.type !== "add")
-        setNotice(dialog?.type === "rename" ? "已重命名" : "文件夹已创建");
+        setNotice(
+          dialog?.type === "rename"
+            ? added === "skipped"
+              ? "已跳过：同名项目已存在"
+              : "重命名完成"
+            : "文件夹已创建",
+        );
       setDialog(null);
       setSelection(null);
     },
@@ -176,6 +189,7 @@ export default function App() {
   function openDialog(next: Dialog) {
     mutation.reset();
     setName(next.type === "rename" ? next.entry.name : "");
+    setRenamePolicy("reject");
     setDialog(next);
     setMenu(null);
   }
@@ -192,17 +206,50 @@ export default function App() {
     setSelection(entry.locator.logical_path);
     if (!state.showDetails) state.toggleDetails();
   }
+  const [uploadRequest, setUploadRequest] = useState<Locator | null>(null);
   const fileTransfer = useMutation({
-    mutationFn: ({ remote, upload }: { remote: Locator; upload: boolean }) =>
-      api.transferLocalFile(remote, upload, (job) => {
-        if (upload)
+    mutationFn: async ({
+      remote,
+      upload,
+      conflictPolicy = "reject",
+    }: {
+      remote: Locator;
+      upload: boolean;
+      conflictPolicy?: ConflictPolicy;
+    }) => {
+      const id = ++uploadSequence.current;
+      const jobIds = new Set<string>();
+      const revealUpload = (job: TransferJob) => {
+        if (upload && !jobIds.has(job.id)) {
+          jobIds.add(job.id);
+          setRecentUpload((current) =>
+            current && current.id > id ? current : { id, jobIds: [...jobIds] },
+          );
           setUploadIds((current) =>
             current.has(job.id) ? current : new Set([...current, job.id]),
           );
+        }
+      };
+      const batch = await api.transferLocalFile(
+        remote,
+        upload,
+        (job) => {
+          revealUpload(job);
+          client.setQueryData<TransferJob[]>(["transfers"], (current) =>
+            updateTransfer(current, job),
+          );
+        },
+        conflictPolicy,
+      );
+      // Fast tasks may finish before their progress channel is delivered.
+      for (const job of batch?.jobs ?? []) {
+        revealUpload(job);
         client.setQueryData<TransferJob[]>(["transfers"], (current) =>
           updateTransfer(current, job),
         );
-      }),
+      }
+      return batch;
+    },
     onSuccess: (batch, { upload }) => {
       if (batch) {
         if (upload)
@@ -281,11 +328,16 @@ export default function App() {
           openDialog={openDialog}
           setTransferDialog={setTransferDialog}
           setDeleteDialog={setDeleteDialog}
-          onFileTransfer={fileTransfer.mutate}
+          onFileTransfer={(request) =>
+            request.upload
+              ? setUploadRequest(request.remote)
+              : fileTransfer.mutate({ ...request, conflictPolicy: "overwrite" })
+          }
           onRefresh={() => void entriesQuery.refetch()}
           isFetching={entriesQuery.isFetching}
           transfers={transfersQuery.data ?? []}
           uploadIds={uploadIds}
+          recentUpload={recentUpload}
           transfersLoading={transfersQuery.isPending}
           transfersError={transfersQuery.isError}
           onRetryTransfers={() => void transfersQuery.refetch()}
@@ -326,6 +378,13 @@ export default function App() {
               </div>
             )}
             <FileBrowser
+              key={JSON.stringify([
+                volume.id,
+                path,
+                debouncedSearch,
+                sort,
+                state.showHidden,
+              ])}
               volume={volume}
               path={path}
               entries={entries}
@@ -378,6 +437,19 @@ export default function App() {
           }}
         />
       )}
+      {uploadRequest && (
+        <UploadDialog
+          onClose={() => setUploadRequest(null)}
+          onStart={(conflictPolicy) => {
+            fileTransfer.mutate({
+              remote: uploadRequest,
+              upload: true,
+              conflictPolicy,
+            });
+            setUploadRequest(null);
+          }}
+        />
+      )}
       {transferDialog && (
         <TransferDialog
           {...transferDialog}
@@ -401,15 +473,6 @@ export default function App() {
           onRemove={(item) => {
             setLocationMenu(null);
             setRemovingLocation(item);
-          }}
-        />
-      )}
-      {addingS3 && (
-        <S3StorageDialog
-          onClose={() => setAddingS3(false)}
-          onSaved={(saved) => {
-            setAddingS3(false);
-            navigate(saved.id, "");
           }}
         />
       )}
@@ -459,6 +522,8 @@ export default function App() {
       {dialog && (
         <StorageActionDialog
           dialog={dialog}
+          conflictPolicy={renamePolicy}
+          setConflictPolicy={setRenamePolicy}
           mutation={mutation}
           submit={submit}
           name={name}
@@ -466,7 +531,10 @@ export default function App() {
           readOnly={readOnly}
           setReadOnly={setReadOnly}
           onClose={() => setDialog(null)}
-          onAddS3={() => setAddingS3(true)}
+          onSavedS3={(saved) => {
+            setDialog(null);
+            navigate(saved.id, "");
+          }}
         />
       )}
     </div>

@@ -3,7 +3,9 @@ export type Locator = {
   logical_path: string;
   version_id: string | null;
 };
+export type S3Provider = "generic" | "rustfs" | "tos" | "oss";
 export type S3Config = {
+  provider?: S3Provider | null;
   endpoint: string | null;
   region: string;
   force_path_style: boolean;
@@ -55,6 +57,19 @@ export type Entry = {
 export const isDirectory = (entry: Entry) =>
   entry.kind === "directory" || entry.kind === "virtual_prefix";
 
+export type ConflictPolicy = "reject" | "overwrite" | "skip" | "rename";
+export type EntrySort = "name" | "size" | "modified";
+export type ListOptions = {
+  search: string;
+  show_hidden: boolean;
+  folders_only: boolean;
+  sort: EntrySort;
+};
+export type EntryPage = {
+  entries: Entry[];
+  total: number;
+  next_cursor: string | null;
+};
 export type TransferKind = "copy" | "move";
 export type TransferSettings = {
   upload_kib_per_second: number;
@@ -74,7 +89,8 @@ export type TransferJob = {
     | "completed"
     | "failed"
     | "cancelled"
-    | "interrupted";
+    | "interrupted"
+    | "skipped";
   bytes_total: number | null;
   bytes_transferred: number;
   error_code: string | null;

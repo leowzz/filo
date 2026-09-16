@@ -8,6 +8,7 @@ use uuid::Uuid;
 mod credentials;
 mod entries;
 mod file_operations;
+mod listing;
 mod s3;
 mod volumes;
 pub use credentials::{CredentialStore, SystemCredentialStore};
@@ -26,6 +27,7 @@ pub struct VolumeView {
 #[derive(Clone)]
 pub struct StorageService {
     repository: Repository,
+    listings: Arc<listing::Listings>,
     mutation_lock: Arc<RwLock<()>>,
     transfer_scheduler: Arc<transfers::scheduler::TransferScheduler>,
     transfer_limits: Arc<OnceCell<Arc<TransferLimits>>>,
@@ -42,7 +44,8 @@ impl StorageService {
 
     pub fn with_credentials(repository: Repository, credentials: Arc<dyn CredentialStore>) -> Self {
         Self {
-            credentials,
+            credentials: Arc::new(credentials::CachedCredentialStore::new(credentials)),
+            listings: Arc::new(listing::Listings::default()),
             temporary_backends: Arc::new(Mutex::new(std::collections::HashMap::new())),
             repository,
             mutation_lock: Arc::new(RwLock::new(())),

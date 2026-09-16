@@ -8,6 +8,7 @@ export const transferStateLabels: Record<TransferJob["state"], string> = {
   failed: "失败",
   cancelled: "已取消",
   interrupted: "已中断",
+  skipped: "已跳过",
 };
 
 export function transferPercent(job: TransferJob): number | undefined {

@@ -43,6 +43,7 @@ async fn transfer_local_file(
     service: State<'_, StorageService>,
     remote: StorageLocator,
     upload: bool,
+    conflict_policy: Option<ConflictPolicy>,
     on_progress: tauri::ipc::Channel<TransferJob>,
 ) -> StorageResult<Option<FileTransferBatch>> {
     // Authorize the remote locator before opening any native picker.
@@ -87,10 +88,11 @@ async fn transfer_local_file(
             .into_owned();
         let on_progress = on_progress.clone();
         match service
-            .transfer_selected_file(
+            .transfer_selected_file_with_policy(
                 path,
                 remote.clone(),
                 upload,
+                conflict_policy.unwrap_or_default(),
                 std::sync::Arc::new(move |job| {
                     let _ = on_progress.send(job);
                 }),
@@ -190,15 +192,17 @@ async fn update_local_storage(
 async fn start_transfer(
     service: State<'_, StorageService>,
     kind: TransferKind,
+    conflict_policy: Option<ConflictPolicy>,
     source: StorageLocator,
     destination: StorageLocator,
     on_progress: tauri::ipc::Channel<TransferJob>,
 ) -> StorageResult<TransferJob> {
     service
-        .start_transfer(
+        .start_transfer_with_policy(
             kind,
             source,
             destination,
+            conflict_policy.unwrap_or_default(),
             std::sync::Arc::new(move |job| {
                 let _ = on_progress.send(job);
             }),
@@ -225,6 +229,18 @@ async fn remove_local_storage(
     service.remove_local_storage(volume_id, confirmed).await
 }
 #[tauri::command]
+async fn list_entries_page(
+    service: State<'_, StorageService>,
+    parent: StorageLocator,
+    options: ListOptions,
+    cursor: Option<String>,
+    limit: Option<usize>,
+) -> StorageResult<EntryPage> {
+    service
+        .list_entries_page(parent, options, cursor, limit.unwrap_or(200))
+        .await
+}
+#[tauri::command]
 async fn stat_entry(
     service: State<'_, StorageService>,
     locator: StorageLocator,
@@ -244,8 +260,11 @@ async fn rename_entry(
     service: State<'_, StorageService>,
     source: StorageLocator,
     name: String,
-) -> StorageResult<()> {
-    service.rename_entry(source, name).await
+    conflict_policy: Option<ConflictPolicy>,
+) -> StorageResult<TransferState> {
+    service
+        .rename_entry_with_policy(source, name, conflict_policy.unwrap_or_default())
+        .await
 }
 #[tauri::command]
 async fn open_entry(
@@ -299,6 +318,7 @@ fn main() {
             list_transfers,
             cancel_transfer,
             list_entries,
+            list_entries_page,
             stat_entry,
             create_directory,
             rename_entry,

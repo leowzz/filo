@@ -5,6 +5,7 @@ const task = await taskSpace(globalThis.filoTestSpace ?? "Filo parallel transfer
 console.log({ spaceId: task.spaceId });
 const page = task.page("p1");
 await page.cdp("Page.addScriptToEvaluateOnNewDocument", { source: `
+(() => {
 window.isTauri = true;
 window.jobs = [];
 window.entries = [];
@@ -27,34 +28,41 @@ window.__TAURI_INTERNALS__ = {
   invoke: async (cmd, args) => {
     if (cmd === 'list_volumes') return [volume];
     if (cmd === 'list_entries') { window.reads++; return [...window.entries]; }
+    if (cmd === 'list_entries_page') { window.reads++; return {entries:[...window.entries], total:window.entries.length, next_cursor:null}; }
     if (cmd === 'list_transfers') return window.jobs.map(job => ({...job}));
     if (cmd === 'transfer_local_file') {
+      if (window.cancelPicker) return null;
       observer = args.onProgress.onmessage;
-      window.jobs = Array.from({length: 5}, (_, i) => ({
-        id: String(i), kind: 'copy', state: i < 3 ? 'running' : 'queued',
-        source: {volume_id:'local-'+i, logical_path:'upload-'+i+'.pdf',version_id:null},
-        destination: {...args.remote,logical_path:'upload-'+i+'.pdf'},
+      const start = window.jobs.length;
+      const batch = Array.from({length: 5}, (_, i) => ({
+        id: String(start + i), kind: 'copy', state: i < 3 ? 'running' : 'queued',
+        source: {volume_id:'local-'+i, logical_path:'upload-'+(start+i)+'.pdf',version_id:null},
+        destination: {...args.remote,logical_path:'upload-'+(start+i)+'.pdf'},
         bytes_total: i === 2 ? null : 1000, bytes_transferred: i === 0 ? 200 : i === 1 ? 500 : 0,
         created_at: timestamp(), updated_at: timestamp(), error_code: null, error_message: null,
       }));
-      window.jobs.forEach(job => observer({...job}));
-      return {jobs: window.jobs.map(job => ({...job})), failures: ['denied.pdf：无法读取文件']};
+      window.jobs.unshift(...batch);
+      batch.forEach(job => observer({...job}));
+      return {jobs: batch.map(job => ({...job})), failures: ['denied.pdf：无法读取文件']};
     }
     if (cmd === 'cancel_transfer') { window.advance(args.jobId, 'cancelled', 0); return; }
     throw new Error('Unexpected IPC: '+cmd);
   }
 };
+})();
 ` });
 await page.goto("http://127.0.0.1:1420");
 await page.waitForSelector('.volume-nav button[title="并行测试"]');
 await page.click('.volume-nav button[title="并行测试"]');
 await page.waitForSelector('button[aria-label="上传文件"]');
 await page.click('button[aria-label="上传文件"]');
+await page.click('button:text-is("选择文件…")');
 await page.waitForSelector('button[aria-label="上传中 3"]');
 assert.equal(await page.evaluate(() => !!document.querySelector('.file-table')), true);
-assert.equal(await page.evaluate(() => !!document.querySelector('.transfer-tasks-popover')), false);
+await page.waitForSelector('.transfer-tasks-popover');
+assert.equal(await page.evaluate(() => document.querySelectorAll('.transfer-item.is-highlighted').length), 5);
+assert.equal(await page.evaluate(() => document.querySelector('.transfer-tasks-popover').getBoundingClientRect().height <= 440), true);
 assert.match(await page.evaluate(() => document.querySelector('.notice').textContent), /已提交 5 项，1 项未开始/);
-await page.click('button[aria-label="上传中 3"]');
 await page.waitForSelector('.transfer-tasks-popover');
 assert.match(await page.evaluate(() => document.querySelector('.transfer-tasks-header').textContent), /3 项传输中 · 2 项等待中/);
 assert.equal(await page.evaluate(() => document.querySelectorAll('.transfer-tasks-list article').length), 5);
@@ -64,6 +72,10 @@ const order = await page.evaluate(() => [...document.querySelectorAll('.transfer
 await page.evaluate(() => window.advance('0', 'running', 650));
 await page.waitForFunction(() => document.querySelector('progress[aria-label="upload-0.pdf 传输进度"]').value === 65);
 assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.transfer-tasks-list strong')].map(node => node.textContent)), order);
+await page.evaluate(() => window.advance('0', 'verifying', 1000));
+await page.waitForSelector('progress[aria-label="upload-0.pdf 校验进度"]');
+assert.equal(await page.evaluate(() => document.querySelector('progress[aria-label="upload-0.pdf 校验进度"]').hasAttribute('value')), false, 'verification must not pretend to be complete');
+assert.match(await page.evaluate(() => document.querySelector('[data-transfer-id="0"] .transfer-percent').textContent), /正在校验/);
 await page.evaluate(() => window.advance('0', 'completed', 1000));
 await page.waitForSelector('tr[data-entry-path="upload-0.pdf"]');
 assert.equal(await page.evaluate(() => window.reads), 2, 'completion refreshes the directory');
@@ -93,5 +105,26 @@ const edges = await page.evaluate(async () => {
   };
 });
 assert.deepEqual(edges, {empty:100,unknown:true,overflow:100,staleIgnored:true});
-console.log('PASS: multi-upload submission, partial failures, concurrent/queued counts, live percentages, stable row order, unknown and zero sizes, cancellation isolation, channel/poll completion refresh');
-await task.finish({ keep: [] });
+// A new selection reopens the list and highlights only that batch, even when
+// the user had scrolled through older tasks.
+await page.click('button[aria-label="上传文件"]');
+await page.click('button:text-is("选择文件…")');
+await page.waitForSelector('.transfer-tasks-popover');
+assert.equal(await page.evaluate(() => document.querySelectorAll('.transfer-item.is-highlighted').length), 5);
+assert.equal(await page.evaluate(() => document.querySelector('.transfer-tasks-list article').dataset.transferId), '9');
+await page.click('button[aria-label="关闭任务列表"]');
+await page.evaluate(() => window.advance('5', 'running', 600));
+assert.equal(await page.evaluate(() => !!document.querySelector('.transfer-tasks-popover')), false, 'progress never reopens a dismissed list');
+await page.evaluate(() => window.cancelPicker = true);
+await page.click('button[aria-label="上传文件"]');
+await page.click('button:text-is("选择文件…")');
+assert.equal(await page.evaluate(() => !!document.querySelector('.transfer-tasks-popover')), false, 'cancelling the picker does not open the list');
+await page.click('.transfer-tasks-trigger');
+await page.waitForFunction(() => document.querySelectorAll('.transfer-item.is-highlighted').length === 0);
+await page.cdp('Emulation.setDeviceMetricsOverride', {width:960,height:540,deviceScaleFactor:1,mobile:false});
+assert.equal(await page.evaluate(() => {
+  const panel = document.querySelector('.transfer-tasks-popover').getBoundingClientRect();
+  return panel.height <= 440 && panel.bottom <= innerHeight && panel.right <= innerWidth;
+}), true, 'compact list fits minimum desktop size');
+console.log('PASS: automatic reveal, compact size, latest-batch priority, temporary highlights, manual dismissal, cancelled picker, stable progress and completion refresh');
+if (!globalThis.filoKeepBrowser) await task.finish({ keep: [] });

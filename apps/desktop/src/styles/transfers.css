@@ -149,11 +149,11 @@
 }
 .transfer-tasks-popover {
   position: absolute;
-  top: calc(100% + 12px);
+  top: calc(100% + 8px);
   right: 0;
   z-index: 40;
-  width: min(380px, calc(100vw - 32px));
-  max-height: calc(100vh - 90px);
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(440px, calc(100vh - 100px));
   display: flex;
   flex-direction: column;
   border: 1px solid #d8d8d8;
@@ -166,23 +166,66 @@
 .transfer-tasks-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 7px 10px;
+  flex-shrink: 0;
   border-bottom: 1px solid var(--line);
 }
 .transfer-tasks-header h2 {
   flex: 1;
-  font-size: 14px;
+  font-size: 13px;
 }
 .transfer-tasks-header .muted {
-  font-size: 12px;
+  font-size: 11px;
 }
 .transfer-tasks-list {
   overflow-y: auto;
   min-height: 0;
 }
 .transfer-tasks-list .transfer-item {
-  padding: 12px 14px;
+  padding: 9px 12px;
+  transition: background-color 0.6s, box-shadow 0.6s;
+}
+.transfer-tasks-list .transfer-heading {
+  min-height: 20px;
+  gap: 6px;
+  margin-bottom: 0;
+}
+.transfer-tasks-list .transfer-heading strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+.transfer-tasks-list .transfer-state {
+  font-size: 11px;
+}
+.transfer-tasks-list .transfer-progress {
+  margin-bottom: 0;
+}
+.transfer-tasks-list progress {
+  height: 3px;
+  margin: 5px 0;
+}
+.transfer-tasks-trigger.is-highlighted {
+  color: var(--accent);
+  background: #007aff16;
+  box-shadow: 0 0 0 2px #007aff28;
+}
+.transfer-batch-label {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: #687585;
+  background: #f7f8fa;
+  border-bottom: 1px solid #e7e7e7;
+}
+.transfer-tasks-list .transfer-item.is-highlighted,
+.transfer-batch-label.is-highlighted {
+  background: #edf5ff;
+  box-shadow: inset 3px 0 var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .transfer-tasks-list .transfer-item {
+    transition: none;
+  }
 }
 .transfer-tasks-message {
   padding: 20px 14px;
@@ -194,12 +237,16 @@
 }
 .transfer-tasks-error {
   overflow-wrap: anywhere;
-  font-size: 12px;
-  margin-top: 8px;
+  font-size: 11px;
+  margin-top: 4px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 .transfer-tasks-all {
   flex-shrink: 0;
-  padding: 12px;
+  padding: 9px;
   border-top: 1px solid var(--line);
   font-size: 12px;
 }

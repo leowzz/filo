@@ -8,8 +8,19 @@ pub enum ProviderKind {
     S3,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum S3Provider {
+    Generic,
+    Rustfs,
+    Tos,
+    Oss,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct S3ConnectionConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<S3Provider>,
     pub endpoint: Option<String>,
     pub region: String,
     pub force_path_style: bool,
@@ -74,6 +85,16 @@ pub enum TransferKind {
     Move,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictPolicy {
+    #[default]
+    Reject,
+    Overwrite,
+    Skip,
+    Rename,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TransferState {
@@ -84,6 +105,7 @@ pub enum TransferState {
     Failed,
     Cancelled,
     Interrupted,
+    Skipped,
 }
 
 impl TransferState {
@@ -140,6 +162,31 @@ pub struct StorageEntry {
     pub etag: Option<String>,
     pub content_type: Option<String>,
     pub metadata: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EntrySort {
+    #[default]
+    Name,
+    Size,
+    Modified,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ListOptions {
+    pub search: String,
+    pub show_hidden: bool,
+    pub folders_only: bool,
+    pub sort: EntrySort,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntryPage {
+    pub entries: Vec<StorageEntry>,
+    pub next_cursor: Option<String>,
+    pub total: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -325,6 +372,32 @@ pub fn validate_name(name: &str) -> StorageResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn s3_provider_metadata_is_optional_and_survives_round_trip() {
+        let legacy = serde_json::json!({
+            "endpoint": "http://localhost:9000",
+            "region": "us-east-1",
+            "force_path_style": true
+        });
+        let mut config: S3ConnectionConfig = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(config.provider, None);
+        assert_eq!(serde_json::to_value(&config).unwrap(), legacy);
+        for provider in [
+            S3Provider::Generic,
+            S3Provider::Rustfs,
+            S3Provider::Tos,
+            S3Provider::Oss,
+        ] {
+            config.provider = Some(provider.clone());
+            let saved = serde_json::to_value(&config).unwrap();
+            let restored: S3ConnectionConfig = serde_json::from_value(saved).unwrap();
+            assert_eq!(restored.provider, Some(provider));
+            assert_eq!(restored.endpoint, config.endpoint);
+            assert_eq!(restored.region, config.region);
+            assert_eq!(restored.force_path_style, config.force_path_style);
+        }
+    }
+
     #[test]
     fn rejects_escape_and_normalizes_relative_paths() {
         for path in [

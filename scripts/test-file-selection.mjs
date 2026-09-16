@@ -1,11 +1,14 @@
 // Run with the Vite server running: ego-browser nodejs < scripts/test-file-selection.mjs
 // Fixtures replace Tauri IPC only in this test page; no real files are modified.
 const assert = (await import("node:assert/strict")).default;
-const task = await taskSpace("Filo file selection regression");
+const task = await taskSpace(
+  globalThis.filoTestSpace ?? "Filo file selection regression",
+);
 console.log({ spaceId: task.spaceId });
 const page = task.page("p1");
 await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
   source: `
+(() => {
     window.isTauri = true;
     window.testCalls = [];
     const volume = {
@@ -19,15 +22,17 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
       if (command === 'list_volumes') return [volume];
       if (command === 'list_transfers') return [];
       if (command === 'open_entry') return;
-      if (command === 'list_entries') return [
+      if (command === 'list_entries_page') { const entries = [
         { name: 'Folder', kind: 'directory', size: null },
         ...Array.from({ length: 60 }, (_, i) => ({ name: 'file-' + String(i + 1).padStart(2, '0') + '.txt', kind: 'file', size: i + 100 }))
       ].map(entry => ({ ...entry, modified_at: '2026-09-16T00:00:00Z', locator: {
         volume_id: volume.id, logical_path: args.parent.logical_path + '/' + entry.name, version_id: null
-      }}));
+      }})).filter(entry => entry.name.includes(args.options.search)); return {entries, total: entries.length, next_cursor: null}; }
       throw new Error('Unexpected test IPC: ' + command);
     }};
-  `,
+
+})();
+`,
 });
 await page.goto("http://127.0.0.1:1420");
 await page.waitForSelector('.volume-nav button[title="/selection-test"]');
@@ -132,7 +137,11 @@ assert.equal((await selected()).length, 0, "Blank space clears selection");
 await drag(margin, await point(4));
 assert.ok((await selected()).length > 1, "Drag can start in blank space");
 await page.keyboard.press("Meta+a");
-assert.equal((await selected()).length, 61, "Select all targets file rows");
+assert.match(
+  await page.evaluate(() => document.querySelector(".statusbar").textContent),
+  /已选择 61 项/,
+  "Select all includes unmounted rows",
+);
 await page.keyboard.press("Escape");
 assert.equal((await selected()).length, 0);
 
@@ -221,4 +230,4 @@ assert.equal((await selected()).length, 0, "Navigation clears selection");
 console.log(
   "PASS: click, modifier/range selection, forward/reverse/additive/blank-space drag, text suppression, toolbar/status, select all, escape, edge scrolling, filtering, double click, menu, navigation",
 );
-await task.finish({ keep: [] });
+if (!globalThis.filoKeepBrowser) await task.finish({ keep: [] });

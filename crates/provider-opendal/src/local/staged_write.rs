@@ -1,6 +1,6 @@
 use super::{io_error, OpenDalLocalBackend};
 use storage_domain::*;
-use storage_provider_api::{StagedWrite, StorageReader};
+use storage_provider_api::{StagedWrite, StorageBackend, StorageReader};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use uuid::Uuid;
 
@@ -9,6 +9,7 @@ struct LocalStagedWrite {
     writer: tokio::fs::File,
     volume: StorageVolume,
     target: StorageLocator,
+    expected: Option<StorageEntry>,
 }
 
 #[async_trait::async_trait]
@@ -31,17 +32,34 @@ impl StagedWrite for LocalStagedWrite {
     async fn commit(self: Box<Self>) -> StorageResult<()> {
         let backend = OpenDalLocalBackend::new(&self.volume).await?;
         let logical = backend.check_locator(&self.target)?;
-        backend.require_absent(&logical).await?;
+        if let Some(expected) = &self.expected {
+            let current = backend.stat(&self.target).await?;
+            if current.kind != StorageEntryKind::File
+                || current.size != expected.size
+                || current.modified_at != expected.modified_at
+            {
+                return Err(StorageError::new(
+                    StorageErrorCode::Conflict,
+                    "目标文件已变化，未覆盖，请重新确认",
+                ));
+            }
+        } else {
+            backend.require_absent(&logical).await?;
+        }
         let target = backend.checked_path(&logical, true).await?;
+        let replace = self.expected.is_some();
         let Self {
             temporary, writer, ..
         } = *self;
         drop(writer);
         tokio::task::spawn_blocking(move || {
-            temporary
-                .persist_noclobber(target)
-                .map(|_| ())
-                .map_err(|error| io_error(error.error))
+            (if replace {
+                temporary.persist(target)
+            } else {
+                temporary.persist_noclobber(target)
+            })
+            .map(|_| ())
+            .map_err(|error| io_error(error.error))
         })
         .await
         .map_err(|_| StorageError::new(StorageErrorCode::Internal, "保存文件任务意外中断"))?
@@ -53,9 +71,26 @@ impl OpenDalLocalBackend {
         &self,
         locator: &StorageLocator,
     ) -> StorageResult<Box<dyn StagedWrite>> {
+        self.prepare_write_mode(locator, None).await
+    }
+
+    pub(super) async fn prepare_write_mode(
+        &self,
+        locator: &StorageLocator,
+        expected: Option<StorageEntry>,
+    ) -> StorageResult<Box<dyn StagedWrite>> {
         let logical = self.check_locator(locator)?;
         self.writable(&logical)?;
-        self.require_absent(&logical).await?;
+        if let Some(entry) = &expected {
+            if entry.kind != StorageEntryKind::File {
+                return Err(StorageError::new(
+                    StorageErrorCode::Conflict,
+                    "仅能用文件覆盖同名文件",
+                ));
+            }
+        } else {
+            self.require_absent(&logical).await?;
+        }
         let path = self.checked_path(&logical, true).await?;
         let parent = path
             .parent()
@@ -73,6 +108,7 @@ impl OpenDalLocalBackend {
         Ok(Box::new(LocalStagedWrite {
             temporary,
             writer,
+            expected,
             target: locator.clone(),
             volume: StorageVolume {
                 id: self.volume_id,

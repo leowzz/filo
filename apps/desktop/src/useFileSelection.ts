@@ -7,6 +7,8 @@ import {
   type KeyboardEvent,
 } from "react";
 
+import { ROW_HEIGHT, HEADER_HEIGHT } from "./useVirtualRows";
+
 type Modifiers = { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean };
 type Point = { x: number; y: number };
 type Rectangle = Point & { width: number; height: number };
@@ -123,22 +125,18 @@ export function useFileSelection(scope: string, paths: string[]) {
       };
       const next = new Set(base);
       let first: string | null = null;
-      for (const item of area.querySelectorAll<HTMLElement>(
-        "[data-entry-path]",
-      )) {
-        const rowRect = item.getBoundingClientRect();
-        const left = rowRect.left - rect.left + area.scrollLeft;
-        const top = rowRect.top - rect.top + area.scrollTop;
-        if (
-          left <= box.x + box.width &&
-          left + rowRect.width >= box.x &&
-          top <= box.y + box.height &&
-          top + rowRect.height >= box.y
-        ) {
-          const path = item.dataset.entryPath!;
-          next.add(path);
-          first ??= path;
-        }
+      // Select by row geometry, including rows outside the rendered window.
+      const firstIndex = Math.max(
+        0,
+        Math.floor((box.y - HEADER_HEIGHT) / ROW_HEIGHT),
+      );
+      const lastIndex = Math.min(
+        paths.length - 1,
+        Math.floor((box.y + box.height - HEADER_HEIGHT) / ROW_HEIGHT),
+      );
+      for (let index = firstIndex; index <= lastIndex; index++) {
+        next.add(paths[index]);
+        first ??= paths[index];
       }
       setRectangle(box);
       setState({ scope, paths: next, anchor: row?.dataset.entryPath ?? first });

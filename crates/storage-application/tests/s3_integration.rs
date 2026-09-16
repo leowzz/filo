@@ -87,6 +87,7 @@ async fn rustfs_roundtrip_and_safety() {
     let mut input = S3StorageInput {
         name: "RustFS test".into(),
         config: S3ConnectionConfig {
+            provider: None,
             endpoint: Some(config["endpoint"].as_str().unwrap().into()),
             region: config["region"].as_str().unwrap().into(),
             force_path_style: true,
@@ -224,6 +225,25 @@ async fn rustfs_roundtrip_and_safety() {
         Some(6)
     );
 
+    // Conditional server-side replacement must verify provider hashes without
+    // streaming the staged object back through this machine.
+    let replace_target = locator(&remote, "replace.bin");
+    let mut original = backend.stage_write(&replace_target).await.unwrap();
+    original.write(b"original").await.unwrap();
+    original.commit().await.unwrap();
+    let expected = backend.stat(&replace_target).await.unwrap();
+    let mut stale = backend.stage_replace(&expected).await.unwrap();
+    stale.write(b"stale replacement").await.unwrap();
+    let mut winner = backend.stage_replace(&expected).await.unwrap();
+    for chunk in bytes.chunks(256 * 1024) { winner.write(chunk).await.unwrap(); }
+    winner.commit().await.unwrap();
+    assert!(stale.commit().await.is_err(), "stale conditional replacement must fail");
+    let mut replaced = backend.open_read(&replace_target).await.unwrap();
+    let mut content = Vec::new();
+    tokio::io::AsyncReadExt::read_to_end(&mut replaced, &mut content).await.unwrap();
+    assert_eq!(content, bytes);
+    backend.delete(&replace_target).await.unwrap();
+
     // Cross-volume S3 copies/moves, including identical bucket names on independent connections.
     let mut other_input = input.clone();
     other_input.prefix.push_str("-other");
@@ -346,6 +366,109 @@ async fn rustfs_roundtrip_and_safety() {
         .await
         .unwrap()
         .is_empty());
+
+    // Conflict policies publish verified content without pre-deleting the old target.
+    let overwrite = service
+        .start_transfer_with_policy(
+            TransferKind::Copy,
+            locator(&local, "sample.bin"),
+            locator(&remote, "race"),
+            ConflictPolicy::Overwrite,
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+    let overwrite = wait(&service, overwrite).await;
+    assert_eq!(
+        overwrite.state,
+        TransferState::Completed,
+        "{:?}",
+        overwrite.error_message
+    );
+    assert_eq!(
+        backend.stat(&locator(&remote, "race")).await.unwrap().size,
+        Some(bytes.len() as u64)
+    );
+    let skip = service
+        .start_transfer_with_policy(
+            TransferKind::Move,
+            locator(&local, "sample.bin"),
+            locator(&remote, "race"),
+            ConflictPolicy::Skip,
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wait(&service, skip).await.state, TransferState::Skipped);
+    assert!(local_dir.path().join("sample.bin").exists());
+    let rename = service
+        .start_transfer_with_policy(
+            TransferKind::Copy,
+            locator(&local, "empty"),
+            locator(&remote, "race"),
+            ConflictPolicy::Rename,
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+    let rename = wait(&service, rename).await;
+    assert_eq!(rename.state, TransferState::Completed);
+    assert_eq!(rename.destination.logical_path, "race (1)");
+    service
+        .delete_entry(rename.destination, DeleteMode::Permanent, true)
+        .await
+        .unwrap();
+    let expected = backend.stat(&locator(&remote, "race")).await.unwrap();
+    let mut stale = backend.stage_replace(&expected).await.unwrap();
+    stale.write(b"stale replacement").await.unwrap();
+    drop(stale.reader().await.unwrap());
+    let mut newer = backend.stage_replace(&expected).await.unwrap();
+    newer.write(b"concurrent edit").await.unwrap();
+    newer.commit().await.unwrap();
+    assert!(
+        stale.commit().await.is_err(),
+        "conditional overwrite must retain concurrent target edits"
+    );
+    assert_eq!(
+        backend.stat(&locator(&remote, "race")).await.unwrap().size,
+        Some(15)
+    );
+    // Small pages exercise the actual S3 lister and snapshot without loading an entire layer into IPC.
+    let mut page = service
+        .list_entries_page(
+            locator(&remote, ""),
+            ListOptions {
+                show_hidden: true,
+                ..Default::default()
+            },
+            None,
+            1,
+        )
+        .await
+        .unwrap();
+    let total = page.total;
+    let mut names = std::collections::HashSet::new();
+    loop {
+        for entry in page.entries {
+            assert!(names.insert(entry.name));
+        }
+        let Some(cursor) = page.next_cursor else {
+            break;
+        };
+        page = service
+            .list_entries_page(
+                locator(&remote, ""),
+                ListOptions {
+                    show_hidden: true,
+                    ..Default::default()
+                },
+                Some(cursor),
+                1,
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(names.len() as u64, total);
 
     // Root protection, path traversal, read-only enforcement, and keychain reference rotation.
     assert!(service

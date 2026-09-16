@@ -5,7 +5,7 @@ import {
   LoaderCircle,
   X,
 } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 import { activeTransfer, type TransferJob } from "./types";
 import { TransferProgress } from "./TransferProgress";
 import {
@@ -17,6 +17,7 @@ import {
 export function TransferTasksMenu({
   jobs,
   uploadIds,
+  recentUpload,
   loading,
   error,
   onRetry,
@@ -24,12 +25,18 @@ export function TransferTasksMenu({
 }: {
   jobs: TransferJob[];
   uploadIds: Set<string>;
+  recentUpload: { id: number; jobIds: string[] } | null;
   loading: boolean;
   error: boolean;
   onRetry: () => void;
   onViewAll: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [highlightedUpload, setHighlightedUpload] = useState<number | null>(
+    null,
+  );
+  const revealedUpload = useRef<number | null>(null);
+  const list = useRef<HTMLDivElement>(null);
   const ref = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -46,10 +53,33 @@ export function TransferTasksMenu({
         : `传输中 ${running}`
     : "传输任务";
   const recent = sortTransfers(jobs);
+  const batchIds = new Set(recentUpload?.jobIds ?? []);
+  const batchJobs = recent
+    .filter((job) => batchIds.has(job.id))
+    .sort(
+      (a, b) =>
+        b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id),
+    );
+  const otherJobs = recent.filter((job) => !batchIds.has(job.id));
+  const highlighting =
+    recentUpload !== null && highlightedUpload === recentUpload.id;
   const visible = [
-    ...recent.filter(activeTransfer),
-    ...recent.filter((job) => !activeTransfer(job)).slice(0, 5),
+    ...batchJobs,
+    ...otherJobs.filter(activeTransfer),
+    ...otherJobs.filter((job) => !activeTransfer(job)).slice(0, 3),
   ];
+
+  useEffect(() => {
+    if (!recentUpload) return;
+    if (revealedUpload.current !== recentUpload.id) {
+      revealedUpload.current = recentUpload.id;
+      setOpen(true);
+      if (list.current) list.current.scrollTop = 0;
+    }
+    setHighlightedUpload(recentUpload.id);
+    const timer = window.setTimeout(() => setHighlightedUpload(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [recentUpload]);
 
   useEffect(() => {
     if (!open) return;
@@ -83,7 +113,7 @@ export function TransferTasksMenu({
     >
       <button
         ref={trigger}
-        className={`icon-button transfer-tasks-trigger ${active.length ? "is-active" : ""} ${open ? "on" : ""}`}
+        className={`icon-button transfer-tasks-trigger ${active.length ? "is-active" : ""} ${open ? "on" : ""} ${highlighting ? "is-highlighted" : ""}`}
         aria-label={label}
         title={label}
         aria-expanded={open}
@@ -135,39 +165,58 @@ export function TransferTasksMenu({
               暂无传输任务，上传后可在这里查看进度。
             </p>
           )}
-          <div className="transfer-tasks-list">
-            {visible.map((job) => {
+          <div className="transfer-tasks-list" ref={list}>
+            {batchJobs.length > 0 && (
+              <p
+                className={`transfer-batch-label ${highlighting ? "is-highlighted" : ""}`}
+                role="status"
+              >
+                本次上传 · {batchJobs.length} 项
+              </p>
+            )}
+            {visible.map((job, index) => {
               const upload = uploadIds.has(job.id);
               const name = job.source.logical_path.split("/").at(-1);
               return (
-                <article className="transfer-item" key={job.id}>
-                  <div className="transfer-heading">
-                    {activeTransfer(job) ? (
-                      <LoaderCircle size={16} className="spin" />
-                    ) : job.state === "completed" ? (
-                      <CircleCheck size={16} />
-                    ) : (
-                      <CircleX size={16} />
-                    )}
-                    <strong title={name}>{name}</strong>
-                    <span className={`transfer-state ${job.state}`}>
-                      {upload && job.state === "running"
-                        ? "上传中"
-                        : transferStateLabels[job.state]}
-                    </span>
-                  </div>
-                  <div className="transfer-meta">
-                    <span>
-                      {upload ? "上传" : job.kind === "move" ? "移动" : "传输"}
-                    </span>
-                  </div>
-                  <TransferProgress job={job} />
-                  {job.error_message && (
-                    <p className="error-text transfer-tasks-error">
-                      {job.error_message}
-                    </p>
+                <Fragment key={job.id}>
+                  {batchJobs.length > 0 && index === batchJobs.length && (
+                    <p className="transfer-batch-label">其他任务</p>
                   )}
-                </article>
+                  <article
+                    className={`transfer-item ${highlighting && batchIds.has(job.id) ? "is-highlighted" : ""}`}
+                    data-transfer-id={job.id}
+                  >
+                    <div className="transfer-heading">
+                      {activeTransfer(job) ? (
+                        <LoaderCircle size={16} className="spin" />
+                      ) : job.state === "completed" ? (
+                        <CircleCheck size={16} />
+                      ) : (
+                        <CircleX size={16} />
+                      )}
+                      <strong title={name}>{name}</strong>
+                      <span className={`transfer-state ${job.state}`}>
+                        {upload && job.state === "running"
+                          ? "上传中"
+                          : transferStateLabels[job.state]}
+                      </span>
+                    </div>
+                    <TransferProgress
+                      job={job}
+                      operation={
+                        upload ? "上传" : job.kind === "move" ? "移动" : "传输"
+                      }
+                    />
+                    {job.error_message && (
+                      <p
+                        className="error-text transfer-tasks-error"
+                        title={job.error_message}
+                      >
+                        {job.error_message}
+                      </p>
+                    )}
+                  </article>
+                </Fragment>
               );
             })}
           </div>

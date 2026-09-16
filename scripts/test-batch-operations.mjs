@@ -8,6 +8,7 @@ console.log({ spaceId: task.spaceId });
 const page = task.page("p1");
 await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
   source: `
+(() => {
 window.isTauri = true;
 window.testCalls = [];
 window.allowTransfer = false;
@@ -22,7 +23,7 @@ window.__TAURI_INTERNALS__ = {
    window.testCalls.push({command, args});
    if (command === 'list_volumes') return volumes;
    if (command === 'list_transfers') return window.testJobs;
-   if (command === 'list_entries') return args.parent.volume_id === 'source' && !args.parent.logical_path ? window.testItems.map(item => ({ ...item, locator: { volume_id: 'source', logical_path: item.name, version_id: null } })) : [];
+   if (command === 'list_entries_page') { const entries = args.parent.volume_id === 'source' && !args.parent.logical_path ? window.testItems.filter(item => !args.options.folders_only || item.kind === 'directory').sort((a,b) => Number(b.kind === 'directory') - Number(a.kind === 'directory') || a.name.localeCompare(b.name)).map(item => ({ ...item, locator: { volume_id: 'source', logical_path: item.name, version_id: null } })) : []; return {entries, total: entries.length, next_cursor: null}; }
    if (command === 'start_transfer') {
      if (args.source.logical_path === 'denied.txt' && !window.allowTransfer) throw {code:'access_denied',message:'测试：无法读取此项目'};
      const job = { id: String(window.testJobs.length + 1), kind: args.kind, source: args.source, destination: args.destination, state: 'completed', created_at: '2026-09-16T00:00:00Z', updated_at: '2026-09-16T00:00:00Z', error_code: null, error_message: null, bytes_total: 10, bytes_transferred: 10 };
@@ -38,6 +39,8 @@ window.__TAURI_INTERNALS__ = {
    throw new Error('Unexpected IPC: ' + command);
  }
 };
+
+})();
 `,
 });
 await page.goto("http://127.0.0.1:1420");

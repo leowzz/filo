@@ -1,6 +1,9 @@
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   Entry,
+  EntryPage,
+  ListOptions,
+  ConflictPolicy,
   Locator,
   Volume,
   TransferJob,
@@ -36,6 +39,7 @@ export const api = {
     remote: Locator,
     upload: boolean,
     onProgress: (job: TransferJob) => void,
+    conflictPolicy: ConflictPolicy = "reject",
   ) => {
     const channel = new Channel<TransferJob>();
     channel.onmessage = onProgress;
@@ -44,6 +48,7 @@ export const api = {
       {
         remote,
         upload,
+        conflictPolicy,
         onProgress: channel,
       },
     );
@@ -64,6 +69,13 @@ export const api = {
       readOnly,
       changeDirectory,
     }),
+  entriesPage: (parent: Locator, options: ListOptions, cursor: string | null) =>
+    invoke<EntryPage>("list_entries_page", {
+      parent,
+      options,
+      cursor,
+      limit: 200,
+    }),
   entries: (parent: Locator) => invoke<Entry[]>("list_entries", { parent }),
   removeLocal: (volumeId: string) =>
     invoke<void>("remove_local_storage", { volumeId, confirmed: true }),
@@ -75,11 +87,13 @@ export const api = {
     source: Locator,
     destination: Locator,
     onProgress: (job: TransferJob) => void,
+    conflictPolicy: ConflictPolicy = "reject",
   ) => {
     const channel = new Channel<TransferJob>();
     channel.onmessage = onProgress;
     return invoke<TransferJob>("start_transfer", {
       kind,
+      conflictPolicy,
       source,
       destination,
       onProgress: channel,
@@ -87,8 +101,16 @@ export const api = {
   },
   createDirectory: (parent: Locator, name: string) =>
     invoke<void>("create_directory", { parent, name }),
-  rename: (source: Locator, name: string) =>
-    invoke<void>("rename_entry", { source, name }),
+  rename: (
+    source: Locator,
+    name: string,
+    conflictPolicy: ConflictPolicy = "reject",
+  ) =>
+    invoke<TransferJob["state"]>("rename_entry", {
+      source,
+      name,
+      conflictPolicy,
+    }),
   open: (locator: Locator) => invoke<void>("open_entry", { locator }),
   delete: (locator: Locator, mode: DeleteMode, recursive = false) =>
     invoke<DeleteOutcome>("delete_entry", {

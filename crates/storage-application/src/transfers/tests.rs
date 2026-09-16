@@ -824,3 +824,235 @@ async fn recursive_cleanup_never_deletes_a_file_that_replaced_a_directory() {
     );
     assert_eq!(std::fs::read(&path).unwrap(), b"new unrelated file");
 }
+
+#[tokio::test]
+async fn conflict_policies_preserve_skipped_sources_and_persist_renamed_destinations() {
+    let fixture = Fixture::new().await;
+    std::fs::write(fixture.destination.path().join("target.bin"), b"old target").unwrap();
+    let request = fixture.job(TransferKind::Move);
+    let skipped = fixture
+        .service
+        .start_transfer_with_policy(
+            request.kind,
+            request.source.clone(),
+            request.destination.clone(),
+            ConflictPolicy::Skip,
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture.result(skipped.id).await.state,
+        TransferState::Skipped
+    );
+    assert!(fixture.source.path().join("source.bin").exists());
+    assert_eq!(
+        std::fs::read(fixture.destination.path().join("target.bin")).unwrap(),
+        b"old target"
+    );
+    let copied = fixture
+        .service
+        .start_transfer_with_policy(
+            TransferKind::Copy,
+            request.source.clone(),
+            request.destination.clone(),
+            ConflictPolicy::Rename,
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+    let copied = fixture.result(copied.id).await;
+    assert_eq!(copied.state, TransferState::Completed);
+    assert_eq!(copied.destination.logical_path, "target (1).bin");
+    let moved = fixture
+        .service
+        .start_transfer_with_policy(
+            TransferKind::Move,
+            request.source,
+            request.destination,
+            ConflictPolicy::Overwrite,
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture.result(moved.id).await.state,
+        TransferState::Completed
+    );
+    assert!(!fixture.source.path().join("source.bin").exists());
+    assert_eq!(
+        std::fs::read(fixture.destination.path().join("target.bin")).unwrap(),
+        std::fs::read(fixture.destination.path().join("target (1).bin")).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn cancelled_or_changed_overwrite_retains_the_old_target_and_source() {
+    for cancel in [false, true] {
+        let fixture = Fixture::new().await;
+        let target = fixture.destination.path().join("target.bin");
+        std::fs::write(&target, b"old target").unwrap();
+        let token = CancellationToken::new();
+        let cancel_token = token.clone();
+        let callback_target = target.clone();
+        let job = fixture.job(TransferKind::Move);
+        let id = job.id;
+        fixture
+            .service
+            .run_transfer_with_policy(
+                job,
+                token,
+                Arc::new(move |job| {
+                    if job.state == TransferState::Verifying {
+                        if cancel {
+                            cancel_token.cancel();
+                        } else {
+                            std::fs::write(&callback_target, b"external edit").unwrap();
+                        }
+                    }
+                }),
+                ConflictPolicy::Overwrite,
+            )
+            .await;
+        let result = fixture.result(id).await;
+        assert_eq!(
+            result.state,
+            if cancel {
+                TransferState::Cancelled
+            } else {
+                TransferState::Failed
+            }
+        );
+        assert_eq!(
+            std::fs::read(target).unwrap(),
+            if cancel {
+                b"old target".as_slice()
+            } else {
+                b"external edit".as_slice()
+            }
+        );
+        assert!(fixture.source.path().join("source.bin").exists());
+    }
+}
+
+#[tokio::test]
+async fn folder_overwrite_merges_without_removing_destination_only_files() {
+    let fixture = Fixture::new().await;
+    fixture.seed_folder();
+    std::fs::create_dir(fixture.destination.path().join("copied")).unwrap();
+    std::fs::write(fixture.destination.path().join("copied/.hidden"), b"old").unwrap();
+    std::fs::write(
+        fixture.destination.path().join("copied/only-target"),
+        b"keep",
+    )
+    .unwrap();
+    let job = fixture.folder_job(TransferKind::Move);
+    let id = job.id;
+    fixture
+        .service
+        .run_transfer_with_policy(
+            job,
+            CancellationToken::new(),
+            Arc::new(|_| {}),
+            ConflictPolicy::Overwrite,
+        )
+        .await;
+    let result = fixture.result(id).await;
+    assert_eq!(
+        result.state,
+        TransferState::Completed,
+        "{:?}",
+        result.error_message
+    );
+    assert_eq!(
+        std::fs::read(fixture.destination.path().join("copied/only-target")).unwrap(),
+        b"keep"
+    );
+    assert_eq!(
+        std::fs::read(fixture.destination.path().join("copied/.hidden")).unwrap(),
+        b"hidden"
+    );
+    assert!(!fixture.source.path().join("folder").exists());
+}
+
+#[tokio::test]
+async fn automatic_copy_to_same_path_uses_unique_names_even_with_parallel_jobs() {
+    let fixture = Fixture::new().await;
+    let request = fixture.job(TransferKind::Copy);
+    let mut jobs = Vec::new();
+    for _ in 0..3 {
+        jobs.push(
+            fixture
+                .service
+                .start_transfer_with_policy(
+                    TransferKind::Copy,
+                    request.source.clone(),
+                    request.source.clone(),
+                    ConflictPolicy::Rename,
+                    Arc::new(|_| {}),
+                )
+                .await
+                .unwrap(),
+        );
+    }
+    let mut names = std::collections::HashSet::new();
+    for job in jobs {
+        let result = fixture.result(job.id).await;
+        assert_eq!(
+            result.state,
+            TransferState::Completed,
+            "{:?}",
+            result.error_message
+        );
+        assert!(names.insert(result.destination.logical_path));
+    }
+    assert!(fixture.source.path().join("source.bin").exists());
+}
+
+#[tokio::test]
+async fn overwrite_rejects_mixed_kinds_and_skipping_a_folder_keeps_all_sources() {
+    let fixture = Fixture::new().await;
+    fixture.seed_folder();
+    std::fs::create_dir(fixture.destination.path().join("target.bin")).unwrap();
+    std::fs::write(fixture.destination.path().join("copied"), b"keep file").unwrap();
+    for job in [
+        fixture.job(TransferKind::Move),
+        fixture.folder_job(TransferKind::Move),
+    ] {
+        let id = job.id;
+        fixture
+            .service
+            .run_transfer_with_policy(
+                job,
+                CancellationToken::new(),
+                Arc::new(|_| {}),
+                ConflictPolicy::Overwrite,
+            )
+            .await;
+        let result = fixture.result(id).await;
+        assert_eq!(result.state, TransferState::Failed);
+        assert_eq!(result.error_code, Some(StorageErrorCode::Conflict));
+    }
+    let job = fixture.folder_job(TransferKind::Move);
+    let id = job.id;
+    fixture
+        .service
+        .run_transfer_with_policy(
+            job,
+            CancellationToken::new(),
+            Arc::new(|_| {}),
+            ConflictPolicy::Skip,
+        )
+        .await;
+    assert_eq!(fixture.result(id).await.state, TransferState::Skipped);
+    assert!(fixture.source.path().join("source.bin").exists());
+    assert_eq!(
+        std::fs::read(fixture.source.path().join("folder/.hidden")).unwrap(),
+        b"hidden"
+    );
+    assert_eq!(
+        std::fs::read(fixture.destination.path().join("copied")).unwrap(),
+        b"keep file"
+    );
+    assert!(fixture.destination.path().join("target.bin").is_dir());
+}

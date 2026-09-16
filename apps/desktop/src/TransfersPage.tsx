@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownUp,
   CircleCheck,
+  CircleMinus,
   CircleX,
   LoaderCircle,
   X,
@@ -65,6 +66,8 @@ export function TransfersPage({ volumes }: { volumes: Volume[] }) {
                   <LoaderCircle size={18} className="spin" />
                 ) : job.state === "completed" ? (
                   <CircleCheck size={18} />
+                ) : job.state === "skipped" ? (
+                  <CircleMinus size={18} />
                 ) : (
                   <CircleX size={18} />
                 )}
@@ -111,7 +114,7 @@ export function TransfersPage({ volumes }: { volumes: Volume[] }) {
               )}
               {job.state === "interrupted" && (
                 <p className="field-help">
-                  应用关闭时任务尚未完成。请检查目标目录后重新发起，已有文件不会被覆盖。
+                  应用关闭时任务尚未完成。请检查目标目录后重新发起，并确认同名项目的处理方式。
                 </p>
               )}
             </article>

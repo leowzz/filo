@@ -1,15 +1,25 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "./api";
 import { Modal } from "./components";
 import { useBrowser } from "./store";
-import type { Connection, S3Input, Volume } from "./types";
+import type { Connection, S3Input, S3Provider, Volume } from "./types";
+import {
+  cloudEndpoint,
+  cloudRegions,
+  endpointMode,
+  s3Providers,
+  validEndpoint,
+  type EndpointMode,
+} from "./s3Providers";
 
 export function S3StorageDialog({
+  provider = "generic",
   volume,
   onClose,
   onSaved,
 }: {
+  provider?: S3Provider;
   volume?: Volume;
   onClose: () => void;
   onSaved: (volume: Omit<Volume, "capabilities">) => void;
@@ -36,6 +46,7 @@ export function S3StorageDialog({
     );
   return (
     <S3Form
+      provider={connection?.config.provider ?? provider}
       volume={volume}
       connection={connection}
       onClose={onClose}
@@ -44,33 +55,51 @@ export function S3StorageDialog({
   );
 }
 
-function S3Form({
+export function S3Form({
+  provider,
   volume,
   connection,
+  embedded = false,
+  externalBusy = false,
+  onBusyChange,
   onClose,
   onSaved,
 }: {
+  provider: S3Provider;
   volume?: Volume;
   connection?: Connection;
+  embedded?: boolean;
+  externalBusy?: boolean;
+  onBusyChange?: (busy: boolean) => void;
   onClose: () => void;
   onSaved: (volume: Omit<Volume, "capabilities">) => void;
 }) {
   const client = useQueryClient();
+  const preset = s3Providers[provider];
+  const cloud = provider === "tos" || provider === "oss";
+  const regions = cloud ? cloudRegions[provider] : [];
+  const [addressMode, setAddressMode] = useState<EndpointMode>(
+    endpointMode(provider, connection?.config),
+  );
+  const [customRegion, setCustomRegion] = useState(
+    !!connection && !regions.some(([id]) => id === connection.config.region),
+  );
   const [name, setName] = useState(volume?.name ?? "");
   const [endpoint, setEndpoint] = useState(
-    connection?.config.endpoint ?? "http://127.0.0.1:9000",
+    connection?.config.endpoint ??
+      (provider === "rustfs" ? "http://127.0.0.1:9000" : ""),
   );
   const [region, setRegion] = useState(
-    connection?.config.region ?? "us-east-1",
+    connection?.config.region ?? preset.region,
   );
   const [bucket, setBucket] = useState(
-    volume?.root.type === "s3" ? volume.root.bucket : "filo-demo",
+    volume?.root.type === "s3" ? volume.root.bucket : "",
   );
   const [prefix, setPrefix] = useState(
     volume?.root.type === "s3" ? volume.root.prefix : "",
   );
   const [pathStyle, setPathStyle] = useState(
-    connection?.config.force_path_style ?? true,
+    connection?.config.force_path_style ?? !cloud,
   );
   const [readOnly, setReadOnly] = useState(volume?.read_only ?? false);
   const [replaceCredentials, setReplaceCredentials] = useState(!volume);
@@ -78,10 +107,18 @@ function S3Form({
   const [secretKey, setSecretKey] = useState("");
   const [token, setToken] = useState("");
   const [tested, setTested] = useState(false);
+  const effectiveEndpoint =
+    cloud && addressMode !== "custom"
+      ? cloudEndpoint(provider, region, addressMode === "internal")
+      : endpoint.trim();
+  const endpointValid =
+    (!effectiveEndpoint && provider === "generic") ||
+    validEndpoint(effectiveEndpoint);
   const input: S3Input = {
     name: name.trim(),
     config: {
-      endpoint: endpoint.trim() || null,
+      provider,
+      endpoint: effectiveEndpoint || null,
       region: region.trim(),
       force_path_style: pathStyle,
     },
@@ -115,177 +152,295 @@ function S3Form({
       onSaved(saved);
     },
   });
-  const busy = save.isPending || test.isPending;
+  const pending = save.isPending || test.isPending;
+  const busy = pending || externalBusy;
+  useEffect(() => {
+    onBusyChange?.(pending);
+  }, [pending, onBusyChange]);
   const valid =
     name.trim() &&
     region.trim() &&
+    endpointValid &&
     bucket.trim() &&
     (!replaceCredentials || (accessKey && secretKey));
-  return (
-    <Modal
-      title={volume ? "编辑 S3 连接" : "添加 S3 兼容存储"}
-      onClose={onClose}
-      busy={busy}
+  const form = (
+    <form
+      onChange={() => {
+        setTested(false);
+        test.reset();
+        save.reset();
+      }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (valid && !busy) save.mutate();
+      }}
     >
-      <form
-        onChange={() => {
-          setTested(false);
-          test.reset();
-          save.reset();
-        }}
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (valid && !busy) save.mutate();
-        }}
-      >
-        <fieldset className="connection-fields s3-fields" disabled={busy}>
+      <fieldset className="connection-fields s3-fields" disabled={busy}>
+        <label className="field-label">
+          连接名称
+          <input
+            autoFocus={!embedded}
+            className="text-input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={`例如：${provider === "rustfs" ? "本机 RustFS" : "项目文件"}`}
+            required
+            maxLength={100}
+          />
+        </label>
+        {cloud && (
+          <>
+            <div className="s3-region-access-row">
+              <div>
+                <label className="field-label">
+                  地域
+                  <select
+                    className="text-input"
+                    value={customRegion ? "custom" : region}
+                    onChange={(e) => {
+                      setCustomRegion(e.target.value === "custom");
+                      if (e.target.value !== "custom")
+                        setRegion(e.target.value);
+                    }}
+                  >
+                    {regions.map(([id, label]) => (
+                      <option key={id} value={id}>
+                        {label} · {id}
+                      </option>
+                    ))}
+                    <option value="custom">其他地域（手动填写）</option>
+                  </select>
+                </label>
+                {customRegion && (
+                  <label className="field-label">
+                    地域 ID
+                    <input
+                      className="text-input"
+                      value={region}
+                      onChange={(e) => setRegion(e.target.value)}
+                      required
+                    />
+                  </label>
+                )}
+              </div>
+              <label className="field-label">
+                访问方式
+                <select
+                  className="text-input"
+                  value={addressMode}
+                  onChange={(e) =>
+                    setAddressMode(e.target.value as EndpointMode)
+                  }
+                >
+                  <option value="public">公网访问</option>
+                  <option value="internal">内网访问</option>
+                  <option value="custom">自定义访问地址</option>
+                </select>
+              </label>
+            </div>
+            {addressMode === "internal" && (
+              <p className="field-help">
+                需要处于该地域可访问存储服务的内网环境。
+              </p>
+            )}
+          </>
+        )}
+        <label className="field-label">
+          访问地址（Endpoint）{provider === "generic" ? "（可选）" : ""}
+          <input
+            className="text-input"
+            value={effectiveEndpoint}
+            readOnly={cloud && addressMode !== "custom"}
+            onChange={(e) => setEndpoint(e.target.value)}
+            placeholder={
+              provider === "generic"
+                ? "留空使用 AWS S3"
+                : "https://s3.example.com"
+            }
+            required={provider !== "generic"}
+            aria-invalid={!endpointValid}
+          />
+          <span className="field-help s3-input-help">
+            {provider === "rustfs"
+              ? "填写 S3 API 地址，默认端口 9000；不是控制台的 9001 端口。"
+              : cloud && addressMode !== "custom"
+                ? "已根据地域生成 S3 接入地址。"
+                : "填写完整 HTTP(S) 服务地址，不含 Bucket、路径或访问密钥。"}
+          </span>
+        </label>
+        {effectiveEndpoint && !endpointValid && (
+          <p className="error-text">
+            请填写完整的 HTTP(S) 地址，仅包含主机和端口。
+          </p>
+        )}
+        {provider === "generic" && (
           <label className="field-label">
-            连接名称
+            地域（Region）
             <input
-              autoFocus
               className="text-input"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="本机 RustFS"
+              value={region}
+              onChange={(e) => setRegion(e.target.value)}
               required
-              maxLength={100}
             />
           </label>
-          <label className="field-label">
-            Endpoint
+        )}
+        <label className="field-label">
+          存储桶（Bucket）
+          <input
+            className="text-input"
+            value={bucket}
+            onChange={(e) => setBucket(e.target.value)}
+            placeholder="已有存储桶的名称"
+            required
+          />
+        </label>
+        <label className="field-label">
+          目录前缀（Prefix，可选）
+          <input
+            className="text-input"
+            value={prefix}
+            onChange={(e) => setPrefix(e.target.value)}
+            placeholder="例如 backups/photos"
+          />
+        </label>
+        {volume && (
+          <label className="checkbox-label">
             <input
-              className="text-input"
-              value={endpoint}
-              onChange={(e) => setEndpoint(e.target.value)}
-              placeholder="留空使用 AWS S3"
+              type="checkbox"
+              checked={replaceCredentials}
+              onChange={(e) => setReplaceCredentials(e.target.checked)}
             />
+            更换访问凭据
           </label>
-          <div className="s3-field-row">
+        )}
+        {replaceCredentials && (
+          <>
             <label className="field-label">
-              Region
+              Access Key ID
               <input
                 className="text-input"
-                value={region}
-                onChange={(e) => setRegion(e.target.value)}
+                autoComplete="off"
+                value={accessKey}
+                onChange={(e) => setAccessKey(e.target.value)}
                 required
               />
             </label>
             <label className="field-label">
-              Bucket
+              {provider === "oss" ? "AccessKey Secret" : "Secret Access Key"}
               <input
+                type="password"
                 className="text-input"
-                value={bucket}
-                onChange={(e) => setBucket(e.target.value)}
+                autoComplete="new-password"
+                value={secretKey}
+                onChange={(e) => setSecretKey(e.target.value)}
                 required
               />
             </label>
-          </div>
-          <label className="field-label">
-            Prefix（可选）
-            <input
-              className="text-input"
-              value={prefix}
-              onChange={(e) => setPrefix(e.target.value)}
-              placeholder="例如 backups/photos"
-            />
-          </label>
-          {volume && (
+            <label className="field-label">
+              {provider === "oss"
+                ? "Security Token（STS，可选）"
+                : "Session Token（临时凭据，可选）"}
+              <input
+                type="password"
+                className="text-input"
+                autoComplete="off"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+              />
+            </label>
+          </>
+        )}
+        {(provider === "generic" || provider === "rustfs") && (
+          <details
+            className="s3-advanced"
+            open={
+              provider === "rustfs" && (region !== preset.region || !pathStyle)
+                ? true
+                : undefined
+            }
+          >
+            <summary>高级设置</summary>
+            {provider === "rustfs" && (
+              <label className="field-label">
+                地域（Region）
+                <input
+                  className="text-input"
+                  value={region}
+                  onChange={(e) => setRegion(e.target.value)}
+                  required
+                />
+                <span className="field-help s3-input-help">
+                  默认 us-east-1，仅在服务端使用其他地域时修改。
+                </span>
+              </label>
+            )}
             <label className="checkbox-label">
               <input
                 type="checkbox"
-                checked={replaceCredentials}
-                onChange={(e) => setReplaceCredentials(e.target.checked)}
+                checked={pathStyle}
+                onChange={(e) => setPathStyle(e.target.checked)}
               />
-              更换访问凭据
+              使用路径式访问（Path Style）
             </label>
-          )}
-          {replaceCredentials && (
-            <>
-              <label className="field-label">
-                Access Key ID
-                <input
-                  className="text-input"
-                  autoComplete="off"
-                  value={accessKey}
-                  onChange={(e) => setAccessKey(e.target.value)}
-                  required
-                />
-              </label>
-              <label className="field-label">
-                Secret Access Key
-                <input
-                  type="password"
-                  className="text-input"
-                  autoComplete="new-password"
-                  value={secretKey}
-                  onChange={(e) => setSecretKey(e.target.value)}
-                  required
-                />
-              </label>
-              <label className="field-label">
-                Session Token（可选）
-                <input
-                  type="password"
-                  className="text-input"
-                  autoComplete="off"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                />
-              </label>
-            </>
-          )}
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={pathStyle}
-              onChange={(e) => setPathStyle(e.target.checked)}
-            />
-            Path Style（RustFS / MinIO 通常启用）
-          </label>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={readOnly}
-              onChange={(e) => setReadOnly(e.target.checked)}
-            />
-            只读访问
-          </label>
-          <p className="field-help">
-            凭据保存在系统钥匙串。保存前会测试所选 Bucket / Prefix 的访问权限。
-          </p>
-        </fieldset>
-        {(save.isError || test.isError) && (
-          <p className="error-text" role="alert">
-            {errorMessage(save.error ?? test.error)}
-          </p>
+            <p className="field-help">
+              RustFS / MinIO 通常启用；AWS S3 通常使用虚拟主机式访问。
+            </p>
+          </details>
         )}
-        {tested && (
-          <p className="field-help" role="status">
-            连接成功，可以访问所选 Bucket / Prefix。
-          </p>
-        )}
-        <div className="modal-footer">
-          <button
-            type="button"
-            className="secondary"
-            disabled={busy}
-            onClick={onClose}
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            disabled={!valid || busy}
-            onClick={() => test.mutate()}
-          >
-            {test.isPending ? "正在测试…" : "测试连接"}
-          </button>
-          <button className="primary" disabled={!valid || busy}>
-            {save.isPending ? "正在保存…" : "保存连接"}
-          </button>
-        </div>
-      </form>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={readOnly}
+            onChange={(e) => setReadOnly(e.target.checked)}
+          />
+          只读访问
+        </label>
+        <p className="field-help">
+          凭据保存在系统钥匙串。保存前会测试所选 Bucket / Prefix 的访问权限。
+        </p>
+      </fieldset>
+      {(save.isError || test.isError) && (
+        <p className="error-text" role="alert">
+          {errorMessage(save.error ?? test.error)}
+        </p>
+      )}
+      {tested && (
+        <p className="field-help" role="status">
+          连接成功，可以访问所选 Bucket / Prefix。
+        </p>
+      )}
+      <div className="modal-footer">
+        <button
+          type="button"
+          className="secondary"
+          disabled={busy}
+          onClick={onClose}
+        >
+          {embedded ? "返回选择" : "取消"}
+        </button>
+        <button
+          type="button"
+          className="secondary"
+          disabled={!valid || busy}
+          onClick={() => test.mutate()}
+        >
+          {test.isPending ? "正在测试…" : "测试连接"}
+        </button>
+        <button className="primary" disabled={!valid || busy}>
+          {save.isPending ? "正在保存…" : "保存连接"}
+        </button>
+      </div>
+    </form>
+  );
+  return embedded ? (
+    form
+  ) : (
+    <Modal
+      title={`${volume ? "编辑" : "添加"} ${preset.name}`}
+      onClose={onClose}
+      busy={busy}
+    >
+      {form}
     </Modal>
   );
 }

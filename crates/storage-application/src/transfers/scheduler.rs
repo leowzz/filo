@@ -30,7 +30,9 @@ impl Access {
     fn conflicts(&self, other: &Self) -> bool {
         self.namespace == other.namespace
             && (self.write || other.write)
-            && (self.path == other.path
+            && (self.path.is_empty()
+                || other.path.is_empty()
+                || self.path == other.path
                 || self.path.starts_with(&format!("{}/", other.path))
                 || other.path.starts_with(&format!("{}/", self.path)))
     }

@@ -1,9 +1,12 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Folder, ArrowUp, LoaderCircle } from "lucide-react";
 import { updateTransfer } from "./transferPresentation";
 import { api, errorMessage } from "./api";
 import { runBatch, type BatchFailure } from "./batch";
+import { useDirectoryQuery } from "./useDirectoryQuery";
+import { ConflictPolicyField } from "./ConflictPolicyField";
+import { type ConflictPolicy } from "./types";
 import { Modal } from "./components";
 import {
   activeTransfer,
@@ -41,16 +44,18 @@ export function TransferDialog({
   const [path, setPath] = useState("");
   const [name, setName] = useState(entry.name);
   const client = useQueryClient();
-  const entriesQuery = useQuery({
-    queryKey: ["entries", volumeId, path],
-    queryFn: () =>
-      api.entries({
-        volume_id: volumeId,
-        logical_path: path,
-        version_id: null,
-      }),
-    enabled: !!volumeId,
-  });
+  const [conflictPolicy, setConflictPolicy] =
+    useState<ConflictPolicy>("reject");
+  const [folderPage, setFolderPage] = useState(0);
+  const entriesQuery = useDirectoryQuery(
+    { volume_id: volumeId, logical_path: path, version_id: null },
+    { search: "", show_hidden: true, folders_only: true, sort: "name" },
+  );
+  const folders = entriesQuery.data?.pages[folderPage]?.entries ?? [];
+  const changePath = (next: string) => {
+    setPath(next);
+    setFolderPage(0);
+  };
   const targetPath = (item: Entry) =>
     path
       ? `${path}/${multiple ? item.name : name}`
@@ -60,7 +65,8 @@ export function TransferDialog({
   const sameFile = remaining.some(
     (item) =>
       volumeId === item.locator.volume_id &&
-      (targetPath(item) === item.locator.logical_path ||
+      ((conflictPolicy !== "rename" &&
+        targetPath(item) === item.locator.logical_path) ||
         (isDirectory(item) &&
           targetPath(item).startsWith(`${item.locator.logical_path}/`))),
   );
@@ -88,6 +94,7 @@ export function TransferDialog({
             if (!activeTransfer(job))
               void client.invalidateQueries({ queryKey: ["entries"] });
           },
+          conflictPolicy,
         ),
       ),
     onSuccess: async ({ completed, failed }) => {
@@ -140,7 +147,7 @@ export function TransferDialog({
             value={volumeId}
             onChange={(event) => {
               setVolumeId(event.target.value);
-              setPath("");
+              changePath("");
             }}
           >
             {writable.length === 0 && <option value="">没有可写的位置</option>}
@@ -157,7 +164,9 @@ export function TransferDialog({
                 className="icon-button"
                 aria-label="目标上级目录"
                 disabled={!path}
-                onClick={() => setPath(path.split("/").slice(0, -1).join("/"))}
+                onClick={() =>
+                  changePath(path.split("/").slice(0, -1).join("/"))
+                }
               >
                 <ArrowUp size={16} />
               </button>
@@ -176,21 +185,50 @@ export function TransferDialog({
                   </button>
                 </p>
               )}
-              {entriesQuery.data?.filter(isDirectory).map((folder) => (
+              {folders.map((folder) => (
                 <button
                   type="button"
                   key={folder.locator.logical_path}
-                  onClick={() => setPath(folder.locator.logical_path)}
+                  onClick={() => changePath(folder.locator.logical_path)}
                 >
                   <Folder size={17} />
                   <span>{folder.name}</span>
                   <ChevronRight size={15} />
                 </button>
               ))}
-              {entriesQuery.isSuccess &&
-                !entriesQuery.data.some(isDirectory) && (
-                  <p>此目录没有子文件夹</p>
-                )}
+              {entriesQuery.isSuccess && entriesQuery.total === 0 && (
+                <p>此目录没有子文件夹</p>
+              )}
+            </div>
+            <div className="destination-path">
+              <button
+                type="button"
+                disabled={folderPage === 0 || entriesQuery.isFetching}
+                onClick={() => setFolderPage(folderPage - 1)}
+              >
+                上一页
+              </button>
+              <span>{entriesQuery.total} 个文件夹</span>
+              <button
+                type="button"
+                disabled={
+                  entriesQuery.isFetching ||
+                  (!entriesQuery.hasNextPage &&
+                    folderPage >= (entriesQuery.data?.pages.length ?? 1) - 1)
+                }
+                onClick={async () => {
+                  if (
+                    folderPage >=
+                    (entriesQuery.data?.pages.length ?? 1) - 1
+                  ) {
+                    const result = await entriesQuery.fetchNextPage();
+                    if (result.isError) return;
+                  }
+                  setFolderPage(folderPage + 1);
+                }}
+              >
+                下一页
+              </button>
             </div>
           </div>
           {!multiple && (
@@ -207,14 +245,18 @@ export function TransferDialog({
               />
             </>
           )}
+          <ConflictPolicyField
+            value={conflictPolicy}
+            onChange={setConflictPolicy}
+          />
           <p className="field-help">
             {!volumeId
               ? "请先添加可写位置，或右键位置关闭只读访问。"
               : sameFile
                 ? "目标不能是源项目本身或源文件夹内部。"
                 : kind === "move"
-                  ? "全部内容复制并校验成功后才清理源位置。同名项目不会覆盖或合并。"
-                  : "复制文件夹内全部内容，包括隐藏文件和空目录。同名项目不会覆盖或合并。"}
+                  ? "内容复制并校验成功后才清理源位置。"
+                  : "复制文件夹内全部内容，包括隐藏文件和空目录。"}
           </p>
         </fieldset>
         {failures.length > 0 && (

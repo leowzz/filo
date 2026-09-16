@@ -55,6 +55,10 @@ impl StorageBackend for SelectedFileBackend {
         self.check(locator)?;
         self.inner.stage_write(locator).await
     }
+    async fn stage_replace(&self, expected: &StorageEntry) -> StorageResult<Box<dyn StagedWrite>> {
+        self.check(&expected.locator)?;
+        self.inner.stage_replace(expected).await
+    }
     async fn list(&self, _: &StorageLocator) -> StorageResult<Vec<StorageEntry>> {
         Err(Self::denied())
     }
@@ -238,6 +242,26 @@ impl StorageService {
         upload: bool,
         observer: TransferObserver,
     ) -> StorageResult<TransferJob> {
+        self.transfer_selected_file_with_policy(
+            path,
+            remote,
+            upload,
+            ConflictPolicy::Reject,
+            observer,
+        )
+        .await
+    }
+    pub async fn transfer_selected_file_with_policy(
+        &self,
+        path: PathBuf,
+        remote: StorageLocator,
+        upload: bool,
+        policy: ConflictPolicy,
+        observer: TransferObserver,
+    ) -> StorageResult<TransferJob> {
+        if !upload && policy == ConflictPolicy::Rename {
+            return Err(configuration("下载自动改名请在保存窗口中选择新的文件名"));
+        }
         let parent = path
             .parent()
             .ok_or_else(|| configuration("请选择本地文件"))?;
@@ -286,7 +310,7 @@ impl StorageService {
             .await
             .insert(volume.id, backend);
         let result = self
-            .start_transfer(TransferKind::Copy, source, destination, observer)
+            .start_transfer_with_policy(TransferKind::Copy, source, destination, policy, observer)
             .await;
         if result.is_err() {
             self.temporary_backends.lock().await.remove(&volume.id);
