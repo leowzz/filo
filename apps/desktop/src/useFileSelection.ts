@@ -25,6 +25,7 @@ export function useFileSelection(scope: string, paths: string[]) {
     setState({ scope, paths: new Set(), anchor: null });
   }
   const areaRef = useRef<HTMLDivElement>(null);
+  const pendingFocus = useRef<{ scope: string; path: string } | null>(null);
   const stopDrag = useRef<(() => void) | null>(null);
   const suppressClick = useRef(false);
   const selectedPaths = new Set(
@@ -40,6 +41,7 @@ export function useFileSelection(scope: string, paths: string[]) {
   );
 
   function setSelection(path: string | null) {
+    pendingFocus.current = null;
     setState({
       scope,
       paths: new Set(path === null ? [] : [path]),
@@ -48,6 +50,7 @@ export function useFileSelection(scope: string, paths: string[]) {
   }
 
   function select(path: string, modifiers: Modifiers) {
+    pendingFocus.current = null;
     const additive = modifiers.metaKey || modifiers.ctrlKey;
     const anchor = state.scope === scope ? state.anchor : null;
     if (modifiers.shiftKey && anchor !== null && paths.includes(anchor)) {
@@ -66,6 +69,24 @@ export function useFileSelection(scope: string, paths: string[]) {
       if (additive && next.has(path)) next.delete(path);
       else next.add(path);
       setState({ scope, paths: next, anchor: path });
+    }
+  }
+
+  // Called after virtual rows render so navigation can focus newly mounted rows.
+  function focusPendingRow() {
+    const pending = pendingFocus.current;
+    const area = areaRef.current;
+    if (!pending || !area) return;
+    if (pending.scope !== scope || document.activeElement !== area) {
+      pendingFocus.current = null;
+      return;
+    }
+    const row = Array.from(
+      area.querySelectorAll<HTMLElement>("[data-entry-path]"),
+    ).find((element) => element.dataset.entryPath === pending.path);
+    if (row) {
+      row.focus({ preventScroll: true });
+      pendingFocus.current = null;
     }
   }
 
@@ -218,12 +239,57 @@ export function useFileSelection(scope: string, paths: string[]) {
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.defaultPrevented || event.nativeEvent.isComposing) return;
     if (
       event.target instanceof Element &&
-      event.target.closest("button, input, a")
+      event.target.closest(
+        "button, input, textarea, select, a, [contenteditable], [role=menu]",
+      )
     )
       return;
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
+    if (
+      (event.key === "ArrowUp" || event.key === "ArrowDown") &&
+      !event.altKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      paths.length > 0
+    ) {
+      event.preventDefault();
+      const focusedPath =
+        event.target instanceof HTMLElement
+          ? event.target.dataset.entryPath
+          : undefined;
+      const currentPath =
+        pendingFocus.current?.path ?? focusedPath ?? state.anchor;
+      const current = currentPath == null ? -1 : paths.indexOf(currentPath);
+      const index =
+        current < 0
+          ? event.key === "ArrowDown"
+            ? 0
+            : paths.length - 1
+          : Math.max(
+              0,
+              Math.min(
+                paths.length - 1,
+                current + (event.key === "ArrowDown" ? 1 : -1),
+              ),
+            );
+      const path = paths[index];
+      select(path, event);
+      pendingFocus.current = { scope, path };
+      const area = event.currentTarget;
+      // Keep focus inside the list while a virtual row is being mounted.
+      area.focus({ preventScroll: true });
+      const top = HEADER_HEIGHT + index * ROW_HEIGHT;
+      if (top < area.scrollTop + HEADER_HEIGHT) {
+        area.scrollTop = top - HEADER_HEIGHT;
+      } else if (top + ROW_HEIGHT > area.scrollTop + area.clientHeight) {
+        area.scrollTop = top + ROW_HEIGHT - area.clientHeight;
+      }
+    } else if (
+      (event.metaKey || event.ctrlKey) &&
+      event.key.toLowerCase() === "a"
+    ) {
       event.preventDefault();
       setState({ scope, paths: new Set(paths), anchor: paths[0] ?? null });
     } else if (event.key === "Escape") {
@@ -240,6 +306,7 @@ export function useFileSelection(scope: string, paths: string[]) {
 
   return {
     areaRef,
+    focusPendingRow,
     rectangle,
     selectedPaths,
     setSelection,

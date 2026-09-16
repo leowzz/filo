@@ -16,7 +16,7 @@ import { type Entry, type Volume } from "./types";
 import { useFileSelection } from "./useFileSelection";
 import { useExternalFileDrop } from "./useExternalFileDrop";
 
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
 import type { useDirectoryQuery } from "./useDirectoryQuery";
 import { useVirtualRows } from "./useVirtualRows";
 import { DetailsPanel } from "./DetailsPanel";
@@ -78,6 +78,9 @@ export function FileBrowser({
     onError: onDropError,
   });
   const rows = useVirtualRows(selection.areaRef, entries.length);
+  useLayoutEffect(() => {
+    selection.focusPendingRow();
+  });
   useEffect(() => {
     if (
       rows.end >= entries.length - 10 &&

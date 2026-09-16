@@ -17,13 +17,14 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
       capabilities: { hierarchy: 'native_directory', rename: 'atomic', create_directory: true,
         delete: true, trash: true, native_open: true, native_copy: true }
     };
-    window.__TAURI_INTERNALS__ = { transformCallback: () => 1, unregisterCallback: () => {}, invoke: async (command, args) => {
+    window.__TAURI_INTERNALS__ = { metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } }, transformCallback: () => 1, unregisterCallback: () => {}, invoke: async (command, args) => {
       if (command === 'recent_backend_errors') return [];
       if (command === 'plugin:event|listen') return 1;
       if (command === 'plugin:event|unlisten') return;
       window.testCalls.push({ command, args });
       if (command === 'list_volumes') return [volume];
       if (command === 'list_transfers') return [];
+      if (command === 'directory_stamp') return '1';
       if (command === 'open_entry') return;
       if (command === 'list_entries_page') { const entries = [
         { name: 'Folder', kind: 'directory', size: null },
@@ -79,8 +80,76 @@ async function drag(from, to, modifier) {
   if (modifier) await page.keyboard.up(modifier);
 }
 
+if (!(await page.evaluate(() => !!document.querySelector(".details-panel")))) {
+  await page.click('[aria-label="切换详情面板"]');
+}
 await clickRow(1);
 assert.deepEqual(await selected(), ["/file-01.txt"]);
+await page.keyboard.press("ArrowDown");
+assert.deepEqual(await selected(), ["/file-02.txt"]);
+assert.equal(
+  await page.evaluate(() => document.activeElement.dataset.entryPath),
+  "/file-02.txt",
+  "Arrow navigation moves focus along with selection",
+);
+assert.equal(
+  await page.evaluate(
+    () => document.querySelector(".details-panel h3").textContent,
+  ),
+  "file-02.txt",
+  "Details follow the selected file",
+);
+await page.keyboard.press("Enter");
+assert.equal(
+  await page.evaluate(
+    () =>
+      window.testCalls.find((call) => call.command === "open_entry").args
+        .locator.logical_path,
+  ),
+  "/file-02.txt",
+  "Enter opens the file selected with arrows",
+);
+await page.keyboard.press("Shift+ArrowDown");
+assert.deepEqual(await selected(), ["/file-02.txt", "/file-03.txt"]);
+await page.keyboard.press("Shift+ArrowUp");
+assert.deepEqual(await selected(), ["/file-02.txt"]);
+await page.keyboard.press("ArrowUp");
+assert.deepEqual(await selected(), ["/file-01.txt"]);
+for (let i = 0; i < 65; i++) await page.keyboard.press("ArrowDown");
+await page.waitForFunction(
+  () => document.activeElement.dataset.entryPath === "/file-60.txt",
+);
+assert.deepEqual(await selected(), ["/file-60.txt"], "Stops at the last row");
+assert.equal(
+  await page.evaluate(() => {
+    const area = document.querySelector(".file-area");
+    const row = document.activeElement.getBoundingClientRect();
+    const bounds = area.getBoundingClientRect();
+    return (
+      area.scrollTop > 0 &&
+      row.bottom <= bounds.bottom + 1 &&
+      row.top >=
+        document.querySelector("thead th").getBoundingClientRect().bottom - 1
+    );
+  }),
+  true,
+  "Navigation scrolls virtual rows into view below the sticky header",
+);
+for (let i = 0; i < 65; i++) await page.keyboard.press("ArrowUp");
+await page.waitForFunction(
+  () => document.activeElement.dataset.entryPath === "/Folder",
+);
+assert.deepEqual(await selected(), ["/Folder"], "Stops at the first row");
+await page.keyboard.press("ArrowDown");
+assert.deepEqual(await selected(), ["/file-01.txt"]);
+await page.focus('[aria-label="筛选当前目录"]');
+await page.keyboard.press("ArrowDown");
+assert.deepEqual(
+  await selected(),
+  ["/file-01.txt"],
+  "Search input keeps its keys",
+);
+await clickRow(1);
 await clickRow(4, "Shift");
 assert.equal((await selected()).length, 4, "Shift selects a contiguous range");
 await clickRow(2, "Meta");
@@ -109,7 +178,10 @@ assert.equal(
 );
 assert.equal(
   await page.evaluate(
-    () => document.querySelector('[aria-label="重命名"]').disabled,
+    () =>
+      Array.from(
+        document.querySelectorAll(".browser-actions-menu button"),
+      ).find((button) => button.textContent === "重命名…").disabled,
   ),
   true,
 );
@@ -211,7 +283,10 @@ assert.equal(
 await clickRow(1);
 assert.equal(
   await page.evaluate(
-    () => document.querySelector('[aria-label="重命名"]').disabled,
+    () =>
+      Array.from(
+        document.querySelectorAll(".browser-actions-menu button"),
+      ).find((button) => button.textContent === "重命名…").disabled,
   ),
   false,
 );
@@ -221,8 +296,8 @@ assert.equal(
     () =>
       window.testCalls.filter((call) => call.command === "open_entry").length,
   ),
-  1,
-  "Double click still opens files once",
+  2,
+  "Double click still opens files once after the earlier Enter",
 );
 await page.click('button[aria-label="file-01.txt 操作菜单"]');
 await page.waitForSelector('[role="menu"]');
@@ -231,6 +306,6 @@ await page.dblclick('.file-table tbody tr[data-entry-path="/Folder"]');
 await page.waitForSelector('[data-entry-path="/Folder/Folder"]');
 assert.equal((await selected()).length, 0, "Navigation clears selection");
 console.log(
-  "PASS: click, modifier/range selection, forward/reverse/additive/blank-space drag, text suppression, toolbar/status, select all, escape, edge scrolling, filtering, double click, menu, navigation",
+  "PASS: arrow navigation, focus, boundaries, virtual scrolling, Shift+arrows, input isolation, click, modifier/range selection, forward/reverse/additive/blank-space drag, text suppression, toolbar/status, select all, escape, edge scrolling, filtering, double click, menu, navigation",
 );
 if (!globalThis.filoKeepBrowser) await task.finish({ keep: [] });

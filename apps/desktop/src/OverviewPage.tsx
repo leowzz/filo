@@ -1,6 +1,5 @@
 import {
   ArrowRight,
-  Database,
   HardDrive,
   LoaderCircle,
   Plus,
@@ -31,39 +30,6 @@ export function OverviewPage({
           <Plus size={17} />
           添加存储空间
         </button>
-      </div>
-      <div className="stats">
-        <div>
-          <span>
-            <HardDrive size={17} />
-            存储空间
-          </span>
-          <strong>
-            {volumes.length.toString().padStart(2, "0")}
-            <small>个位置</small>
-          </strong>
-        </div>
-        <div>
-          <span>
-            <Database size={17} />
-            已保存连接
-          </span>
-          <strong>
-            {new Set(volumes.map((item) => item.connection_id)).size
-              .toString()
-              .padStart(2, "0")}
-            <small>个连接</small>
-          </strong>
-        </div>
-        <div>
-          <span>
-            <ShieldCheck size={17} />
-            数据访问
-          </span>
-          <strong className="text-stat">
-            仅限授权位置<small>本地目录与 S3 Bucket / Prefix</small>
-          </strong>
-        </div>
       </div>
       <div className="section-heading">
         <h2>
