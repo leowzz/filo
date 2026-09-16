@@ -90,6 +90,20 @@ pub enum StorageEntryKind {
     Symlink,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeleteMode {
+    Default,
+    Permanent,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeleteOutcome {
+    Trashed,
+    PermanentlyDeleted,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageEntry {
     pub locator: StorageLocator,
@@ -134,6 +148,8 @@ pub struct StorageCapabilities {
     pub tags: bool,
     pub watch_changes: bool,
     pub delete: bool,
+    pub trash: bool,
+    pub native_open: bool,
 }
 
 impl StorageCapabilities {
@@ -158,6 +174,13 @@ impl StorageCapabilities {
             tags: false,
             watch_changes: false,
             delete: !read_only,
+            trash: !read_only
+                && cfg!(any(
+                    target_os = "macos",
+                    target_os = "linux",
+                    target_os = "windows"
+                )),
+            native_open: true,
         }
     }
 }

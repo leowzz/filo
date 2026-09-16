@@ -10,6 +10,7 @@ import {
   CircleHelp,
   Cloud,
   Copy,
+  ExternalLink,
   FolderInput,
   Database,
   Eye,
@@ -48,17 +49,18 @@ import {
   type Locator,
   type Volume,
   type TransferKind,
+  type DeleteMode,
 } from "./types";
 import { LocationMenu, type LocationMenuTarget } from "./LocationMenu";
 import { EditLocationDialog } from "./EditLocationDialog";
 import { RemoveLocationDialog } from "./RemoveLocationDialog";
 import { TransferDialog } from "./TransferDialog";
 import { TransfersPage } from "./TransfersPage";
+import { DeleteEntryDialog } from "./DeleteEntryDialog";
+import { EntryMenu } from "./EntryMenu";
 
 type Dialog =
-  | { type: "add" }
-  | { type: "folder" }
-  | { type: "rename" | "delete"; entry: Entry };
+  { type: "add" } | { type: "folder" } | { type: "rename"; entry: Entry };
 
 export default function App() {
   const state = useBrowser();
@@ -96,6 +98,16 @@ export default function App() {
   const [readOnly, setReadOnly] = useState(false);
   const [notice, setNotice] = useState("");
   const [menu, setMenu] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{
+    x: number;
+    y: number;
+    trigger: HTMLElement;
+  } | null>(null);
+  const [deleteDialog, setDeleteDialog] = useState<{
+    entry: Entry;
+    mode: DeleteMode;
+  } | null>(null);
+  const closeEntryMenu = useCallback(() => setMenu(null), []);
   const [sort, setSort] = useState<"name" | "size" | "modified">("name");
   const [locationMenu, setLocationMenu] = useState<LocationMenuTarget | null>(
     null,
@@ -129,20 +141,13 @@ export default function App() {
       if (dialog?.type === "folder") return api.createDirectory(parent, name);
       if (dialog?.type === "rename")
         return api.rename(dialog.entry.locator, name);
-      if (dialog?.type === "delete") return api.delete(dialog.entry.locator);
     },
     onSuccess: async (added) => {
       await client.invalidateQueries({ queryKey: ["volumes"] });
       await client.invalidateQueries({ queryKey: ["entries"] });
       if (added) navigate(added.id, "");
       if (dialog?.type !== "add")
-        setNotice(
-          dialog?.type === "delete"
-            ? "已删除所选项目"
-            : dialog?.type === "rename"
-              ? "文件已重命名"
-              : "文件夹已创建",
-        );
+        setNotice(dialog?.type === "rename" ? "文件已重命名" : "文件夹已创建");
       setDialog(null);
       setSelection(null);
     },
@@ -164,14 +169,39 @@ export default function App() {
     event.preventDefault();
     if (!mutation.isPending) mutation.mutate();
   }
+  const opening = useMutation({
+    mutationFn: api.open,
+    onSuccess: () => setNotice("已交给系统默认应用打开"),
+    onError: (error) => setNotice(errorMessage(error)),
+  });
+  function showDetails(entry: Entry) {
+    setSelection(entry.locator.logical_path);
+    if (!state.showDetails) state.toggleDetails();
+  }
   function openEntry(entry: Entry) {
     if (isDirectory(entry) && volume)
       navigate(volume.id, entry.locator.logical_path);
-    else {
-      setSelection(entry.locator.logical_path);
-      if (!state.showDetails) state.toggleDetails();
-    }
+    else if (
+      entry.kind === "file" &&
+      volume?.capabilities.native_open &&
+      !opening.isPending
+    )
+      opening.mutate(entry.locator);
+    else if (entry.kind === "symlink") showDetails(entry);
   }
+  function showEntryMenu(
+    entry: Entry,
+    x: number,
+    y: number,
+    trigger: HTMLElement,
+  ) {
+    setSelection(entry.locator.logical_path);
+    setMenuPosition({ x, y, trigger });
+    setMenu(entry.locator.logical_path);
+  }
+  const menuEntry = entries.find(
+    (entry) => entry.locator.logical_path === menu,
+  );
   const openVolume = (item: Volume) => navigate(item.id, "");
 
   return (
@@ -343,6 +373,21 @@ export default function App() {
               </button>
               <button
                 className="icon-button"
+                title="打开"
+                aria-label="打开"
+                disabled={
+                  !selected ||
+                  selected.kind === "symlink" ||
+                  (!isDirectory(selected) &&
+                    !volume.capabilities.native_open) ||
+                  opening.isPending
+                }
+                onClick={() => selected && openEntry(selected)}
+              >
+                <ExternalLink size={18} />
+              </button>
+              <button
+                className="icon-button"
                 title="新建文件夹"
                 aria-label="新建文件夹"
                 disabled={!volume.capabilities.create_directory}
@@ -391,15 +436,16 @@ export default function App() {
               </button>
               <button
                 className="icon-button"
-                title="删除"
-                aria-label="删除"
+                title={volume.capabilities.trash ? "移入回收站" : "删除"}
+                aria-label={volume.capabilities.trash ? "移入回收站" : "删除"}
                 disabled={
                   !selected ||
                   selected.kind === "symlink" ||
                   !volume.capabilities.delete
                 }
                 onClick={() =>
-                  selected && openDialog({ type: "delete", entry: selected })
+                  selected &&
+                  setDeleteDialog({ entry: selected, mode: "default" })
                 }
               >
                 <Trash2 size={18} />
@@ -650,7 +696,30 @@ export default function App() {
                             setMenu(null);
                           }}
                           onDoubleClick={() => openEntry(entry)}
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            showEntryMenu(
+                              entry,
+                              event.clientX,
+                              event.clientY,
+                              event.currentTarget,
+                            );
+                          }}
                           onKeyDown={(event) => {
+                            if (
+                              (event.shiftKey && event.key === "F10") ||
+                              event.key === "ContextMenu"
+                            ) {
+                              event.preventDefault();
+                              const rect =
+                                event.currentTarget.getBoundingClientRect();
+                              showEntryMenu(
+                                entry,
+                                rect.left + 30,
+                                rect.bottom,
+                                event.currentTarget,
+                              );
+                            }
                             if (
                               event.key === "Enter" &&
                               event.target === event.currentTarget
@@ -674,94 +743,22 @@ export default function App() {
                               onClick={(event) => {
                                 event.stopPropagation();
                                 setSelection(entry.locator.logical_path);
-                                setMenu(
-                                  menu === entry.locator.logical_path
-                                    ? null
-                                    : entry.locator.logical_path,
-                                );
+                                if (menu === entry.locator.logical_path)
+                                  setMenu(null);
+                                else {
+                                  const rect =
+                                    event.currentTarget.getBoundingClientRect();
+                                  showEntryMenu(
+                                    entry,
+                                    rect.right - 200,
+                                    rect.bottom,
+                                    event.currentTarget,
+                                  );
+                                }
                               }}
                             >
                               <MoreHorizontal size={17} />
                             </button>
-                            {menu === entry.locator.logical_path && (
-                              <div
-                                className="entry-menu"
-                                role="menu"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                <button
-                                  role="menuitem"
-                                  onClick={() => {
-                                    openEntry(entry);
-                                    setMenu(null);
-                                  }}
-                                >
-                                  {isDirectory(entry)
-                                    ? "打开文件夹"
-                                    : "查看详情"}
-                                </button>
-                                {entry.kind === "file" &&
-                                  volume.capabilities.rename !==
-                                    "unsupported" && (
-                                    <button
-                                      role="menuitem"
-                                      onClick={() =>
-                                        openDialog({ type: "rename", entry })
-                                      }
-                                    >
-                                      重命名
-                                    </button>
-                                  )}
-                                {entry.kind === "file" && (
-                                  <>
-                                    <button
-                                      role="menuitem"
-                                      onClick={() => {
-                                        setMenu(null);
-                                        setTransferDialog({
-                                          entry,
-                                          kind: "copy",
-                                        });
-                                      }}
-                                    >
-                                      复制到…
-                                    </button>
-                                    {!volume.read_only && (
-                                      <button
-                                        role="menuitem"
-                                        onClick={() => {
-                                          setMenu(null);
-                                          setTransferDialog({
-                                            entry,
-                                            kind: "move",
-                                          });
-                                        }}
-                                      >
-                                        移动到…
-                                      </button>
-                                    )}
-                                  </>
-                                )}
-                                {entry.kind !== "symlink" &&
-                                  volume.capabilities.delete && (
-                                    <button
-                                      role="menuitem"
-                                      className="danger-text"
-                                      onClick={() =>
-                                        openDialog({ type: "delete", entry })
-                                      }
-                                    >
-                                      删除…
-                                    </button>
-                                  )}
-                                <button
-                                  role="menuitem"
-                                  onClick={() => setMenu(null)}
-                                >
-                                  关闭菜单
-                                </button>
-                              </div>
-                            )}
                           </td>
                         </tr>
                       ))}
@@ -879,7 +876,7 @@ export default function App() {
               <span>
                 <span className="status-dot" />
                 {volume.read_only ? "只读访问" : "本地文件系统"}
-                <span className="status-separator">/</span>双击打开文件夹
+                <span className="status-separator">/</span>双击打开文件或文件夹
               </span>
             </footer>
           </>
@@ -936,6 +933,33 @@ export default function App() {
         )}
       </main>
 
+      {menuEntry && volume && menuPosition && (
+        <EntryMenu
+          entry={menuEntry}
+          volume={volume}
+          position={menuPosition}
+          onClose={closeEntryMenu}
+          onOpen={() => openEntry(menuEntry)}
+          onDetails={() => showDetails(menuEntry)}
+          onRename={() => openDialog({ type: "rename", entry: menuEntry })}
+          onTransfer={(kind) => setTransferDialog({ entry: menuEntry, kind })}
+          onDelete={(mode) => setDeleteDialog({ entry: menuEntry, mode })}
+        />
+      )}
+      {deleteDialog && volume && (
+        <DeleteEntryDialog
+          {...deleteDialog}
+          volume={volume}
+          onClose={() => setDeleteDialog(null)}
+          onDeleted={(outcome) => {
+            setNotice(
+              outcome === "trashed" ? "已移入系统回收站" : "已永久删除",
+            );
+            setSelection(null);
+            setDeleteDialog(null);
+          }}
+        />
+      )}
       {transferDialog && (
         <TransferDialog
           {...transferDialog}
@@ -1002,9 +1026,7 @@ export default function App() {
               ? "添加存储空间"
               : dialog.type === "folder"
                 ? "新建文件夹"
-                : dialog.type === "rename"
-                  ? "重命名文件"
-                  : "删除项目"
+                : "重命名文件"
           }
           busy={mutation.isPending}
           onClose={() => setDialog(null)}
@@ -1044,18 +1066,6 @@ export default function App() {
                   </p>
                 )}
               </>
-            ) : dialog.type === "delete" ? (
-              <>
-                <div className="delete-icon">
-                  <Trash2 size={25} />
-                </div>
-                <p className="modal-description">
-                  确定永久删除 <strong>{dialog.entry.name}</strong>？
-                </p>
-                <p className="delete-warning">
-                  此操作会直接删除本地项目，不会放入系统回收站。文件夹仅允许在为空时删除。
-                </p>
-              </>
             ) : (
               <>
                 <label className="field-label" htmlFor="entry-name">
@@ -1094,7 +1104,7 @@ export default function App() {
               </button>
               <button
                 type="submit"
-                className={dialog.type === "delete" ? "danger" : "primary"}
+                className="primary"
                 disabled={
                   mutation.isPending ||
                   (dialog.type === "add" && !desktop) ||
@@ -1114,11 +1124,9 @@ export default function App() {
                   ? "正在处理…"
                   : dialog.type === "add"
                     ? "选择本地目录"
-                    : dialog.type === "delete"
-                      ? "确认永久删除"
-                      : dialog.type === "folder"
-                        ? "创建文件夹"
-                        : "保存名称"}
+                    : dialog.type === "folder"
+                      ? "创建文件夹"
+                      : "保存名称"}
               </button>
             </div>
           </form>

@@ -8,6 +8,8 @@ export type Capabilities = {
   rename: "atomic" | "copy_then_delete" | "unsupported";
   create_directory: boolean;
   delete: boolean;
+  trash: boolean;
+  native_open: boolean;
   native_copy: boolean;
 };
 export type Volume = {
@@ -31,6 +33,8 @@ export const isDirectory = (entry: Entry) =>
   entry.kind === "directory" || entry.kind === "virtual_prefix";
 
 export type TransferKind = "copy" | "move";
+export type DeleteMode = "default" | "permanent";
+export type DeleteOutcome = "trashed" | "permanently_deleted";
 export type TransferJob = {
   id: string;
   kind: TransferKind;

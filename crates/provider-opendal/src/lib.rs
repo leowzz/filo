@@ -124,6 +124,38 @@ fn rename_no_replace(_: &Path, _: &str, _: &str) -> StorageResult<()> {
 }
 
 impl OpenDalLocalBackend {
+    async fn open_path(&self, locator: &StorageLocator) -> StorageResult<PathBuf> {
+        let logical = self.check_locator(locator)?;
+        let path = self.checked_path(&logical, false).await?;
+        if self.stat(locator).await?.kind != StorageEntryKind::File {
+            return Err(StorageError::new(
+                StorageErrorCode::Unsupported,
+                "请选择普通文件，文件夹请在 Filo 中打开",
+            ));
+        }
+        Ok(path)
+    }
+
+    async fn trash_with(
+        &self,
+        locator: &StorageLocator,
+        operation: impl FnOnce(PathBuf) -> StorageResult<()> + Send + 'static,
+    ) -> StorageResult<()> {
+        let logical = self.check_locator(locator)?;
+        self.writable(&logical)?;
+        let path = self.checked_path(&logical, false).await?;
+        let kind = self.stat(locator).await?.kind;
+        if !matches!(kind, StorageEntryKind::File | StorageEntryKind::Directory) {
+            return Err(StorageError::new(
+                StorageErrorCode::Unsupported,
+                "此项目不支持移入回收站",
+            ));
+        }
+        tokio::task::spawn_blocking(move || operation(path))
+            .await
+            .map_err(|_| StorageError::new(StorageErrorCode::Internal, "移入回收站任务意外中断"))?
+    }
+
     pub async fn new(volume: &StorageVolume) -> StorageResult<Self> {
         let VolumeRoot::Local { root_path } = &volume.root else {
             return Err(StorageError::new(
@@ -290,6 +322,52 @@ impl StorageBackend for OpenDalLocalBackend {
     }
     fn capabilities(&self) -> StorageCapabilities {
         StorageCapabilities::local(self.read_only)
+    }
+
+    async fn open(&self, locator: &StorageLocator) -> StorageResult<()> {
+        let path = self.open_path(locator).await?;
+        tokio::task::spawn_blocking(move || {
+            open::that(path).map_err(|_| {
+                StorageError::new(
+                    StorageErrorCode::Io,
+                    "无法使用系统默认应用打开文件，请检查文件关联和系统权限",
+                )
+            })
+        })
+        .await
+        .map_err(|_| StorageError::new(StorageErrorCode::Internal, "打开文件任务意外中断"))?
+    }
+
+    async fn trash(&self, locator: &StorageLocator) -> StorageResult<()> {
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+        {
+            self.trash_with(locator, |path| {
+                #[cfg(target_os = "macos")]
+                let context = {
+                    use trash::macos::{DeleteMethod, TrashContextExtMacos};
+                    let mut context = trash::TrashContext::new();
+                    context.set_delete_method(DeleteMethod::NsFileManager);
+                    context
+                };
+                #[cfg(not(target_os = "macos"))]
+                let context = trash::TrashContext::new();
+                context.delete(path).map_err(|_| {
+                    StorageError::new(
+                        StorageErrorCode::Io,
+                        "无法移入系统回收站，请检查磁盘和权限；未执行永久删除",
+                    )
+                })
+            })
+            .await
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+        {
+            let _ = locator;
+            Err(StorageError::new(
+                StorageErrorCode::Unsupported,
+                "当前平台暂不支持系统回收站",
+            ))
+        }
     }
 
     async fn open_read(&self, locator: &StorageLocator) -> StorageResult<StorageReader> {
@@ -482,6 +560,107 @@ mod tests {
             version_id: None,
         }
     }
+    #[tokio::test]
+    async fn trash_preserves_directory_contents_and_checks_authority() {
+        let (directory, backend) = fixture(false).await;
+        let recycle = tempfile::tempdir().unwrap();
+        std::fs::create_dir(directory.path().join("folder")).unwrap();
+        std::fs::write(directory.path().join("folder/keep.txt"), b"keep").unwrap();
+        let target = recycle.path().join("folder");
+        backend
+            .trash_with(&locator(&backend, "folder"), move |path| {
+                std::fs::rename(path, target).map_err(io_error)
+            })
+            .await
+            .unwrap();
+        assert!(!directory.path().join("folder").exists());
+        assert_eq!(
+            std::fs::read(recycle.path().join("folder/keep.txt")).unwrap(),
+            b"keep"
+        );
+        for path in ["", "../outside"] {
+            assert!(backend
+                .trash_with(&locator(&backend, path), |_| panic!("must not call trash"))
+                .await
+                .is_err());
+        }
+        let (readonly_directory, readonly) = fixture(true).await;
+        std::fs::write(readonly_directory.path().join("keep.txt"), b"keep").unwrap();
+        assert_eq!(
+            readonly
+                .trash_with(&locator(&readonly, "keep.txt"), |_| panic!(
+                    "must not call trash"
+                ))
+                .await
+                .unwrap_err()
+                .code,
+            StorageErrorCode::AccessDenied
+        );
+        assert!(readonly_directory.path().join("keep.txt").exists());
+        std::fs::write(directory.path().join("failure.txt"), b"preserve").unwrap();
+        assert!(backend
+            .trash_with(&locator(&backend, "failure.txt"), |_| Err(
+                StorageError::new(StorageErrorCode::Io, "unavailable")
+            ))
+            .await
+            .is_err());
+        assert!(directory.path().join("failure.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn opening_resolves_only_authorized_regular_files_even_when_readonly() {
+        let (directory, backend) = fixture(true).await;
+        let filename = "a file 'with' $(quotes).txt";
+        std::fs::write(directory.path().join(filename), b"safe").unwrap();
+        assert_eq!(
+            backend
+                .open_path(&locator(&backend, filename))
+                .await
+                .unwrap(),
+            std::fs::canonicalize(directory.path())
+                .unwrap()
+                .join(filename)
+        );
+        for path in ["", "../outside", "/etc/passwd", "missing"] {
+            assert!(backend.open_path(&locator(&backend, path)).await.is_err());
+        }
+        let mut wrong_volume = locator(&backend, filename);
+        wrong_volume.volume_id = Uuid::new_v4();
+        assert!(backend.open_path(&wrong_volume).await.is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(
+                directory.path().join(filename),
+                directory.path().join("link"),
+            )
+            .unwrap();
+            assert!(backend.open_path(&locator(&backend, "link")).await.is_err());
+            assert!(backend
+                .trash_with(&locator(&backend, "link"), |_| panic!(
+                    "must not call trash"
+                ))
+                .await
+                .is_err());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    #[ignore = "explicit system Trash smoke test; touches only a unique test file"]
+    async fn system_trash_smoke() {
+        let (directory, backend) = fixture(false).await;
+        let name = format!("filo-trash-smoke-{}.txt", Uuid::new_v4());
+        std::fs::write(directory.path().join(&name), b"Filo trash integration").unwrap();
+        backend.trash(&locator(&backend, &name)).await.unwrap();
+        assert!(!directory.path().join(&name).exists());
+        let recycled = std::path::PathBuf::from(std::env::var_os("HOME").unwrap())
+            .join(".Trash")
+            .join(&name);
+        assert_eq!(std::fs::read(&recycled).unwrap(), b"Filo trash integration");
+        // Remove only this test's UUID-named fixture; never enumerate or empty Trash.
+        std::fs::remove_file(recycled).unwrap();
+    }
+
     #[tokio::test]
     async fn staged_write_never_replaces_a_late_target_and_cleans_up() {
         let (directory, backend) = fixture(false).await;

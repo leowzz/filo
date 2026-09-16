@@ -144,12 +144,20 @@ async fn rename_entry(
     service.rename_entry(source, name).await
 }
 #[tauri::command]
+async fn open_entry(
+    service: State<'_, StorageService>,
+    locator: StorageLocator,
+) -> StorageResult<()> {
+    service.open_entry(locator).await
+}
+#[tauri::command]
 async fn delete_entry(
     service: State<'_, StorageService>,
     locator: StorageLocator,
+    mode: DeleteMode,
     confirmed: bool,
-) -> StorageResult<()> {
-    service.delete_entry(locator, confirmed).await
+) -> StorageResult<DeleteOutcome> {
+    service.delete_entry(locator, mode, confirmed).await
 }
 
 fn main() {
@@ -182,7 +190,8 @@ fn main() {
             stat_entry,
             create_directory,
             rename_entry,
-            delete_entry
+            delete_entry,
+            open_entry
         ])
         .run(tauri::generate_context!());
     if let Err(error) = result {

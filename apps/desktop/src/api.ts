@@ -5,6 +5,8 @@ import type {
   Volume,
   TransferJob,
   TransferKind,
+  DeleteMode,
+  DeleteOutcome,
 } from "./types";
 
 export const desktop = isTauri();
@@ -50,8 +52,9 @@ export const api = {
     invoke<void>("create_directory", { parent, name }),
   rename: (source: Locator, name: string) =>
     invoke<void>("rename_entry", { source, name }),
-  delete: (locator: Locator) =>
-    invoke<void>("delete_entry", { locator, confirmed: true }),
+  open: (locator: Locator) => invoke<void>("open_entry", { locator }),
+  delete: (locator: Locator, mode: DeleteMode) =>
+    invoke<DeleteOutcome>("delete_entry", { locator, mode, confirmed: true }),
 };
 export function errorMessage(error: unknown): string {
   if (error && typeof error === "object" && "message" in error)

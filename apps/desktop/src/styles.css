@@ -430,11 +430,11 @@ svg {
   opacity: 1;
 }
 .entry-menu {
-  position: absolute;
-  right: 5px;
-  top: 25px;
-  z-index: 10;
-  width: 158px;
+  position: fixed;
+  z-index: 30;
+  width: 200px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   padding: 5px;
   background: #f8f8f8fa;
   border: 1px solid #c8c8c8;
@@ -450,10 +450,17 @@ svg {
   border-radius: 4px;
   padding: 5px 9px;
   font-size: 12px;
+  gap: 8px;
 }
-.entry-menu button:hover {
+.entry-menu button:not(:disabled):hover,
+.entry-menu button:focus-visible {
   color: white;
   background: var(--accent);
+}
+.menu-separator {
+  height: 1px;
+  background: #dedede;
+  margin: 4px 6px;
 }
 .danger-text {
   color: #d4372b;

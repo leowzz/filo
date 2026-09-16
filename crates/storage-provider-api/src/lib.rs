@@ -23,7 +23,20 @@ pub trait StorageBackend: Send + Sync {
     async fn stat(&self, locator: &StorageLocator) -> StorageResult<StorageEntry>;
     async fn create_dir(&self, locator: &StorageLocator) -> StorageResult<()>;
     async fn rename(&self, source: &StorageLocator, target: &StorageLocator) -> StorageResult<()>;
+    /// Permanent removal, also used for verified move source cleanup.
     async fn delete(&self, locator: &StorageLocator) -> StorageResult<()>;
+    async fn trash(&self, _locator: &StorageLocator) -> StorageResult<()> {
+        Err(StorageError::new(
+            StorageErrorCode::Unsupported,
+            "该存储不支持回收站",
+        ))
+    }
+    async fn open(&self, _locator: &StorageLocator) -> StorageResult<()> {
+        Err(StorageError::new(
+            StorageErrorCode::Unsupported,
+            "该存储不支持直接打开文件",
+        ))
+    }
     async fn open_read(&self, locator: &StorageLocator) -> StorageResult<StorageReader>;
     async fn stage_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>>;
 }

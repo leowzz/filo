@@ -12,7 +12,7 @@
 4. 使用后端原生 Dialog 选择目录，完成 SQLite migration、去重添加、连接与 Volume 持久化。
 5. 完成深色界面、概览、文件浏览、详情、筛选、排序、隐藏文件、基础写操作和错误状态。
 
-当前提供命令：`list_connections`、`list_volumes`、`create_local_storage`、`update_local_storage`、`remove_local_storage`、`start_transfer`、`list_transfers`、`cancel_transfer`、`list_entries`、`stat_entry`、`create_directory`、`rename_entry`、`delete_entry`。
+当前提供命令：`list_connections`、`list_volumes`、`create_local_storage`、`update_local_storage`、`remove_local_storage`、`start_transfer`、`list_transfers`、`cancel_transfer`、`list_entries`、`stat_entry`、`open_entry`、`create_directory`、`rename_entry`、`delete_entry`。
 
 ## 安全与行为边界
 
@@ -21,7 +21,7 @@
 - 访问前逐段检查符号链接并检查 canonical path；根目录被改为符号链接时拒绝继续使用。
 - 符号链接显示为独立类型，禁止跟随与写操作。特殊设备文件不展示。
 - Provider 执行只读检查、Volume ID 校验与根目录保护，前端隐藏/禁用不是唯一保护。
-- 所有应用内写操作串行执行。删除必须收到确认，只删除普通文件或空目录。
+- 所有应用内写操作串行执行。删除必须收到确认；普通删除优先回收站，强制删除显式跳过回收站。永久删除仅支持普通文件或空目录。
 - macOS/Linux 重命名使用原子 no-replace 系统调用，避免「检查后外部进程创建目标」导致覆盖。此原生补强封装在 OpenDAL Provider 内，不影响领域接口。
 - 浏览/创建/删除仍通过 OpenDAL。现有路径检查不是针对恶意外部进程持续替换祖先目录的 OS 沙箱；后续如需对抗并发路径替换，需要将所有操作改为目录句柄相对访问。当前不应在不可信进程可任意改写的目录上使用写操作。
 - SQLite 无任何 S3 凭据；当前不创建 Keychain 记录。传输表记录真实的本地单文件任务。
@@ -90,3 +90,20 @@
 自动化验证：20 项 Rust 测试通过，覆盖真实文件复制内容一致、跨位置移动、同位置原生移动、空文件、目标冲突与暂存清理、校验阶段取消、排队取消、源文件变化、只读/连接变更限制、重启中断恢复，以及移除位置保留文件。TypeScript、ESLint、前端构建和 Clippy 通过。
 
 桌面验收：用隔离临时位置，在原生窗口选择 `sample.txt`，打开复制弹窗、进入 `destination` 子目录并执行复制；任务页显示已完成，落盘文件 32,000 字节且与源文件 SHA-256 一致。验证右键「移除位置…」及取消。测试目录、测试连接和测试任务已清理，保留用户原有两个只读位置。系统目录选择器的自动化路径输入不稳定，本次传输界面验收使用隔离测试配置；系统选择器自身沿用已验收的实现。
+
+
+## 文件打开、回收站与强制删除
+
+- 双击、Enter、工具栏「打开」及文件右键「打开」使用系统默认应用打开普通文件；文件夹仍在 Filo 内导航。显示简介保留为独立入口。
+- 新增 `native_open`、`trash` 能力，以及 `DeleteMode::{Default, Permanent}` / `DeleteOutcome`。应用层根据能力选择删除策略：Default 优先 trash，不支持时永久删除；Permanent 始终跳过回收站。回收站失败直接返回错误，绝不静默永久删除。
+- Local Provider 使用 `open` 调用系统默认应用，`trash` 调用系统回收站。macOS 显式使用 NSFileManager 原生 API，避免 Finder 自动化授权；可从系统回收站拖出文件恢复，部分系统不提供「放回原处」。
+- 右键文件菜单与省略号共用定位到视口内的菜单，支持方向键、Escape、点击外部关闭。复制、移动继续使用现有校验传输流程；目录递归复制/移动仍未接入。
+- 普通删除可将非空本地文件夹整体移入回收站；强制删除文件夹仍只允许空目录。删除确认弹窗清楚区分移入回收站与不可恢复的永久删除。
+- 打开、回收站和永久删除均在后端验证 Locator、根目录和符号链接。只读禁止两种删除，允许打开；只读约束 Filo 内的写操作，外部应用仍按操作系统权限运行。
+- 移动完成后的源文件清理继续使用底层永久删除接口，避免每次移动都制造回收站副本。
+
+验证：23 项自动测试通过；额外显式运行 macOS 原生回收站集成测试，验证测试文件进入真实回收站且内容完整，并清理该 UUID 测试文件。策略测试覆盖优先回收站、无回收站后端、显式永久删除、回收站失败不降级和只读拒绝；路径测试覆盖打开的授权范围及符号链接限制。前端 TypeScript、ESLint、生产构建通过。
+
+依赖依据：[trash API](https://docs.rs/trash/5.2.9/trash/)、[open API](https://docs.rs/open/5.4.4/open/fn.that.html)。
+
+桌面实测：文件右键完整菜单、普通删除回收站确认、强制删除永久删除确认和取消；双击隔离测试文件后，TextEdit 打开同一路径并显示预期内容。测试文件与文件夹在取消后保持完整，临时连接及文件已清理。macOS 应用打包、fmt、Clippy 与 diff 检查通过。

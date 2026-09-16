@@ -5,6 +5,7 @@ use storage_provider_api::StorageBackend;
 use storage_repository::Repository;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+mod file_operations;
 mod operation_planner;
 mod transfers;
 pub use transfers::TransferObserver;
@@ -206,8 +207,9 @@ impl StorageService {
     pub async fn delete_entry(
         &self,
         locator: StorageLocator,
+        mode: DeleteMode,
         confirmed: bool,
-    ) -> StorageResult<()> {
+    ) -> StorageResult<DeleteOutcome> {
         if !confirmed {
             return Err(StorageError::new(
                 StorageErrorCode::Conflict,
@@ -215,10 +217,13 @@ impl StorageService {
             ));
         }
         let _guard = self.mutation_lock.lock().await;
-        self.backend(locator.volume_id)
-            .await?
-            .delete(&locator)
-            .await
+        let backend = self.backend(locator.volume_id).await?;
+        file_operations::delete(backend.as_ref(), &locator, mode).await
+    }
+
+    pub async fn open_entry(&self, locator: StorageLocator) -> StorageResult<()> {
+        let _guard = self.mutation_lock.lock().await;
+        self.backend(locator.volume_id).await?.open(&locator).await
     }
 }
 
@@ -329,7 +334,11 @@ mod tests {
             ..parent
         };
         assert_eq!(
-            service.delete_entry(folder, true).await.unwrap_err().code,
+            service
+                .delete_entry(folder, DeleteMode::Default, true)
+                .await
+                .unwrap_err()
+                .code,
             StorageErrorCode::AccessDenied
         );
         let view = service.list_volumes().await.unwrap().remove(0);
@@ -422,7 +431,7 @@ mod tests {
         };
         assert_eq!(
             service
-                .delete_entry(locator.clone(), false)
+                .delete_entry(locator.clone(), DeleteMode::Default, false)
                 .await
                 .unwrap_err()
                 .code,
@@ -441,7 +450,10 @@ mod tests {
             service.stat_entry(unknown).await.unwrap_err().code,
             StorageErrorCode::NotFound
         );
-        service.delete_entry(locator, true).await.unwrap();
+        service
+            .delete_entry(locator, DeleteMode::Permanent, true)
+            .await
+            .unwrap();
         assert!(!directory.path().join("existing.txt").exists());
     }
 }
