@@ -289,3 +289,41 @@
     margin-left: 4px;
   }
 }
+@media (max-width: 760px) {
+  .sidebar {
+    width: 184px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .topbar {
+    height: 56px;
+    min-height: 56px;
+    padding: 0 8px;
+  }
+  .topbar-title {
+    gap: 7px;
+  }
+  .navigation-buttons {
+    margin-left: -4px;
+  }
+  .topbar h1 {
+    font-size: 15px;
+  }
+  .toolbar-actions {
+    min-width: 0;
+    gap: 1px;
+  }
+  .toolbar-separator {
+    margin: 0 1px;
+  }
+  .search-input {
+    width: 104px;
+    margin-left: 2px;
+  }
+  .statusbar {
+    padding: 0 10px;
+  }
+  .statusbar > span:last-child {
+    display: none;
+  }
+}

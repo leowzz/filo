@@ -5,19 +5,21 @@ import { listenFileDrop } from "./fileDropEvents";
 export function useExternalFileDrop({
   areaRef,
   readOnly,
+  blockedMessage,
   busy,
   onDrop,
   onError,
 }: {
   areaRef: RefObject<HTMLDivElement | null>;
   readOnly: boolean;
+  blockedMessage?: string;
   busy: boolean;
   onDrop: (paths: string[]) => void;
   onError: (message: string) => void;
 }) {
   const [hovering, setHovering] = useState(false);
   const handleDrop = useEffectEvent((paths: string[]) => {
-    if (readOnly) onError("当前目录为只读，无法上传");
+    if (readOnly) onError(blockedMessage ?? "当前目录为只读，无法上传");
     else if (busy) onError("正在提交上传任务，请稍后再拖入");
     else if (paths.length > 0) onDrop(paths);
   });
@@ -62,7 +64,7 @@ export function useExternalFileDrop({
   }, [areaRef]);
   return hovering
     ? readOnly
-      ? "当前目录为只读，无法上传"
+      ? (blockedMessage ?? "当前目录为只读，无法上传")
       : busy
         ? "正在提交上传任务，请稍候"
         : "松开以上传到当前目录"

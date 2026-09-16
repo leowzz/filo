@@ -1,7 +1,9 @@
 import {
   ArrowRight,
+  Cloud,
   HardDrive,
   LoaderCircle,
+  Network,
   Plus,
   ShieldCheck,
 } from "lucide-react";
@@ -23,19 +25,13 @@ export function OverviewPage({
     <div className="overview page-scroll">
       <div className="page-heading">
         <div>
-          <h2>你的存储空间</h2>
-          <p>连接本地目录或 S3 存储，浏览和管理你的文件。</p>
+          <h2>你的存储空间{!loading && ` · ${volumes.length}`}</h2>
+          <p>连接本地目录、对象存储或文件服务器，统一管理你的文件。</p>
         </div>
         <button className="primary" onClick={() => onAdd()}>
           <Plus size={17} />
           添加存储空间
         </button>
-      </div>
-      <div className="section-heading">
-        <h2>
-          你的存储空间 <span>{volumes.length}</span>
-        </h2>
-        <span className="muted">所有已添加的位置</span>
       </div>
       {loading ? (
         <div className="empty-state">
@@ -51,7 +47,13 @@ export function OverviewPage({
               onClick={() => openVolume(item)}
             >
               <span className="drive-tile">
-                <HardDrive size={22} />
+                {item.root.type === "remote" ? (
+                  <Network size={22} />
+                ) : item.root.type === "s3" ? (
+                  <Cloud size={22} />
+                ) : (
+                  <HardDrive size={22} />
+                )}
               </span>
               <div className="volume-info">
                 <h3 title={item.name}>{item.name}</h3>
@@ -59,17 +61,21 @@ export function OverviewPage({
                   title={
                     item.root.type === "local"
                       ? item.root.root_path
-                      : `s3://${item.root.bucket}/${item.root.prefix}`
+                      : item.root.type === "s3"
+                        ? `s3://${item.root.bucket}/${item.root.prefix}`
+                        : item.root.path || "/"
                   }
                 >
                   {item.root.type === "local"
                     ? item.root.root_path
-                    : `s3://${item.root.bucket}/${item.root.prefix}`}
+                    : item.root.type === "s3"
+                      ? `s3://${item.root.bucket}/${item.root.prefix}`
+                      : item.root.path || "/"}
                 </p>
               </div>
               <div className="card-bottom">
                 <span className="pill">
-                  {item.root.type === "s3" ? (
+                  {item.root.type !== "local" ? (
                     <StorageTypeLabel volume={item} />
                   ) : (
                     "本地目录"
@@ -87,9 +93,9 @@ export function OverviewPage({
             </span>
             <div className="volume-info">
               <h3>
-                {volumes.length ? "连接另一个存储空间" : "连接本地目录或 S3"}
+                {volumes.length ? "连接另一个存储空间" : "连接你的存储空间"}
               </h3>
-              <p>选择已有目录，直接浏览其中的文件</p>
+              <p>添加本地目录或远程连接，直接浏览已有文件</p>
             </div>
           </button>
         </div>

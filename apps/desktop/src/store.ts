@@ -1,17 +1,78 @@
 import { create } from "zustand";
+import type { ClipboardMode, FileClipboard } from "./fileClipboard";
+import type { Entry, EntrySort } from "./types";
 
 type Location = { volumeId: string; path: string };
+type BrowserPreferences = {
+  showHidden: boolean;
+  showDetails: boolean;
+  sort: EntrySort;
+};
+
+const preferencesKey = "filo.browser-preferences";
+const defaultPreferences: BrowserPreferences = {
+  showHidden: false,
+  showDetails: false,
+  sort: "name",
+};
+
+function readPreferences(): BrowserPreferences {
+  if (typeof localStorage === "undefined") return defaultPreferences;
+  try {
+    const value: unknown = JSON.parse(
+      localStorage.getItem(preferencesKey) ?? "null",
+    );
+    if (!value || typeof value !== "object") return defaultPreferences;
+    const input = value as Partial<BrowserPreferences>;
+    return {
+      showHidden:
+        typeof input.showHidden === "boolean"
+          ? input.showHidden
+          : defaultPreferences.showHidden,
+      showDetails:
+        typeof input.showDetails === "boolean"
+          ? input.showDetails
+          : defaultPreferences.showDetails,
+      sort:
+        input.sort === "name" ||
+        input.sort === "size" ||
+        input.sort === "modified"
+          ? input.sort
+          : defaultPreferences.sort,
+    };
+  } catch {
+    return defaultPreferences;
+  }
+}
+
+function writePreferences(value: BrowserPreferences) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(preferencesKey, JSON.stringify(value));
+  } catch {
+    // Preferences are a convenience. A restricted storage context should not
+    // make the browser unusable.
+  }
+}
+
+const initialPreferences = readPreferences();
+
 type State = {
   page: "overview" | "browser" | "transfers" | "settings";
   history: Location[];
   index: number;
   showHidden: boolean;
   showDetails: boolean;
+  sort: EntrySort;
+  clipboard: FileClipboard | null;
   navigate: (location: Location) => void;
   step: (delta: number) => void;
   setPage: (page: State["page"]) => void;
   toggleHidden: () => void;
   toggleDetails: () => void;
+  setSort: (sort: EntrySort) => void;
+  setClipboard: (entries: Entry[], mode: ClipboardMode) => void;
+  clearClipboard: () => void;
   resetVolumeRoot: (volumeId: string) => void;
   removeVolume: (volumeId: string) => void;
 };
@@ -19,8 +80,10 @@ export const useBrowser = create<State>((set) => ({
   page: "overview",
   history: [],
   index: -1,
-  showHidden: false,
-  showDetails: false,
+  showHidden: initialPreferences.showHidden,
+  showDetails: initialPreferences.showDetails,
+  sort: initialPreferences.sort,
+  clipboard: null,
   navigate: (location) =>
     set((state) => ({
       page: "browser",
@@ -36,13 +99,56 @@ export const useBrowser = create<State>((set) => ({
       ),
     })),
   setPage: (page) => set({ page }),
-  toggleHidden: () => set((state) => ({ showHidden: !state.showHidden })),
-  toggleDetails: () => set((state) => ({ showDetails: !state.showDetails })),
+  toggleHidden: () =>
+    set((state) => {
+      const next = { ...state, showHidden: !state.showHidden };
+      writePreferences({
+        showHidden: next.showHidden,
+        showDetails: next.showDetails,
+        sort: next.sort,
+      });
+      return { showHidden: next.showHidden };
+    }),
+  toggleDetails: () =>
+    set((state) => {
+      const next = { ...state, showDetails: !state.showDetails };
+      writePreferences({
+        showHidden: next.showHidden,
+        showDetails: next.showDetails,
+        sort: next.sort,
+      });
+      return { showDetails: next.showDetails };
+    }),
+  setSort: (sort) =>
+    set((state) => {
+      writePreferences({
+        showHidden: state.showHidden,
+        showDetails: state.showDetails,
+        sort,
+      });
+      return { sort };
+    }),
+  setClipboard: (entries, mode) =>
+    set({
+      clipboard:
+        entries.length > 0
+          ? {
+              mode,
+              entries: [...entries],
+            }
+          : null,
+    }),
+  clearClipboard: () => set({ clipboard: null }),
   resetVolumeRoot: (volumeId) =>
     set((state) => ({
       history: state.history.map((location) =>
         location.volumeId === volumeId ? { ...location, path: "" } : location,
       ),
+      clipboard: state.clipboard?.entries.some(
+        (entry) => entry.locator.volume_id === volumeId,
+      )
+        ? null
+        : state.clipboard,
     })),
   removeVolume: (volumeId) =>
     set((state) => {
@@ -58,6 +164,11 @@ export const useBrowser = create<State>((set) => ({
         index: history.length ? Math.max(0, before - 1) : -1,
         page:
           currentRemoved && state.page === "browser" ? "overview" : state.page,
+        clipboard: state.clipboard?.entries.some(
+          (entry) => entry.locator.volume_id === volumeId,
+        )
+          ? null
+          : state.clipboard,
       };
     }),
 }));

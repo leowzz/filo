@@ -15,6 +15,7 @@ import { useBrowser } from "./store";
 import { type Entry, type Volume } from "./types";
 import { useFileSelection } from "./useFileSelection";
 import { useExternalFileDrop } from "./useExternalFileDrop";
+import { canWriteVolume, type ClipboardMode } from "./fileClipboard";
 
 import { useEffect, useLayoutEffect } from "react";
 import type { useDirectoryQuery } from "./useDirectoryQuery";
@@ -34,7 +35,14 @@ export function FileBrowser({
   setSort,
   selection,
   selectedEntries,
+  clipboardMode,
+  clipboardCount,
+  clipboardPaths,
+  pastePending,
   onPreview,
+  onCopy,
+  onCut,
+  onPaste,
   uploadPending,
   onFileDrop,
   onDropError,
@@ -53,7 +61,14 @@ export function FileBrowser({
   setSort: (sort: EntrySort) => void;
   selection: ReturnType<typeof useFileSelection>;
   selectedEntries: Entry[];
+  clipboardMode: ClipboardMode | null;
+  clipboardCount: number;
+  clipboardPaths: Set<string>;
+  pastePending: boolean;
   onPreview: () => void;
+  onCopy: () => void;
+  onCut: () => void;
+  onPaste: () => void;
   uploadPending: boolean;
   onFileDrop: (paths: string[]) => void;
   onDropError: (message: string) => void;
@@ -70,9 +85,13 @@ export function FileBrowser({
 }) {
   const state = useBrowser();
   const { selectedPaths } = selection;
+  const writable = canWriteVolume(volume);
   const dropMessage = useExternalFileDrop({
     areaRef: selection.areaRef,
-    readOnly: volume.read_only,
+    readOnly: !writable,
+    blockedMessage: volume.read_only
+      ? "当前目录为只读，无法上传"
+      : "当前目录不支持写入，无法上传",
     busy: uploadPending,
     onDrop: onFileDrop,
     onError: onDropError,
@@ -111,6 +130,29 @@ export function FileBrowser({
           }}
           onClickCapture={selection.onClickCapture}
           onKeyDown={(event) => {
+            const editingTarget =
+              event.target instanceof Element &&
+              event.target.closest(
+                "button, input, textarea, select, a, [contenteditable], [role=menu]",
+              );
+            const shortcutTarget =
+              !editingTarget &&
+              !event.nativeEvent.isComposing &&
+              event.target instanceof HTMLElement &&
+              (event.target === event.currentTarget ||
+                !!event.target.closest("[data-entry-path]"));
+            if (
+              shortcutTarget &&
+              !event.altKey &&
+              (event.metaKey || event.ctrlKey) &&
+              ["c", "x", "v"].includes(event.key.toLowerCase())
+            ) {
+              event.preventDefault();
+              if (event.key.toLowerCase() === "c") onCopy();
+              else if (event.key.toLowerCase() === "x") onCut();
+              else onPaste();
+              return;
+            }
             if (
               event.key === " " &&
               !event.altKey &&
@@ -180,13 +222,7 @@ export function FileBrowser({
                   <tr
                     key={entry.locator.logical_path}
                     data-entry-path={entry.locator.logical_path}
-                    className={
-                      selectedPaths.has(entry.locator.logical_path)
-                        ? "selected"
-                        : (rows.start + index) % 2 === 0
-                          ? "stripe"
-                          : ""
-                    }
+                    className={`${selectedPaths.has(entry.locator.logical_path) ? "selected" : (rows.start + index) % 2 === 0 ? "stripe" : ""}${clipboardMode === "cut" && clipboardPaths.has(entry.locator.logical_path) ? " cut" : ""}`}
                     tabIndex={0}
                     aria-selected={selectedPaths.has(
                       entry.locator.logical_path,
@@ -360,11 +396,26 @@ export function FileBrowser({
           {selectedEntries.length > 0
             ? ` · 已选择 ${selectedEntries.length} 项`
             : ""}
+          {clipboardMode === "cut" && clipboardCount > 0 && (
+            <span className="clipboard-status">
+              {" "}
+              · 剪切待粘贴 {clipboardCount} 项
+            </span>
+          )}
+          {clipboardMode === "copy" && clipboardCount > 0 && (
+            <span className="clipboard-status">
+              {" "}
+              · 已复制 {clipboardCount} 项
+            </span>
+          )}
         </span>
         <span>
           <span className="status-dot" />
           <StorageTypeLabel volume={volume} />
           {volume.read_only && " · 只读访问"}
+          {pastePending && (
+            <span className="clipboard-status pending"> · 正在粘贴</span>
+          )}
           <span className="status-separator">/</span>双击打开文件或文件夹
         </span>
       </footer>

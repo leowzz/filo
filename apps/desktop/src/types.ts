@@ -4,17 +4,36 @@ export type Locator = {
   version_id: string | null;
 };
 export type S3Provider = "generic" | "rustfs" | "tos" | "oss";
+export type RemoteProtocol = "ftp" | "ftps" | "sftp" | "smb";
+export type RemoteAuthMethod = "password" | "private_key";
 export type S3Config = {
   provider?: S3Provider | null;
   endpoint: string | null;
   region: string;
   force_path_style: boolean;
 };
+/** Non-secret connection settings for FTP(S), SFTP and SMB. */
+export type RemoteConfig = {
+  protocol: RemoteProtocol;
+  host: string;
+  port: number;
+  share: string;
+  known_hosts: string;
+};
+export type RemoteCredentials = {
+  username: string;
+  password: string;
+  private_key: string;
+  passphrase: string;
+  domain: string;
+};
 export type Connection = {
   id: string;
   name: string;
-  provider: "local_fs" | "s3";
-  config: S3Config;
+  provider: "local_fs" | "s3" | "remote";
+  // Local connections return `{}`. The intersection keeps existing S3
+  // helpers strongly typed while exposing remote fields to its dialog.
+  config: S3Config & Partial<RemoteConfig>;
 };
 export type S3Input = {
   name: string;
@@ -28,10 +47,23 @@ export type S3Input = {
     session_token: string | null;
   } | null;
 };
+export type RemoteInput = {
+  name: string;
+  protocol: RemoteProtocol;
+  host: string;
+  port: number;
+  path: string;
+  share: string;
+  known_hosts: string;
+  read_only: boolean;
+  credentials: RemoteCredentials | null;
+};
 export type Capabilities = {
   hierarchy: "native_directory" | "virtual_prefix";
   rename: "atomic" | "copy_then_delete" | "unsupported";
   create_directory: boolean;
+  /** Some remote protocols are intentionally read-only until safe writes exist. */
+  write?: boolean;
   delete: boolean;
   trash: boolean;
   native_open: boolean;
@@ -44,7 +76,8 @@ export type Volume = {
   read_only: boolean;
   root:
     | { type: "local"; root_path: string }
-    | { type: "s3"; bucket: string; prefix: string };
+    | { type: "s3"; bucket: string; prefix: string }
+    | { type: "remote"; path: string };
   capabilities: Capabilities;
 };
 export type Entry = {

@@ -54,13 +54,13 @@ assert.deepEqual(
       (e) => e.textContent,
     ),
   ),
-  ["本地文件系统", "S3 存储"],
+  ["本地文件系统", "S3 存储", "远程文件协议"],
 );
 assert.deepEqual(
   await page.evaluate(() =>
-    [...document.querySelectorAll(".provider-choice strong")].map(
-      (e) => e.textContent,
-    ),
+    [
+      ...document.querySelectorAll(".s3-provider-list .provider-choice strong"),
+    ].map((e) => e.textContent),
   ),
   ["通用 S3 协议", "RustFS", "火山云 TOS", "阿里云 OSS"],
 );
@@ -193,6 +193,9 @@ assert.equal(
 );
 await test();
 await page.click('button:text-is("返回选择")');
+await page.waitForFunction(
+  () => document.activeElement.dataset.provider === "tos",
+);
 assert.equal(
   await page.evaluate(
     () =>

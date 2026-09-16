@@ -6,6 +6,7 @@ import { api, errorMessage } from "./api";
 import { runBatch, type BatchFailure } from "./batch";
 import { useDirectoryQuery } from "./useDirectoryQuery";
 import { ConflictPolicyField } from "./ConflictPolicyField";
+import { canWriteVolume } from "./fileClipboard";
 import { type ConflictPolicy } from "./types";
 import { Modal } from "./components";
 import {
@@ -35,7 +36,7 @@ export function TransferDialog({
   const [failures, setFailures] = useState<BatchFailure<Entry>[]>([]);
   const [submitted, setSubmitted] = useState(0);
   const multiple = entries.length > 1;
-  const writable = volumes.filter((volume) => !volume.read_only);
+  const writable = volumes.filter(canWriteVolume);
   const [volumeId, setVolumeId] = useState(
     writable.find((volume) => volume.id !== entry.locator.volume_id)?.id ??
       writable[0]?.id ??

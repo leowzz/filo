@@ -3,18 +3,21 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { FolderOpen, LoaderCircle } from "lucide-react";
 import { api, errorMessage } from "./api";
 import { Modal } from "./components";
+import { RemoteStorageDialog } from "./RemoteStorageDialog";
 import { useBrowser } from "./store";
 import type { Volume } from "./types";
+
+type LocalEditProps = {
+  volume: Volume;
+  onClose: () => void;
+  onSaved: (rootChanged: boolean) => void;
+};
 
 export function EditLocationDialog({
   volume,
   onClose,
   onSaved,
-}: {
-  volume: Volume;
-  onClose: () => void;
-  onSaved: (rootChanged: boolean) => void;
-}) {
+}: LocalEditProps) {
   const client = useQueryClient();
   const [name, setName] = useState(volume.name);
   const [readOnly, setReadOnly] = useState(volume.read_only);
@@ -143,5 +146,20 @@ export function EditLocationDialog({
         </div>
       </form>
     </Modal>
+  );
+}
+
+/** Remote locations use the protocol-aware editor and retain credentials by default. */
+export function EditRemoteLocationDialog({
+  volume,
+  onClose,
+  onSaved,
+}: {
+  volume: Volume;
+  onClose: () => void;
+  onSaved: (volume: Omit<Volume, "capabilities">) => void;
+}) {
+  return (
+    <RemoteStorageDialog volume={volume} onClose={onClose} onSaved={onSaved} />
   );
 }

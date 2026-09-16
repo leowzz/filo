@@ -1,17 +1,27 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
+  ChevronLeft,
   ChevronRight,
   Cloud,
   FolderOpen,
   HardDrive,
   LoaderCircle,
+  Network,
 } from "lucide-react";
 import { desktop, errorMessage } from "./api";
 import { Modal } from "./components";
+import { RemoteForm } from "./RemoteStorageDialog";
 import { S3Form } from "./S3StorageDialog";
 import { s3Providers } from "./s3Providers";
-import { S3ProviderIcon } from "./StorageProvider";
-import type { S3Provider, Volume } from "./types";
+import {
+  isRemoteProtocol,
+  remoteProtocols,
+  RemoteProviderIcon,
+  S3ProviderIcon,
+} from "./StorageProvider";
+import type { RemoteProtocol, S3Provider, Volume } from "./types";
+
+type StorageChoice = S3Provider | RemoteProtocol;
 
 export function AddStorageDialog({
   mutation,
@@ -28,11 +38,11 @@ export function AddStorageDialog({
   onClose: () => void;
   onSaved: (volume: Omit<Volume, "capabilities">) => void;
 }) {
-  const [selected, setSelected] = useState<S3Provider | null>(null);
-  const [visited, setVisited] = useState<S3Provider[]>([]);
-  const [s3Busy, setS3Busy] = useState(false);
+  const [selected, setSelected] = useState<StorageChoice | null>(null);
+  const [visited, setVisited] = useState<StorageChoice[]>([]);
+  const [providerBusy, setProviderBusy] = useState(false);
   const body = useRef<HTMLDivElement>(null);
-  const busy = mutation.isPending || s3Busy;
+  const busy = mutation.isPending || providerBusy;
 
   useEffect(() => {
     if (selected)
@@ -45,17 +55,20 @@ export function AddStorageDialog({
         });
   }, [selected]);
 
-  function select(provider: S3Provider) {
+  function select(provider: StorageChoice) {
     setVisited((current) =>
       current.includes(provider) ? current : [...current, provider],
     );
     setSelected(provider);
   }
   function back() {
-    body.current
-      ?.querySelector<HTMLButtonElement>(`[data-provider="${selected}"]`)
-      ?.focus({ preventScroll: true });
+    const previous = selected;
     setSelected(null);
+    requestAnimationFrame(() => {
+      body.current
+        ?.querySelector<HTMLButtonElement>(`[data-provider="${previous}"]`)
+        ?.focus({ preventScroll: false });
+    });
   }
 
   return (
@@ -130,6 +143,41 @@ export function AddStorageDialog({
                 ))}
               </div>
             </section>
+            <section
+              className="storage-section"
+              aria-labelledby="remote-storage-heading"
+            >
+              <h3 id="remote-storage-heading">
+                <Network size={17} />
+                远程文件协议
+              </h3>
+              <p className="modal-description">
+                连接 FTP、SFTP 或局域网中的 SMB / Samba 共享目录。
+              </p>
+              <div className="remote-provider-list">
+                {(Object.keys(remoteProtocols) as RemoteProtocol[]).map(
+                  (protocol) => (
+                    <button
+                      key={protocol}
+                      type="button"
+                      className="provider-choice"
+                      data-provider={protocol}
+                      aria-pressed={selected === protocol}
+                      aria-controls={`storage-panel-${protocol}`}
+                      disabled={!desktop || busy}
+                      onClick={() => select(protocol)}
+                    >
+                      <RemoteProviderIcon protocol={protocol} />
+                      <div className="provider-choice-copy">
+                        <strong>{remoteProtocols[protocol].name}</strong>
+                        <p>{remoteProtocols[protocol].description}</p>
+                      </div>
+                      <ChevronRight size={17} />
+                    </button>
+                  ),
+                )}
+              </div>
+            </section>
           </fieldset>
           {!desktop && (
             <p className="error-text">请在桌面应用中使用系统目录选择器。</p>
@@ -153,27 +201,54 @@ export function AddStorageDialog({
           )}
         </form>
         <div className="storage-detail" inert={!selected}>
-          {visited.map((provider) => (
-            <section
-              key={provider}
-              id={`storage-panel-${provider}`}
-              className="storage-detail-panel"
-              hidden={selected !== provider}
-              aria-labelledby={`storage-heading-${provider}`}
+          {selected && (
+            <button
+              type="button"
+              className="storage-back-button"
+              disabled={busy}
+              onClick={back}
             >
-              <h3 id={`storage-heading-${provider}`}>
-                {s3Providers[provider].name}
-              </h3>
-              <S3Form
-                provider={provider}
-                embedded
-                externalBusy={mutation.isPending}
-                onBusyChange={setS3Busy}
-                onClose={back}
-                onSaved={onSaved}
-              />
-            </section>
-          ))}
+              <ChevronLeft size={16} />
+              返回选择
+            </button>
+          )}
+          {visited.map((provider) => {
+            const remote = isRemoteProtocol(provider);
+            return (
+              <section
+                key={provider}
+                id={`storage-panel-${provider}`}
+                className="storage-detail-panel"
+                hidden={selected !== provider}
+                aria-labelledby={`storage-heading-${provider}`}
+              >
+                <h3 id={`storage-heading-${provider}`}>
+                  {remote
+                    ? remoteProtocols[provider].name
+                    : s3Providers[provider].name}
+                </h3>
+                {remote ? (
+                  <RemoteForm
+                    protocol={provider}
+                    embedded
+                    externalBusy={mutation.isPending}
+                    onBusyChange={setProviderBusy}
+                    onClose={back}
+                    onSaved={onSaved}
+                  />
+                ) : (
+                  <S3Form
+                    provider={provider}
+                    embedded
+                    externalBusy={mutation.isPending}
+                    onBusyChange={setProviderBusy}
+                    onClose={back}
+                    onSaved={onSaved}
+                  />
+                )}
+              </section>
+            );
+          })}
         </div>
       </div>
     </Modal>

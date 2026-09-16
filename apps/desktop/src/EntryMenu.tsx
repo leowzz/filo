@@ -1,13 +1,17 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import {
   Copy,
+  Download,
   ExternalLink,
   FolderInput,
   Info,
   Pencil,
+  Scissors,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
+import { canCutVolume, canWriteVolume } from "./fileClipboard";
 import {
   isDirectory,
   type DeleteMode,
@@ -25,6 +29,13 @@ export function EntryMenu({
   onOpen,
   onDetails,
   onPreview,
+  onCopy,
+  onCut,
+  onPaste,
+  hasClipboard,
+  canPaste,
+  onUpload,
+  onDownload,
   onManage,
   onRename,
   onTransfer,
@@ -38,6 +49,13 @@ export function EntryMenu({
   onOpen: () => void;
   onDetails: () => void;
   onPreview: () => void;
+  onCopy: () => void;
+  onCut: () => void;
+  onPaste: () => void;
+  hasClipboard: boolean;
+  canPaste: boolean;
+  onUpload: () => void;
+  onDownload: () => void;
   onManage: () => void;
   onRename: () => void;
   onTransfer: (kind: TransferKind) => void;
@@ -105,6 +123,9 @@ export function EntryMenu({
       (entry.kind === "file" && volume.capabilities.native_open));
   const canOperate =
     entries.length > 0 && entries.every((item) => item.kind !== "symlink");
+  const canWrite = canWriteVolume(volume);
+  const canCut = canCutVolume(volume);
+  const remote = volume.root.type !== "local";
   return (
     <div
       ref={ref}
@@ -149,9 +170,42 @@ export function EntryMenu({
             对象管理…
           </button>
         )}
+      {remote && (
+        <>
+          <div className="menu-separator" />
+          <button
+            role="menuitem"
+            disabled={!canWrite}
+            onClick={() => perform(onUpload)}
+          >
+            <Upload size={14} />
+            上传到此处…
+          </button>
+          <button
+            role="menuitem"
+            disabled={entries.length !== 1 || entry.kind !== "file"}
+            onClick={() => perform(onDownload)}
+          >
+            <Download size={14} />
+            下载文件…
+          </button>
+        </>
+      )}
       {canOperate && (
         <>
           <div className="menu-separator" />
+          <button role="menuitem" onClick={() => perform(onCopy)}>
+            <Copy size={14} />
+            复制
+          </button>
+          <button
+            role="menuitem"
+            disabled={!canCut}
+            onClick={() => perform(onCut)}
+          >
+            <Scissors size={14} />
+            剪切
+          </button>
           <button
             role="menuitem"
             onClick={() => perform(() => onTransfer("copy"))}
@@ -161,7 +215,7 @@ export function EntryMenu({
           </button>
           <button
             role="menuitem"
-            disabled={volume.read_only}
+            disabled={!canCut}
             onClick={() => perform(() => onTransfer("move"))}
           >
             <FolderInput size={14} />
@@ -177,6 +231,18 @@ export function EntryMenu({
           >
             <Pencil size={14} />
             重命名
+          </button>
+        </>
+      )}
+      {hasClipboard && (
+        <>
+          <div className="menu-separator" />
+          <button
+            role="menuitem"
+            disabled={!canPaste}
+            onClick={() => perform(onPaste)}
+          >
+            粘贴到当前目录
           </button>
         </>
       )}

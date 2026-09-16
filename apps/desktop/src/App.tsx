@@ -6,18 +6,22 @@ import { Check, Info, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
   type FormEvent,
 } from "react";
 import { updateTransfer } from "./transferPresentation";
 import { api, desktop, errorMessage } from "./api";
+import { runBatch } from "./batch";
 import { DeleteEntryDialog } from "./DeleteEntryDialog";
 import { EditLocationDialog } from "./EditLocationDialog";
 import { EntryMenu } from "./EntryMenu";
 import { LocationMenu, type LocationMenuTarget } from "./LocationMenu";
 import { RemoveLocationDialog } from "./RemoveLocationDialog";
+import { RemoteStorageDialog } from "./RemoteStorageDialog";
 import { S3StorageDialog } from "./S3StorageDialog";
+import { ConflictPolicyField } from "./ConflictPolicyField";
 import { useBrowser } from "./store";
 import { TransferDialog } from "./TransferDialog";
 import { TransfersPage } from "./TransfersPage";
@@ -35,15 +39,40 @@ import { UploadDialog } from "./UploadDialog";
 import type { ConflictPolicy } from "./types";
 import { useDirectoryQuery } from "./useDirectoryQuery";
 import { useFileSelection } from "./useFileSelection";
+import {
+  canCutVolume,
+  canWriteVolume,
+  clipboardSignature,
+  destinationFor,
+  pasteBlockReason,
+  type ClipboardMode,
+  type FileClipboard,
+} from "./fileClipboard";
 
 import { AppHeader } from "./AppHeader";
-import { FileBrowser, type EntrySort } from "./FileBrowser";
+import { FileBrowser } from "./FileBrowser";
 import { OverviewPage } from "./OverviewPage";
 import { SettingsPage } from "./SettingsPage";
 import { useAppUpdater } from "./useAppUpdater";
 import { UpdateProgressDialog } from "./AppUpdateCard";
 import { Sidebar } from "./Sidebar";
 import { StorageActionDialog, type Dialog } from "./StorageActionDialog";
+
+function textInputFocused() {
+  const active = document.activeElement;
+  return (
+    active instanceof HTMLElement &&
+    !!active.closest("input, textarea, select, [contenteditable='true']")
+  );
+}
+
+function shortcutLabel(key: string) {
+  const platform =
+    typeof navigator === "undefined"
+      ? ""
+      : `${navigator.platform} ${navigator.userAgent}`.toLowerCase();
+  return platform.includes("mac") ? `⌘${key}` : `Ctrl+${key}`;
+}
 
 export default function App() {
   const updater = useAppUpdater();
@@ -69,11 +98,40 @@ export default function App() {
     jobIds: string[];
   } | null>(null);
   const previousTransfers = useRef<TransferJob[] | undefined>(undefined);
+  type TrackedPasteJob = {
+    entry: Entry;
+    mode: ClipboardMode;
+  };
+  type PasteRetry = {
+    clipboard: FileClipboard;
+    signature: string;
+    destination: Locator;
+    entries: Entry[];
+  };
+  type PasteRun = {
+    clipboard: FileClipboard;
+    destination: Locator;
+    items: Entry[];
+    remaining: Entry[];
+    failures: { item: Entry; error: unknown }[];
+    started: number;
+    completed: number;
+    collecting: boolean;
+  };
+  const pasteJobs = useRef(new Map<string, TrackedPasteJob>());
+  const pasteTerminalJobs = useRef(
+    new Map<string, { job: TransferJob; entry: Entry; mode: ClipboardMode }>(),
+  );
+  const pasteRun = useRef<PasteRun | null>(null);
+  const [pastePending, setPastePending] = useState(false);
+  const [pasteRetry, setPasteRetry] = useState<PasteRetry | null>(null);
+  const [pastePolicy, setPastePolicy] = useState<ConflictPolicy>("reject");
   useEffect(() => {
     const jobs = transfersQuery.data;
     if (!jobs) return;
     const previous = previousTransfers.current;
     previousTransfers.current = jobs;
+    for (const job of jobs) settlePasteJob(job);
     if (!previous) return;
     const completedIds = new Set(
       previous.filter((job) => job.state === "completed").map((job) => job.id),
@@ -123,7 +181,6 @@ export default function App() {
     mode: DeleteMode;
   } | null>(null);
   const closeEntryMenu = useCallback(() => setMenu(null), []);
-  const [sort, setSort] = useState<EntrySort>("name");
   const [locationMenu, setLocationMenu] = useState<LocationMenuTarget | null>(
     null,
   );
@@ -135,6 +192,109 @@ export default function App() {
   } | null>(null);
   const closeLocationMenu = useCallback(() => setLocationMenu(null), []);
   const [debouncedSearch, setDebouncedSearch] = useState(search);
+
+  function sameLocator(left: Locator, right: Locator) {
+    return (
+      left.volume_id === right.volume_id &&
+      left.logical_path === right.logical_path
+    );
+  }
+
+  function finalizePasteRun() {
+    const run = pasteRun.current;
+    if (!run || run.collecting || pasteJobs.current.size > 0) return;
+    const remaining = run.remaining.filter(
+      (entry, index, all) =>
+        all.findIndex(
+          (item) =>
+            item.locator.volume_id === entry.locator.volume_id &&
+            item.locator.logical_path === entry.locator.logical_path,
+        ) === index,
+    );
+    pasteTerminalJobs.current.clear();
+    const currentClipboard = useBrowser.getState().clipboard;
+    let retryClipboard = run.clipboard;
+    if (run.clipboard.mode === "cut" && currentClipboard === run.clipboard) {
+      useBrowser.getState().setClipboard(remaining, "cut");
+      retryClipboard = useBrowser.getState().clipboard ?? run.clipboard;
+    }
+    setPasteRetry(
+      remaining.length
+        ? {
+            clipboard: retryClipboard,
+            signature: clipboardSignature(retryClipboard),
+            destination: run.destination,
+            entries: remaining,
+          }
+        : null,
+    );
+    setPastePending(false);
+    pasteRun.current = null;
+    if (remaining.length) {
+      const failures = run.failures
+        .filter(
+          ({ item }, index, all) =>
+            all.findIndex(
+              ({ item: candidate }) =>
+                candidate.locator.volume_id === item.locator.volume_id &&
+                candidate.locator.logical_path === item.locator.logical_path,
+            ) === index,
+        )
+        .slice(0, 3)
+        .map(({ item, error }) => `${item.name}：${errorMessage(error)}`)
+        .join("；");
+      setNotice(
+        `${run.completed} 项已完成，${remaining.length} 项未完成。${failures ? `${failures}。` : ""}已完成项目不会重复提交。`,
+      );
+    } else {
+      setNotice(
+        `已完成${run.clipboard.mode === "cut" ? "移动" : "复制"} ${run.completed} 项。`,
+      );
+    }
+  }
+
+  function settlePasteJob(job: TransferJob) {
+    const tracked = pasteJobs.current.get(job.id);
+    if (!tracked || activeTransfer(job)) return;
+    pasteJobs.current.delete(job.id);
+    pasteTerminalJobs.current.delete(job.id);
+    const run = pasteRun.current;
+    if (!run) return;
+    const key = (entry: Entry) =>
+      `${entry.locator.volume_id}:${entry.locator.logical_path}`;
+    if (job.state === "completed") {
+      run.completed += 1;
+      run.remaining = run.remaining.filter(
+        (entry) => key(entry) !== key(tracked.entry),
+      );
+    } else {
+      run.failures.push({
+        item: tracked.entry,
+        error: job.error_message ?? `任务状态：${job.state}`,
+      });
+    }
+    finalizePasteRun();
+  }
+
+  function trackPasteProgress(
+    job: TransferJob,
+    entry: Entry,
+    mode: ClipboardMode,
+  ) {
+    client.setQueryData<TransferJob[]>(["transfers"], (current) =>
+      updateTransfer(current, job),
+    );
+    if (activeTransfer(job)) return;
+    if (!pasteRun.current) return;
+    if (!pasteJobs.current.has(job.id)) {
+      pasteTerminalJobs.current.set(job.id, { job, entry, mode });
+      return;
+    }
+    // `mode` is supplied by the per-item observer so a terminal event cannot
+    // accidentally settle a job from a later paste batch.
+    if (pasteJobs.current.get(job.id)?.mode === mode) settlePasteJob(job);
+  }
+
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 250);
     return () => clearTimeout(timer);
@@ -145,7 +305,7 @@ export default function App() {
       search: debouncedSearch,
       show_hidden: state.showHidden,
       folders_only: false,
-      sort,
+      sort: state.sort,
     },
     !!volume && state.page === "browser",
   );
@@ -157,7 +317,7 @@ export default function App() {
       path,
       search,
       state.showHidden,
-      sort,
+      state.sort,
     ]),
     entries.map((entry) => entry.locator.logical_path),
   );
@@ -254,8 +414,18 @@ export default function App() {
         );
       };
       const batch = paths
-        ? await api.uploadDroppedFiles(remote, paths, onProgress, conflictPolicy)
-        : await api.transferLocalFile(remote, upload, onProgress, conflictPolicy);
+        ? await api.uploadDroppedFiles(
+            remote,
+            paths,
+            onProgress,
+            conflictPolicy,
+          )
+        : await api.transferLocalFile(
+            remote,
+            upload,
+            onProgress,
+            conflictPolicy,
+          );
       // Fast tasks may finish before their progress channel is delivered.
       for (const job of batch?.jobs ?? []) {
         revealUpload(job);
@@ -282,6 +452,195 @@ export default function App() {
     },
     onError: (error) => setNotice(errorMessage(error)),
   });
+  const pasteMutation = useMutation({
+    mutationFn: async ({
+      clipboard,
+      destination,
+      items,
+      conflictPolicy,
+    }: {
+      clipboard: FileClipboard;
+      destination: Locator;
+      items: Entry[];
+      conflictPolicy: ConflictPolicy;
+    }) => {
+      const run: PasteRun = {
+        clipboard,
+        destination,
+        items,
+        remaining: [...items],
+        failures: [],
+        started: 0,
+        completed: 0,
+        collecting: true,
+      };
+      pasteRun.current = run;
+      pasteTerminalJobs.current.clear();
+      setPastePending(true);
+      const result = await runBatch(items, async (item) => {
+        const job = await api.startTransfer(
+          clipboard.mode === "cut" ? "move" : "copy",
+          item.locator,
+          destinationFor(item, destination),
+          (progress) => trackPasteProgress(progress, item, clipboard.mode),
+          conflictPolicy,
+        );
+        pasteJobs.current.set(job.id, { entry: item, mode: clipboard.mode });
+        run.started += 1;
+        const terminal = pasteTerminalJobs.current.get(job.id);
+        if (terminal && terminal.mode === clipboard.mode) {
+          pasteTerminalJobs.current.delete(job.id);
+          settlePasteJob(terminal.job);
+        } else if (!activeTransfer(job)) {
+          // Some providers can finish before the progress channel is
+          // delivered. Settle the returned terminal snapshot immediately so
+          // a fast copy or move cannot leave pastePending stuck forever.
+          settlePasteJob(job);
+        }
+        return job;
+      });
+      run.failures.push(...result.failed);
+      run.collecting = false;
+      finalizePasteRun();
+      return result;
+    },
+    onError: (error) => {
+      pasteJobs.current.clear();
+      pasteTerminalJobs.current.clear();
+      pasteRun.current = null;
+      setPastePending(false);
+      setNotice(errorMessage(error));
+    },
+  });
+
+  function copySelection() {
+    if (textInputFocused()) return;
+    if (!volume || selectedEntries.length === 0) return;
+    if (selectedEntries.some((entry) => entry.kind === "symlink")) {
+      setNotice("符号链接不能复制");
+      return;
+    }
+    state.setClipboard(selectedEntries, "copy");
+    setPasteRetry(null);
+    setPastePolicy("reject");
+    setNotice(
+      `已复制 ${selectedEntries.length} 项，按 ${shortcutLabel("V")} 粘贴`,
+    );
+  }
+
+  function cutSelection() {
+    if (textInputFocused()) return;
+    if (!volume || selectedEntries.length === 0) return;
+    if (selectedEntries.some((entry) => entry.kind === "symlink")) {
+      setNotice("符号链接不能剪切");
+      return;
+    }
+    if (!canCutVolume(volume)) {
+      setNotice(
+        volume.read_only
+          ? "只读位置不能剪切，请使用复制"
+          : !volume.capabilities.delete
+            ? "当前位置不支持删除，不能剪切"
+            : "当前位置不能剪切",
+      );
+      return;
+    }
+    state.setClipboard(selectedEntries, "cut");
+    setPasteRetry(null);
+    setPastePolicy("reject");
+    setNotice(
+      `已剪切 ${selectedEntries.length} 项，切换目录后按 ${shortcutLabel("V")} 粘贴`,
+    );
+  }
+
+  function pasteSelection() {
+    if (textInputFocused()) return;
+    const clipboard = state.clipboard;
+    if (!clipboard || clipboard.entries.length === 0) {
+      setNotice("没有可粘贴的项目");
+      return;
+    }
+    if (!volume || pastePending || pasteMutation.isPending) return;
+    const retryMatches =
+      !!pasteRetry &&
+      pasteRetry.clipboard === clipboard &&
+      pasteRetry.signature === clipboardSignature(clipboard) &&
+      sameLocator(pasteRetry.destination, parent);
+    const items =
+      retryMatches && pasteRetry ? pasteRetry.entries : clipboard.entries;
+    const blockReason = pasteBlockReason(
+      { ...clipboard, entries: items },
+      parent,
+      volume,
+    );
+    if (blockReason) {
+      setNotice(blockReason);
+      return;
+    }
+    setNotice(
+      `正在${clipboard.mode === "cut" ? "移动" : "复制"} ${items.length} 项…`,
+    );
+    pasteMutation.mutate({
+      clipboard,
+      destination: parent,
+      items,
+      conflictPolicy: pastePolicy,
+    });
+  }
+
+  useEffect(() => {
+    const handleGlobalShortcut = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.altKey ||
+        !(event.metaKey || event.ctrlKey) ||
+        state.page !== "browser" ||
+        textInputFocused() ||
+        document.querySelector("dialog[open], [role=menu], details[open]")
+      )
+        return;
+      const key = event.key.toLowerCase();
+      if (!(["c", "x", "v"] as string[]).includes(key)) return;
+      event.preventDefault();
+      if (key === "c") copySelection();
+      else if (key === "x") cutSelection();
+      else pasteSelection();
+    };
+    document.addEventListener("keydown", handleGlobalShortcut);
+    return () => document.removeEventListener("keydown", handleGlobalShortcut);
+  }, [
+    pasteMutation.isPending,
+    pastePending,
+    pastePolicy,
+    pasteRetry,
+    selectedEntries,
+    state.page,
+    volume,
+  ]);
+
+  const pasteFromBrowser = useEffectEvent((event: KeyboardEvent) => {
+    if (
+      event.defaultPrevented ||
+      event.isComposing ||
+      event.repeat ||
+      event.altKey ||
+      !(event.metaKey || event.ctrlKey) ||
+      event.key.toLowerCase() !== "v" ||
+      state.page !== "browser" ||
+      document.querySelector('dialog[open], [role="menu"]') ||
+      (event.target instanceof Element &&
+        event.target.closest("input, textarea, select, [contenteditable]"))
+    )
+      return;
+    event.preventDefault();
+    pasteSelection();
+  });
+  useEffect(() => {
+    window.addEventListener("keydown", pasteFromBrowser);
+    return () => window.removeEventListener("keydown", pasteFromBrowser);
+  }, []);
+
   function openEntry(entry: Entry) {
     if (isDirectory(entry) && volume)
       navigate(volume.id, entry.locator.logical_path);
@@ -308,6 +667,12 @@ export default function App() {
   const menuEntry = entries.find(
     (entry) => entry.locator.logical_path === menu,
   );
+  const retryAvailable =
+    !!pasteRetry &&
+    pasteRetry.clipboard === state.clipboard &&
+    !!state.clipboard &&
+    pasteRetry.signature === clipboardSignature(state.clipboard) &&
+    sameLocator(pasteRetry.destination, parent);
   const openVolume = (item: Volume) => navigate(item.id, "");
 
   return (
@@ -341,6 +706,7 @@ export default function App() {
           navigate={navigate}
           openingPending={opening.isPending}
           transferPending={fileTransfer.isPending}
+          pastePending={pastePending}
           openEntry={openEntry}
           openDialog={openDialog}
           setTransferDialog={setTransferDialog}
@@ -351,8 +717,16 @@ export default function App() {
               : fileTransfer.mutate({ ...request, conflictPolicy: "overwrite" })
           }
           onPreview={() => setPreview(selectedEntries)}
+          onCopy={copySelection}
+          onCut={cutSelection}
+          onPaste={pasteSelection}
           onContentSearch={() => setContentSearch(true)}
-          onManage={(object) => setS3Manager({ locator: object && selected ? selected.locator : parent, object })}
+          onManage={(object) =>
+            setS3Manager({
+              locator: object && selected ? selected.locator : parent,
+              object,
+            })
+          }
           onRefresh={() => {
             void entriesQuery.refetch();
             void client.invalidateQueries({ queryKey: ["preview"] });
@@ -374,7 +748,8 @@ export default function App() {
         )}
         {updater.availableVersion && state.page !== "settings" && (
           <div className="notice" role="status">
-            <Info size={16} />Filo {updater.availableVersion} 已可用
+            <Info size={16} />
+            Filo {updater.availableVersion} 已可用
             <button onClick={() => state.setPage("settings")}>查看更新</button>
           </div>
         )}
@@ -406,12 +781,32 @@ export default function App() {
                 </button>
               </div>
             )}
+            {retryAvailable && pasteRetry && (
+              <div
+                className="paste-retry-bar"
+                role="group"
+                aria-label="粘贴重试选项"
+              >
+                <span>还有 {pasteRetry.entries.length} 项未完成</span>
+                <ConflictPolicyField
+                  value={pastePolicy}
+                  onChange={setPastePolicy}
+                />
+                <button
+                  className="secondary"
+                  disabled={pastePending}
+                  onClick={pasteSelection}
+                >
+                  重试未完成项
+                </button>
+              </div>
+            )}
             <FileBrowser
               key={JSON.stringify([
                 volume.id,
                 path,
                 debouncedSearch,
-                sort,
+                state.sort,
                 state.showHidden,
               ])}
               volume={volume}
@@ -419,11 +814,24 @@ export default function App() {
               entries={entries}
               entriesQuery={entriesQuery}
               search={search}
-              sort={sort}
-              setSort={setSort}
+              sort={state.sort}
+              setSort={state.setSort}
               selection={selection}
               selectedEntries={selectedEntries}
+              clipboardMode={state.clipboard?.mode ?? null}
+              clipboardCount={state.clipboard?.entries.length ?? 0}
+              clipboardPaths={
+                new Set(
+                  state.clipboard?.entries.map(
+                    (entry) => entry.locator.logical_path,
+                  ) ?? [],
+                )
+              }
+              pastePending={pastePending}
               onPreview={() => setPreview(selectedEntries)}
+              onCopy={copySelection}
+              onCut={cutSelection}
+              onPaste={pasteSelection}
               uploadPending={fileTransfer.isPending}
               onFileDrop={(paths) => {
                 setMenu(null);
@@ -471,6 +879,19 @@ export default function App() {
           onOpen={() => openEntry(menuEntry)}
           onDetails={() => showDetails(menuEntry)}
           onPreview={() => setPreview(selectedEntries)}
+          onCopy={copySelection}
+          onCut={cutSelection}
+          onPaste={pasteSelection}
+          hasClipboard={(state.clipboard?.entries.length ?? 0) > 0}
+          canPaste={canWriteVolume(volume) && !pastePending}
+          onUpload={() => setUploadRequest({ remote: parent })}
+          onDownload={() =>
+            fileTransfer.mutate({
+              remote: menuEntry.locator,
+              upload: false,
+              conflictPolicy: "overwrite",
+            })
+          }
           onManage={() =>
             setS3Manager({ locator: menuEntry.locator, object: true })
           }
@@ -539,6 +960,16 @@ export default function App() {
       )}
       {editingLocation?.root.type === "s3" && (
         <S3StorageDialog
+          volume={editingLocation}
+          onClose={() => setEditingLocation(null)}
+          onSaved={(saved) => {
+            setEditingLocation(null);
+            navigate(saved.id, "");
+          }}
+        />
+      )}
+      {editingLocation?.root.type === "remote" && (
+        <RemoteStorageDialog
           volume={editingLocation}
           onClose={() => setEditingLocation(null)}
           onSaved={(saved) => {

@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useBrowser } from "./store";
 import { TransferTasksMenu } from "./TransferTasksMenu";
+import { canCutVolume, canWriteVolume } from "./fileClipboard";
 import {
   isDirectory,
   type DeleteMode,
@@ -46,12 +47,16 @@ export function AppHeader({
   navigate,
   openingPending,
   transferPending,
+  pastePending,
   openEntry,
   openDialog,
   setTransferDialog,
   setDeleteDialog,
   onFileTransfer,
   onPreview,
+  onCopy,
+  onCut,
+  onPaste,
   onContentSearch,
   onManage,
   onRefresh,
@@ -74,12 +79,16 @@ export function AppHeader({
   navigate: (volumeId: string, path: string) => void;
   openingPending: boolean;
   transferPending: boolean;
+  pastePending: boolean;
   openEntry: (entry: Entry) => void;
   openDialog: (dialog: Dialog) => void;
   setTransferDialog: (dialog: { entries: Entry[]; kind: TransferKind }) => void;
   setDeleteDialog: (dialog: { entries: Entry[]; mode: DeleteMode }) => void;
   onFileTransfer: (request: { remote: Locator; upload: boolean }) => void;
   onPreview: () => void;
+  onCopy: () => void;
+  onCut: () => void;
+  onPaste: () => void;
   onContentSearch: () => void;
   onManage: (object: boolean) => void;
   onRefresh: () => void;
@@ -96,11 +105,11 @@ export function AppHeader({
     selectedEntries.length > 0 &&
     selectedEntries.every((entry) => entry.kind !== "symlink");
   const browsing = state.page === "browser" && !!volume;
-  const refresh = useDirectoryRefresh(
-    parent,
-    volume?.root.type === "s3",
-    browsing,
-  );
+  const remote = !!volume && volume.root.type !== "local";
+  const canWrite = canWriteVolume(volume);
+  const canCut = canCutVolume(volume);
+  const hasClipboard = (state.clipboard?.entries.length ?? 0) > 0;
+  const refresh = useDirectoryRefresh(parent, remote, browsing);
   const actions: BrowserAction[] = [
     {
       id: "open",
@@ -126,6 +135,27 @@ export function AppHeader({
       run: () => selected && openDialog({ type: "rename", entry: selected }),
     },
     {
+      id: "copy-selection",
+      group: "剪贴板",
+      label: "复制",
+      disabled: !browsing || !canOperate,
+      run: onCopy,
+    },
+    {
+      id: "cut-selection",
+      group: "剪贴板",
+      label: "剪切",
+      disabled: !browsing || !canOperate || !canCut,
+      run: onCut,
+    },
+    {
+      id: "paste",
+      group: "剪贴板",
+      label: pastePending ? "正在粘贴…" : "粘贴",
+      disabled: !browsing || !hasClipboard || !canWrite || pastePending,
+      run: onPaste,
+    },
+    {
       id: "copy",
       group: "文件",
       label: "复制到…",
@@ -136,7 +166,7 @@ export function AppHeader({
       id: "move",
       group: "文件",
       label: "移动到…",
-      disabled: !browsing || !canOperate || volume?.read_only,
+      disabled: !browsing || !canOperate || !canCut,
       run: () => setTransferDialog({ entries: selectedEntries, kind: "move" }),
     },
     {
@@ -158,7 +188,7 @@ export function AppHeader({
     {
       id: "auto-refresh",
       group: "显示",
-      label: `自动刷新（${volume?.root.type === "s3" ? "15" : "5"} 秒）`,
+      label: `自动刷新（${remote ? "15" : "5"} 秒）`,
       disabled: !browsing,
       checked: refresh.enabled,
       run: () => refresh.setEnabled(!refresh.enabled),
@@ -249,13 +279,13 @@ export function AppHeader({
               <FileSearch size={19} />
             </button>
             <span className="toolbar-separator" />
-            {volume.root.type === "s3" && (
+            {volume.root.type !== "local" && (
               <>
                 <button
                   className="icon-button"
                   title="上传文件"
                   aria-label="上传文件"
-                  disabled={volume.read_only || transferPending}
+                  disabled={!canWrite || transferPending}
                   onClick={() =>
                     onFileTransfer({ remote: parent, upload: true })
                   }

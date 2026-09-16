@@ -54,7 +54,11 @@ export function DetailsPanel({
         <dt>位置</dt>
         <dd>
           {selected?.locator.logical_path ??
-            (volume.root.type === "local" ? volume.root.root_path : "/")}
+            (volume.root.type === "local"
+              ? volume.root.root_path
+              : volume.root.type === "remote"
+                ? volume.root.path || "/"
+                : "/")}
         </dd>
         {selected ? (
           <>
@@ -83,7 +87,9 @@ export function DetailsPanel({
             ? "符号链接仅展示，不允许通过链接访问或修改文件。"
             : volume.root.type === "s3"
               ? "更改直接应用到 S3 对象。删除为永久删除，重命名会先复制并校验目标。"
-              : "文件保留在原始目录，所有更改直接应用到本地文件系统。"}
+              : volume.root.type === "remote"
+                ? "文件保留在远程服务器。更改直接应用到远程文件，删除无法通过本机回收站恢复。"
+                : "文件保留在原始目录，所有更改直接应用到本地文件系统。"}
         </p>
       </div>
     </aside>

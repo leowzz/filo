@@ -1,8 +1,10 @@
 import {
   ArrowDownUp,
+  Cloud,
   HardDrive,
   LayoutGrid,
   LockKeyhole,
+  Network,
   Plus,
   Settings2,
 } from "lucide-react";
@@ -98,11 +100,15 @@ export function Sidebar({
             }}
             aria-haspopup="menu"
           >
-            <HardDrive size={17} />
-            <span className="truncate">{item.name}</span>
-            {item.read_only && (
-              <LockKeyhole size={12} className="muted" />
+            {item.root.type === "remote" ? (
+              <Network size={17} />
+            ) : item.root.type === "s3" ? (
+              <Cloud size={17} />
+            ) : (
+              <HardDrive size={17} />
             )}
+            <span className="truncate">{item.name}</span>
+            {item.read_only && <LockKeyhole size={12} className="muted" />}
           </button>
         ))}
         <button className="add-location" onClick={() => onAdd()}>

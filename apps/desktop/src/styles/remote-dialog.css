@@ -1,0 +1,235 @@
+.remote-provider-list {
+  display: grid;
+  gap: 6px;
+}
+
+.storage-back-button {
+  display: none;
+}
+
+@media (min-width: 681px) {
+  .storage-add-modal .storage-picker {
+    max-height: calc(100dvh - 116px);
+    overflow-y: auto;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+  }
+}
+
+.remote-provider-list .provider-choice {
+  width: 100%;
+  justify-content: space-between;
+  text-align: left;
+  border-color: #dedede;
+  background: #fff;
+}
+
+.remote-provider-list .provider-choice:hover:not(:disabled),
+.remote-provider-list .provider-choice[aria-pressed="true"] {
+  background: #edf5ff;
+  border-color: #8abcf0;
+}
+
+.remote-provider-list .provider-choice p {
+  color: #72777d;
+  line-height: 1.5;
+}
+
+.remote-provider-icon {
+  color: #4d83b8;
+}
+
+.remote-storage-modal {
+  width: 520px;
+}
+
+.remote-fields {
+  max-height: min(64vh, 620px);
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.remote-fields .field-label {
+  display: block;
+  margin-bottom: 10px;
+}
+
+.remote-fields .text-input {
+  margin-top: 4px;
+  height: 34px;
+  border-color: #d6dbe1;
+  border-radius: 7px;
+  box-shadow: 0 1px 2px #172b4d04;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.remote-fields .text-input:hover:not(:disabled):not([readonly]) {
+  border-color: #aab6c5;
+}
+
+.remote-fields .text-input:focus-visible {
+  outline: none;
+  border-color: #619fea;
+  box-shadow: 0 0 0 3px #007aff14;
+}
+
+.remote-fields .text-input[aria-invalid="true"] {
+  border-color: #d67a70;
+}
+
+.remote-host-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: 12px;
+  align-items: start;
+}
+
+.remote-host-row > * {
+  min-width: 0;
+}
+
+.remote-input-help {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.remote-select-control {
+  position: relative;
+  display: block;
+  margin-top: 4px;
+}
+
+.remote-select-control .text-input {
+  appearance: none;
+  -webkit-appearance: none;
+  margin-top: 0;
+  padding-right: 30px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.remote-select-control > svg {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #7d8998;
+  pointer-events: none;
+}
+
+.remote-textarea-label .remote-textarea {
+  height: auto;
+  min-height: 90px;
+  padding: 8px 9px;
+  resize: vertical;
+  line-height: 1.45;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.remote-private-key {
+  min-height: 112px !important;
+}
+
+.remote-credentials {
+  margin: 14px 0 12px;
+  padding: 12px 12px 2px;
+  border: 1px solid #e0e4ea;
+  border-radius: 8px;
+  background: #f4f7fb;
+}
+
+.remote-credentials-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: #617892;
+}
+
+.remote-credentials-heading .field-label {
+  margin-bottom: 0;
+  color: #536a82;
+  font-weight: 600;
+}
+
+.remote-credential-help {
+  margin: 12px 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.remote-capability-note {
+  margin: 12px 2px 0;
+  padding: 8px 9px;
+  border: 1px solid #e4d9ba;
+  border-radius: 6px;
+  background: #fff9e9;
+  color: #856a2f;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.remote-test-success {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 10px;
+  color: #238344;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.remote-test-success > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.remote-form .modal-footer {
+  gap: 8px;
+}
+
+@media (max-width: 680px) {
+  .storage-add-modal.is-expanded .storage-picker {
+    display: none;
+  }
+
+  .storage-add-modal.is-expanded .storage-detail {
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .storage-back-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 12px;
+    color: var(--accent);
+  }
+
+  .remote-storage-modal {
+    width: 438px;
+  }
+
+  .remote-fields {
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+@media (max-width: 440px) {
+  .remote-host-row {
+    grid-template-columns: minmax(0, 1fr) 96px;
+    gap: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .remote-fields .text-input {
+    transition: none;
+  }
+}

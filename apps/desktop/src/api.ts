@@ -12,6 +12,7 @@ import type {
   DeleteOutcome,
   Connection,
   S3Input,
+  RemoteInput,
   TransferSettings,
 } from "./types";
 
@@ -45,6 +46,30 @@ export const api = {
                 new Error("连接测试超时（2 秒），请检查网络和服务地址后重试"),
               ),
             2000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+  saveRemote: (volumeId: string | null, input: RemoteInput) =>
+    invoke<Omit<Volume, "capabilities">>("save_remote_storage", {
+      volumeId,
+      input,
+    }),
+  testRemote: async (volumeId: string | null, input: RemoteInput) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        invoke<void>("test_remote_connection", { volumeId, input }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error("连接测试超时，请检查网络、服务地址和认证信息后重试"),
+              ),
+            5000,
           );
         }),
       ]);
