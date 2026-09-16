@@ -1,10 +1,13 @@
-use opendal::{layers::TimeoutLayer, services::S3, ErrorKind, Metadata, Operator, Writer};
-use sha2::{Digest, Sha256};
+use opendal::{layers::TimeoutLayer, services::S3, ErrorKind, Metadata, Operator};
 use storage_domain::*;
 use storage_provider_api::{StagedWrite, StorageBackend, StorageReader};
-use tokio::io::AsyncReadExt;
-use tokio_util::compat::FuturesAsyncReadCompatExt;
 use uuid::Uuid;
+
+mod io;
+use io::{digest, publish, reader};
+
+#[cfg(test)]
+mod tests;
 
 pub struct OpenDalS3Backend {
     volume_id: Uuid,
@@ -178,38 +181,6 @@ impl OpenDalS3Backend {
     }
 }
 
-async fn reader(operator: &Operator, path: &str) -> StorageResult<StorageReader> {
-    let meta = operator.stat(path).await.map_err(error)?;
-    let mut read = operator.reader_with(path);
-    if let Some(etag) = meta.etag() {
-        read = read.if_match(etag);
-    }
-    Ok(Box::pin(
-        read.await
-            .map_err(error)?
-            .into_futures_async_read(..)
-            .await
-            .map_err(error)?
-            .compat(),
-    ))
-}
-async fn digest(mut source: StorageReader) -> StorageResult<(u64, Vec<u8>)> {
-    let mut hash = Sha256::new();
-    let mut size = 0;
-    let mut buffer = vec![0; 256 * 1024];
-    loop {
-        let n = source
-            .read(&mut buffer)
-            .await
-            .map_err(|_| StorageError::new(StorageErrorCode::Network, "S3 内容校验读取失败"))?;
-        if n == 0 {
-            return Ok((size, hash.finalize().to_vec()));
-        }
-        size += n as u64;
-        hash.update(&buffer[..n]);
-    }
-}
-
 #[async_trait::async_trait]
 impl StorageBackend for OpenDalS3Backend {
     fn volume_id(&self) -> Uuid {
@@ -339,200 +310,6 @@ impl StorageBackend for OpenDalS3Backend {
         reader(&self.operator, &self.path(locator, false)?).await
     }
     async fn stage_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>> {
-        let target = self.path(locator, true)?;
-        self.absent(&target).await?;
-        let parent = target
-            .rsplit_once('/')
-            .map(|(p, _)| format!("{p}/"))
-            .unwrap_or_default();
-        let temporary = format!("{parent}.filo-transfer-{}", Uuid::new_v4());
-        let writer = self
-            .operator
-            .writer_with(&temporary)
-            .chunk(8 * 1024 * 1024)
-            .if_not_exists(true)
-            .await
-            .map_err(error)?;
-        Ok(Box::new(S3StagedWrite {
-            operator: self.operator.clone(),
-            temporary,
-            target,
-            writer: Some(writer),
-            size: 0,
-        }))
-    }
-}
-
-/// CopyObject is limited to 5 GiB. Larger files are streamed with conditional multipart completion.
-async fn publish(operator: &Operator, from: &str, to: &str, size: u64) -> StorageResult<()> {
-    if size <= 5 * 1024 * 1024 * 1024 {
-        operator
-            .copy_with(from, to)
-            .if_not_exists(true)
-            .await
-            .map(|_| ())
-            .map_err(error)
-    } else {
-        let mut source = reader(operator, from).await?;
-        let mut target = operator
-            .writer_with(to)
-            .chunk(16 * 1024 * 1024)
-            .if_not_exists(true)
-            .await
-            .map_err(error)?;
-        let result = async {
-            let mut buffer = vec![0; 256 * 1024];
-            loop {
-                let n = source.read(&mut buffer).await.map_err(|_| {
-                    StorageError::new(
-                        StorageErrorCode::Network,
-                        "发布目标时读取失败，源对象已保留",
-                    )
-                })?;
-                if n == 0 {
-                    break;
-                }
-                target.write(buffer[..n].to_vec()).await.map_err(error)?;
-            }
-            target.close().await.map_err(error)?;
-            Ok(())
-        }
-        .await;
-        if result.is_err() {
-            let _ = target.abort().await;
-        }
-        result
-    }
-}
-
-struct S3StagedWrite {
-    operator: Operator,
-    temporary: String,
-    target: String,
-    writer: Option<Writer>,
-    size: u64,
-}
-#[async_trait::async_trait]
-impl StagedWrite for S3StagedWrite {
-    async fn write(&mut self, bytes: &[u8]) -> StorageResult<()> {
-        self.writer
-            .as_mut()
-            .ok_or_else(|| invalid("写入已经结束"))?
-            .write(bytes.to_vec())
-            .await
-            .map_err(error)?;
-        self.size += bytes.len() as u64;
-        Ok(())
-    }
-    async fn reader(&mut self) -> StorageResult<StorageReader> {
-        if let Some(writer) = self.writer.as_mut() {
-            writer.close().await.map_err(error)?;
-        }
-        self.writer = None;
-        reader(&self.operator, &self.temporary).await
-    }
-    async fn commit(mut self: Box<Self>) -> StorageResult<()> {
-        let expected = digest(self.reader().await?).await?;
-        publish(&self.operator, &self.temporary, &self.target, self.size).await?;
-        let verified = digest(reader(&self.operator, &self.target).await?).await?;
-        if expected != verified {
-            return Err(StorageError::new(
-                StorageErrorCode::Io,
-                "目标已发布但内容校验失败，源文件已保留",
-            ));
-        }
-        Ok(()) // Drop removes only this uniquely named temporary object.
-    }
-}
-impl Drop for S3StagedWrite {
-    fn drop(&mut self) {
-        let operator = self.operator.clone();
-        let temporary = self.temporary.clone();
-        let writer = self.writer.take();
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            runtime.spawn(async move {
-                if let Some(mut writer) = writer {
-                    let _ = writer.abort().await;
-                }
-                let _ = operator.delete(&temporary).await;
-            });
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn rejects_credential_urls_and_preserves_volume_boundaries() {
-        let volume = StorageVolume {
-            id: Uuid::new_v4(),
-            connection_id: Uuid::new_v4(),
-            name: "test".into(),
-            root: VolumeRoot::S3 {
-                bucket: "bucket".into(),
-                prefix: "allowed".into(),
-            },
-            read_only: true,
-        };
-        let credentials = S3Credentials {
-            access_key_id: "access".into(),
-            secret_access_key: "secret".into(),
-            session_token: None,
-        };
-        let mut config = S3ConnectionConfig {
-            endpoint: Some("http://127.0.0.1:9000".into()),
-            region: "us-east-1".into(),
-            force_path_style: true,
-        };
-        let backend = OpenDalS3Backend::new(&volume, &config, &credentials).unwrap();
-        let locator = StorageLocator {
-            volume_id: volume.id,
-            logical_path: "folder/file".into(),
-            version_id: None,
-        };
-        assert_eq!(backend.path(&locator, false).unwrap(), "folder/file");
-        assert!(backend.path(&locator, true).is_err());
-        assert!(backend
-            .path(
-                &StorageLocator {
-                    volume_id: Uuid::new_v4(),
-                    ..locator.clone()
-                },
-                false
-            )
-            .is_err());
-        assert!(backend
-            .path(
-                &StorageLocator {
-                    logical_path: "../escape".into(),
-                    ..locator.clone()
-                },
-                false
-            )
-            .is_err());
-        assert!(backend
-            .path(
-                &StorageLocator {
-                    version_id: Some("version".into()),
-                    ..locator
-                },
-                false
-            )
-            .is_err());
-        for endpoint in [
-            "file:///tmp",
-            "https://user:secret@example.com",
-            "https://example.com/bucket",
-            "https://example.com/?key=secret",
-        ] {
-            config.endpoint = Some(endpoint.into());
-            assert!(OpenDalS3Backend::new(&volume, &config, &credentials).is_err());
-        }
-        assert!(
-            !backend.capabilities().write
-                && !backend.capabilities().trash
-                && !backend.capabilities().native_open
-        );
+        OpenDalS3Backend::prepare_write(self, locator).await
     }
 }

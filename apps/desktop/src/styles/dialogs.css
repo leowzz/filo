@@ -1,0 +1,197 @@
+.modal {
+  margin: auto;
+  width: 438px;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  padding: 16px;
+  background: #f7f7f7;
+  border: 1px solid #bcbcbc;
+  border-radius: 9px;
+  color: #333;
+  box-shadow:
+    0 20px 70px #0004,
+    0 1px 2px #0002;
+}
+.modal::backdrop {
+  background: #00000023;
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.modal-head h2 {
+  font-size: 15px;
+}
+.modal-description {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #777;
+  margin-bottom: 12px;
+  overflow-wrap: anywhere;
+}
+.provider-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #8abcf0;
+  border-radius: 7px;
+  background: #edf5ff;
+}
+.provider-choice strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.provider-choice p {
+  font-size: 11px;
+  color: #8495a5;
+  margin-top: 4px;
+}
+.provider-choice > svg:last-child {
+  margin-left: auto;
+  color: var(--accent);
+}
+.provider-soon {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px;
+  margin-top: 10px;
+  border: 1px solid #e2e2e2;
+  border-radius: 7px;
+  background: #f0f0f0;
+  color: #a3a3a3;
+  font-size: 12px;
+}
+.provider-soon .pill {
+  margin-left: auto;
+}
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.checkbox-label span {
+  margin-left: auto;
+  color: #999;
+  font-size: 10px;
+}
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  border-top: 1px solid #e0e0e0;
+  padding-top: 12px;
+  margin-top: 14px;
+}
+.field-label {
+  display: block;
+  font-size: 12px;
+  color: #777;
+  margin-bottom: 5px;
+}
+.text-input {
+  width: 100%;
+  height: 30px;
+  border: 1px solid #bcbcbc;
+  border-radius: 5px;
+  background: #fff;
+  color: #333;
+  padding: 0 9px;
+}
+.field-help {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #909090;
+  margin-top: 6px;
+}
+.error-text {
+  font-size: 12px;
+  color: #c14b3d;
+  margin-top: 8px;
+  line-height: 1.7;
+}
+.delete-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 47px;
+  height: 47px;
+  border-radius: 10px;
+  background: #ffebe7;
+  color: #dc6554;
+  margin-bottom: 15px;
+}
+.delete-warning {
+  color: #9d7565;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.location-context-menu {
+  position: fixed;
+  z-index: 30;
+  width: 190px;
+  padding: 5px;
+  border: 1px solid #c8c8c8;
+  border-radius: 7px;
+  background: #fafafaf5;
+  box-shadow: 0 5px 20px #0003;
+  backdrop-filter: blur(20px);
+}
+.location-menu-name {
+  overflow: hidden;
+  padding: 4px 8px 6px;
+  color: #888;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.location-context-menu button {
+  width: 100%;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.location-context-menu button:hover,
+.location-context-menu button:focus-visible {
+  outline: none;
+  background: #087dff;
+  color: white;
+}
+.connection-fields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.connection-root {
+  margin-top: 12px;
+}
+.connection-root > div {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #e1e1e1;
+  border-radius: 5px;
+  background: #f6f6f6;
+  color: #6b6b6b;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.connection-root svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #1683df;
+}

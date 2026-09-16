@@ -1,0 +1,65 @@
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+::-webkit-scrollbar {
+  width: 9px;
+  height: 7px;
+}
+::-webkit-scrollbar-thumb {
+  background: #bfc0c2;
+  border: 2px solid #fff;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+@media (max-width: 1100px) {
+  .sidebar {
+    width: 190px;
+  }
+  .topbar {
+    padding: 0 14px;
+    gap: 8px;
+  }
+  .toolbar-actions {
+    gap: 2px;
+  }
+  .toolbar-separator {
+    margin: 0 3px;
+  }
+  .search-input {
+    width: 132px;
+    margin-left: 5px;
+  }
+  .readonly-label {
+    display: none;
+  }
+  .details-panel {
+    width: 206px;
+    padding: 15px;
+  }
+  .file-table th:first-child {
+    width: 39%;
+  }
+  .file-table th:nth-child(3) {
+    width: 16%;
+  }
+  .file-table th:nth-child(4) {
+    width: 29%;
+  }
+  .overview,
+  .simple-page {
+    padding: 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+

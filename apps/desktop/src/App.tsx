@@ -1,71 +1,34 @@
-import { useCallback, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ArrowDownUp,
-  Upload,
-  Download,
-  ChevronLeft,
-  ArrowRight,
-  ArrowUp,
-  Check,
-  ChevronRight,
-  CircleHelp,
-  Cloud,
-  Copy,
-  ExternalLink,
-  FolderInput,
-  Database,
-  Eye,
-  FolderOpen,
-  FolderPlus,
-  HardDrive,
-  Info,
-  LayoutGrid,
-  LoaderCircle,
-  LockKeyhole,
-  MoreHorizontal,
-  PanelRight,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Search,
-  Settings2,
-  ShieldCheck,
-  SlidersHorizontal,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Check, Info, X } from "lucide-react";
+import { useCallback, useState, type FormEvent } from "react";
 import { api, desktop, errorMessage } from "./api";
+import { DeleteEntryDialog } from "./DeleteEntryDialog";
+import { EditLocationDialog } from "./EditLocationDialog";
+import { EntryMenu } from "./EntryMenu";
+import { LocationMenu, type LocationMenuTarget } from "./LocationMenu";
+import { RemoveLocationDialog } from "./RemoveLocationDialog";
+import { S3StorageDialog } from "./S3StorageDialog";
 import { useBrowser } from "./store";
-import {
-  EntryIcon,
-  formatDate,
-  formatSize,
-  Modal,
-  typeName,
-} from "./components";
+import { TransferDialog } from "./TransferDialog";
+import { TransfersPage } from "./TransfersPage";
 import {
   activeTransfer,
   isDirectory,
+  type DeleteMode,
   type Entry,
   type Locator,
-  type Volume,
-  type TransferKind,
-  type DeleteMode,
   type TransferJob,
+  type TransferKind,
+  type Volume,
 } from "./types";
-import { LocationMenu, type LocationMenuTarget } from "./LocationMenu";
-import { EditLocationDialog } from "./EditLocationDialog";
-import { RemoveLocationDialog } from "./RemoveLocationDialog";
-import { S3StorageDialog } from "./S3StorageDialog";
-import { TransferDialog } from "./TransferDialog";
-import { TransfersPage } from "./TransfersPage";
-import { DeleteEntryDialog } from "./DeleteEntryDialog";
-import { EntryMenu } from "./EntryMenu";
 import { useFileSelection } from "./useFileSelection";
 
-type Dialog =
-  { type: "add" } | { type: "folder" } | { type: "rename"; entry: Entry };
+import { AppHeader } from "./AppHeader";
+import { FileBrowser, type EntrySort } from "./FileBrowser";
+import { OverviewPage } from "./OverviewPage";
+import { SettingsPage } from "./SettingsPage";
+import { Sidebar } from "./Sidebar";
+import { StorageActionDialog, type Dialog } from "./StorageActionDialog";
 
 export default function App() {
   const state = useBrowser();
@@ -113,7 +76,7 @@ export default function App() {
     mode: DeleteMode;
   } | null>(null);
   const closeEntryMenu = useCallback(() => setMenu(null), []);
-  const [sort, setSort] = useState<"name" | "size" | "modified">("name");
+  const [sort, setSort] = useState<EntrySort>("name");
   const [locationMenu, setLocationMenu] = useState<LocationMenuTarget | null>(
     null,
   );
@@ -153,7 +116,6 @@ export default function App() {
   );
   const selected =
     selectedEntries.length === 1 ? selectedEntries[0] : undefined;
-  const multipleSelected = selectedEntries.length > 1;
   const mutation = useMutation({
     mutationFn: async () => {
       if (dialog?.type === "add") return api.addLocal(readOnly);
@@ -244,338 +206,40 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="sidebar-titlebar" data-tauri-drag-region>
-          <span data-tauri-drag-region>Filo</span>
-        </div>
-        <div className="section-label">个人收藏</div>
-        <nav className="main-nav" aria-label="主导航">
-          <button
-            className={
-              state.page === "overview" ? "nav-item active" : "nav-item"
-            }
-            onClick={() => state.setPage("overview")}
-          >
-            <LayoutGrid size={17} />
-            概览
-          </button>
-          <button
-            className={
-              state.page === "transfers" ? "nav-item active" : "nav-item"
-            }
-            onClick={() => state.setPage("transfers")}
-          >
-            <ArrowDownUp size={17} />
-            传输任务
-            {pendingTransfers > 0 && (
-              <span className="soon">{pendingTransfers}</span>
-            )}
-          </button>
-        </nav>
-        <div className="section-label">
-          位置{" "}
-          <button
-            title="添加存储空间"
-            aria-label="添加存储空间"
-            onClick={() => openDialog({ type: "add" })}
-          >
-            <Plus size={16} />
-          </button>
-        </div>
-        <nav className="volume-nav" aria-label="存储空间">
-          {volumes.map((item) => (
-            <button
-              key={item.id}
-              title={
-                item.root.type === "local" ? item.root.root_path : item.name
-              }
-              className={`nav-item ${state.page === "browser" && volume?.id === item.id ? "active" : ""}`}
-              onClick={() => openVolume(item)}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                setLocationMenu({
-                  volume: item,
-                  x: event.clientX,
-                  y: event.clientY,
-                  trigger: event.currentTarget,
-                });
-              }}
-              onKeyDown={(event) => {
-                if (
-                  (event.shiftKey && event.key === "F10") ||
-                  event.key === "ContextMenu"
-                ) {
-                  event.preventDefault();
-                  const rect = event.currentTarget.getBoundingClientRect();
-                  setLocationMenu({
-                    volume: item,
-                    x: rect.right,
-                    y: rect.top,
-                    trigger: event.currentTarget,
-                  });
-                }
-              }}
-              aria-haspopup="menu"
-            >
-              <HardDrive size={17} />
-              <span className="truncate">{item.name}</span>
-              {item.read_only ? (
-                <LockKeyhole size={12} className="muted" />
-              ) : (
-                <span className="status-dot" />
-              )}
-            </button>
-          ))}
-          <button
-            className="add-location"
-            onClick={() => openDialog({ type: "add" })}
-          >
-            <Plus size={15} />
-            添加存储空间
-          </button>
-        </nav>
-        <div className="sidebar-bottom">
-          <button
-            className={`nav-item ${state.page === "settings" ? "active" : ""}`}
-            onClick={() => state.setPage("settings")}
-          >
-            <Settings2 size={17} />
-            设置<span className="muted">v0.1.0</span>
-          </button>
-        </div>
-      </aside>
+      <Sidebar
+        volumes={volumes}
+        volume={volume}
+        pendingTransfers={pendingTransfers}
+        onAdd={() => openDialog({ type: "add" })}
+        openVolume={openVolume}
+        onLocationMenu={setLocationMenu}
+      />
 
       <main className="main-content">
-        <header className="topbar" data-tauri-drag-region>
-          <div className="topbar-title" data-tauri-drag-region>
-            {state.page === "browser" && volume && (
-              <div className="navigation-buttons">
-                <button
-                  className="icon-button"
-                  aria-label="后退"
-                  title="后退"
-                  disabled={state.index <= 0}
-                  onClick={() => {
-                    state.step(-1);
-                    setSelection(null);
-                    setSearch("");
-                    setMenu(null);
-                  }}
-                >
-                  <ChevronLeft size={23} />
-                </button>
-                <button
-                  className="icon-button"
-                  aria-label="前进"
-                  title="前进"
-                  disabled={state.index >= state.history.length - 1}
-                  onClick={() => {
-                    state.step(1);
-                    setSelection(null);
-                    setSearch("");
-                    setMenu(null);
-                  }}
-                >
-                  <ChevronRight size={23} />
-                </button>
-              </div>
-            )}
-            <h1 data-tauri-drag-region>
-              {state.page === "browser"
-                ? (path.split("/").filter(Boolean).at(-1) ??
-                  volume?.name ??
-                  "存储浏览器")
-                : { overview: "概览", transfers: "传输任务", settings: "设置" }[
-                    state.page
-                  ]}
-            </h1>
-            {state.page === "browser" && volume?.read_only && (
-              <span className="readonly-label">
-                <LockKeyhole size={12} />
-                只读
-              </span>
-            )}
-          </div>
-          {state.page === "browser" && volume ? (
-            <div className="toolbar-actions">
-              <button
-                className="icon-button"
-                title="上级目录"
-                aria-label="上级目录"
-                disabled={!path}
-                onClick={() =>
-                  navigate(volume.id, path.split("/").slice(0, -1).join("/"))
-                }
-              >
-                <ArrowUp size={18} />
-              </button>
-              <button
-                className="icon-button"
-                title="打开"
-                aria-label="打开"
-                disabled={
-                  !selected ||
-                  selected.kind === "symlink" ||
-                  (!isDirectory(selected) &&
-                    !volume.capabilities.native_open) ||
-                  opening.isPending
-                }
-                onClick={() => selected && openEntry(selected)}
-              >
-                <ExternalLink size={18} />
-              </button>
-              {volume.root.type === "s3" && (
-                <>
-                  <button
-                    className="icon-button"
-                    title="上传文件"
-                    aria-label="上传文件"
-                    disabled={volume.read_only || fileTransfer.isPending}
-                    onClick={() =>
-                      fileTransfer.mutate({ remote: parent, upload: true })
-                    }
-                  >
-                    <Upload size={18} />
-                  </button>
-                  <button
-                    className="icon-button"
-                    title="下载文件"
-                    aria-label="下载文件"
-                    disabled={
-                      selected?.kind !== "file" || fileTransfer.isPending
-                    }
-                    onClick={() =>
-                      selected &&
-                      fileTransfer.mutate({
-                        remote: selected.locator,
-                        upload: false,
-                      })
-                    }
-                  >
-                    <Download size={18} />
-                  </button>
-                </>
-              )}
-              <button
-                className="icon-button"
-                title="新建文件夹"
-                aria-label="新建文件夹"
-                disabled={!volume.capabilities.create_directory}
-                onClick={() => openDialog({ type: "folder" })}
-              >
-                <FolderPlus size={20} />
-              </button>
-              <button
-                className="icon-button"
-                title="重命名"
-                aria-label="重命名"
-                disabled={
-                  !selected ||
-                  selected.kind !== "file" ||
-                  volume.capabilities.rename === "unsupported"
-                }
-                onClick={() =>
-                  selected && openDialog({ type: "rename", entry: selected })
-                }
-              >
-                <Pencil size={18} />
-              </button>
-              <button
-                className="icon-button"
-                title="复制到…"
-                aria-label="复制到"
-                disabled={selected?.kind !== "file"}
-                onClick={() =>
-                  selected &&
-                  setTransferDialog({ entry: selected, kind: "copy" })
-                }
-              >
-                <Copy size={18} />
-              </button>
-              <button
-                className="icon-button"
-                title="移动到…"
-                aria-label="移动到"
-                disabled={selected?.kind !== "file" || volume.read_only}
-                onClick={() =>
-                  selected &&
-                  setTransferDialog({ entry: selected, kind: "move" })
-                }
-              >
-                <FolderInput size={18} />
-              </button>
-              <button
-                className="icon-button"
-                title={volume.capabilities.trash ? "移入回收站" : "删除"}
-                aria-label={volume.capabilities.trash ? "移入回收站" : "删除"}
-                disabled={
-                  !selected ||
-                  selected.kind === "symlink" ||
-                  !volume.capabilities.delete
-                }
-                onClick={() =>
-                  selected &&
-                  setDeleteDialog({ entry: selected, mode: "default" })
-                }
-              >
-                <Trash2 size={18} />
-              </button>
-              <span className="toolbar-separator" />
-              <button
-                className={`icon-button ${state.showHidden ? "on" : ""}`}
-                title="显示 / 隐藏隐藏文件"
-                aria-label="显示或隐藏隐藏文件"
-                aria-pressed={state.showHidden}
-                onClick={state.toggleHidden}
-              >
-                <Eye size={19} />
-              </button>
-              <button
-                className={`icon-button ${state.showDetails ? "on" : ""}`}
-                title="切换详情面板"
-                aria-label="切换详情面板"
-                aria-pressed={state.showDetails}
-                onClick={state.toggleDetails}
-              >
-                <PanelRight size={19} />
-              </button>
-              <button
-                className="icon-button"
-                title="刷新"
-                aria-label="刷新"
-                onClick={() => void entriesQuery.refetch()}
-              >
-                <RefreshCw
-                  size={18}
-                  className={entriesQuery.isFetching ? "spin" : ""}
-                />
-              </button>
-              <label className="search-input">
-                <Search size={15} />
-                <input
-                  aria-label="筛选当前目录"
-                  placeholder="搜索当前目录"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                />
-                {search && (
-                  <button aria-label="清除筛选" onClick={() => setSearch("")}>
-                    <X size={12} />
-                  </button>
-                )}
-              </label>
-            </div>
-          ) : (
-            <button
-              className="icon-button"
-              title="添加存储空间"
-              aria-label="添加存储空间"
-              onClick={() => openDialog({ type: "add" })}
-            >
-              <Plus size={21} />
-            </button>
-          )}
-        </header>
+        <AppHeader
+          volume={volume}
+          path={path}
+          selected={selected}
+          parent={parent}
+          search={search}
+          setSearch={setSearch}
+          onStep={(direction) => {
+            state.step(direction);
+            setSelection(null);
+            setSearch("");
+            setMenu(null);
+          }}
+          navigate={navigate}
+          openingPending={opening.isPending}
+          transferPending={fileTransfer.isPending}
+          openEntry={openEntry}
+          openDialog={openDialog}
+          setTransferDialog={setTransferDialog}
+          setDeleteDialog={setDeleteDialog}
+          onFileTransfer={fileTransfer.mutate}
+          onRefresh={() => void entriesQuery.refetch()}
+          isFetching={entriesQuery.isFetching}
+        />
 
         {volumesQuery.isError && (
           <div className="error-banner" role="alert">
@@ -592,125 +256,12 @@ export default function App() {
         )}
 
         {state.page === "overview" && (
-          <div className="overview page-scroll">
-            <div className="page-heading">
-              <div>
-                <h2>你的存储空间</h2>
-                <p>连接本地目录或 S3 存储，浏览和管理你的文件。</p>
-              </div>
-              <button
-                className="primary"
-                onClick={() => openDialog({ type: "add" })}
-              >
-                <Plus size={17} />
-                添加存储空间
-              </button>
-            </div>
-            <div className="stats">
-              <div>
-                <span>
-                  <HardDrive size={17} />
-                  存储空间
-                </span>
-                <strong>
-                  {volumes.length.toString().padStart(2, "0")}
-                  <small>个位置</small>
-                </strong>
-              </div>
-              <div>
-                <span>
-                  <Database size={17} />
-                  已保存连接
-                </span>
-                <strong>
-                  {new Set(volumes.map((item) => item.connection_id)).size
-                    .toString()
-                    .padStart(2, "0")}
-                  <small>个连接</small>
-                </strong>
-              </div>
-              <div>
-                <span>
-                  <ShieldCheck size={17} />
-                  数据访问
-                </span>
-                <strong className="text-stat">
-                  仅限授权位置<small>本地目录与 S3 Bucket / Prefix</small>
-                </strong>
-              </div>
-            </div>
-            <div className="section-heading">
-              <h2>
-                你的存储空间 <span>{volumes.length}</span>
-              </h2>
-              <span className="muted">所有已添加的位置</span>
-            </div>
-            {volumesQuery.isPending ? (
-              <div className="empty-state">
-                <LoaderCircle className="spin" />
-                正在读取存储空间…
-              </div>
-            ) : (
-              <div className="volume-grid">
-                {volumes.map((item) => (
-                  <button
-                    className="volume-card"
-                    key={item.id}
-                    onClick={() => openVolume(item)}
-                  >
-                    <span className="drive-tile">
-                      <HardDrive size={22} />
-                    </span>
-                    <div className="volume-info">
-                      <h3>{item.name}</h3>
-                      <p
-                        title={
-                          item.root.type === "local"
-                            ? item.root.root_path
-                            : `s3://${item.root.bucket}/${item.root.prefix}`
-                        }
-                      >
-                        {item.root.type === "local"
-                          ? item.root.root_path
-                          : `s3://${item.root.bucket}/${item.root.prefix}`}
-                      </p>
-                    </div>
-                    <div className="card-bottom">
-                      <span className="pill">
-                        {item.read_only
-                          ? "只读"
-                          : item.root.type === "s3"
-                            ? "S3"
-                            : "本地目录"}
-                      </span>
-                      <span>打开文件浏览器</span>
-                      <ArrowRight size={17} />
-                    </div>
-                  </button>
-                ))}
-                <button
-                  className="new-volume-card"
-                  onClick={() => openDialog({ type: "add" })}
-                >
-                  <span>
-                    <Plus size={25} />
-                  </span>
-                  <div className="volume-info">
-                    <h3>
-                      {volumes.length
-                        ? "连接另一个存储空间"
-                        : "连接本地目录或 S3"}
-                    </h3>
-                    <p>选择已有目录，直接浏览其中的文件</p>
-                  </div>
-                </button>
-              </div>
-            )}
-            <div className="overview-footer">
-              <ShieldCheck size={14} />
-              <span>连接信息仅保存在此设备，文件保留在原始位置。</span>
-            </div>
-          </div>
+          <OverviewPage
+            volumes={volumes}
+            loading={volumesQuery.isPending}
+            openVolume={openVolume}
+            onAdd={() => openDialog({ type: "add" })}
+          />
         )}
 
         {state.page === "browser" && volume && (
@@ -724,351 +275,27 @@ export default function App() {
                 </button>
               </div>
             )}
-            <div className="browser-body">
-              <div
-                className="file-area"
-                ref={selection.areaRef}
-                tabIndex={-1}
-                onPointerDown={(event) => {
-                  selection.onPointerDown(event);
-                  if (event.defaultPrevented) setMenu(null);
-                }}
-                onClickCapture={selection.onClickCapture}
-                onKeyDown={selection.onKeyDown}
-              >
-                {entriesQuery.isPending ? (
-                  <div className="empty-state">
-                    <LoaderCircle className="spin" size={27} />
-                    <h3>正在读取文件</h3>
-                  </div>
-                ) : entriesQuery.isError ? (
-                  <div className="empty-state error" role="alert">
-                    <CircleHelp size={32} />
-                    <h3>暂时无法打开目录</h3>
-                    <p>{errorMessage(entriesQuery.error)}</p>
-                    <button
-                      className="secondary"
-                      onClick={() => void entriesQuery.refetch()}
-                    >
-                      重新加载
-                    </button>
-                  </div>
-                ) : (
-                  <table className="file-table">
-                    <thead>
-                      <tr>
-                        <th>
-                          <button onClick={() => setSort("name")}>
-                            名称 {sort === "name" && <ArrowUp size={12} />}
-                          </button>
-                        </th>
-                        <th>
-                          <button onClick={() => setSort("size")}>大小</button>
-                        </th>
-                        <th>种类</th>
-                        <th>
-                          <button onClick={() => setSort("modified")}>
-                            修改时间
-                          </button>
-                        </th>
-                        <th aria-label="操作" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {entries.map((entry) => (
-                        <tr
-                          key={entry.locator.logical_path}
-                          data-entry-path={entry.locator.logical_path}
-                          className={
-                            selectedPaths.has(entry.locator.logical_path)
-                              ? "selected"
-                              : ""
-                          }
-                          tabIndex={0}
-                          aria-selected={selectedPaths.has(
-                            entry.locator.logical_path,
-                          )}
-                          onClick={(event) => {
-                            selection.select(entry.locator.logical_path, event);
-                            setMenu(null);
-                          }}
-                          onDoubleClick={() => openEntry(entry)}
-                          onContextMenu={(event) => {
-                            event.preventDefault();
-                            showEntryMenu(
-                              entry,
-                              event.clientX,
-                              event.clientY,
-                              event.currentTarget,
-                            );
-                          }}
-                          onKeyDown={(event) => {
-                            if (
-                              (event.shiftKey && event.key === "F10") ||
-                              event.key === "ContextMenu"
-                            ) {
-                              event.preventDefault();
-                              const rect =
-                                event.currentTarget.getBoundingClientRect();
-                              showEntryMenu(
-                                entry,
-                                rect.left + 30,
-                                rect.bottom,
-                                event.currentTarget,
-                              );
-                            }
-                            if (
-                              event.key === "Enter" &&
-                              event.target === event.currentTarget
-                            )
-                              openEntry(entry);
-                          }}
-                        >
-                          <td>
-                            <span className="file-name">
-                              <EntryIcon entry={entry} />
-                              <span title={entry.name}>{entry.name}</span>
-                            </span>
-                          </td>
-                          <td className="mono">{formatSize(entry.size)}</td>
-                          <td>{typeName(entry)}</td>
-                          <td>{formatDate(entry.modified_at)}</td>
-                          <td className="row-actions">
-                            <button
-                              className="icon-button"
-                              aria-label={`${entry.name} 操作菜单`}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setSelection(entry.locator.logical_path);
-                                if (menu === entry.locator.logical_path)
-                                  setMenu(null);
-                                else {
-                                  const rect =
-                                    event.currentTarget.getBoundingClientRect();
-                                  showEntryMenu(
-                                    entry,
-                                    rect.right - 200,
-                                    rect.bottom,
-                                    event.currentTarget,
-                                  );
-                                }
-                              }}
-                            >
-                              <MoreHorizontal size={17} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-                {!entriesQuery.isPending &&
-                  !entriesQuery.isError &&
-                  entries.length === 0 && (
-                    <div className="empty-state">
-                      <FolderOpen size={40} strokeWidth={1.3} />
-                      <h3>
-                        {search ? "没有匹配的文件" : "这里还没有可见文件"}
-                      </h3>
-                      <p>
-                        {search
-                          ? "尝试其他名称，筛选仅作用于当前目录。"
-                          : "可以新建文件夹，或打开隐藏文件开关。"}
-                      </p>
-                    </div>
-                  )}
-                {selection.rectangle && (
-                  <div
-                    className="selection-rectangle"
-                    aria-hidden="true"
-                    style={{
-                      left: selection.rectangle.x,
-                      top: selection.rectangle.y,
-                      width: selection.rectangle.width,
-                      height: selection.rectangle.height,
-                    }}
-                  />
-                )}
-              </div>
-              {state.showDetails && (
-                <aside className="details-panel">
-                  <div className="details-heading">
-                    {multipleSelected
-                      ? "所选项目"
-                      : selected
-                        ? "项目详情"
-                        : "存储详情"}
-                    <Info size={15} />
-                  </div>
-                  <div className={`detail-icon ${selected ? "" : "drive"}`}>
-                    {multipleSelected ? (
-                      <Copy size={48} strokeWidth={1.2} />
-                    ) : selected ? (
-                      <EntryIcon entry={selected} size={54} />
-                    ) : (
-                      <HardDrive size={48} strokeWidth={1.2} />
-                    )}
-                  </div>
-                  <h3>
-                    {multipleSelected
-                      ? `已选择 ${selectedEntries.length} 项`
-                      : (selected?.name ?? volume.name)}
-                  </h3>
-                  <span className="pill">
-                    {multipleSelected
-                      ? "多个项目"
-                      : selected
-                        ? typeName(selected)
-                        : volume.root.type === "s3"
-                          ? "S3 兼容存储"
-                          : "本地文件系统"}
-                  </span>
-                  <dl>
-                    <dt>位置</dt>
-                    <dd>
-                      {selected?.locator.logical_path ??
-                        (volume.root.type === "local"
-                          ? volume.root.root_path
-                          : "/")}
-                    </dd>
-                    {selected ? (
-                      <>
-                        <dt>大小</dt>
-                        <dd>{formatSize(selected.size)}</dd>
-                        <dt>修改时间</dt>
-                        <dd>{formatDate(selected.modified_at)}</dd>
-                      </>
-                    ) : (
-                      <>
-                        <dt>当前目录</dt>
-                        <dd>{path || "/"}</dd>
-                        <dt>项目数</dt>
-                        <dd>
-                          {multipleSelected
-                            ? selectedEntries.length
-                            : (entriesQuery.data?.length ?? "—")}
-                        </dd>
-                      </>
-                    )}
-                    <dt>访问权限</dt>
-                    <dd>{volume.read_only ? "只读" : "可读写"}</dd>
-                  </dl>
-                  <div className="detail-tip">
-                    <ShieldCheck size={16} />
-                    <p>
-                      {selected?.kind === "symlink"
-                        ? "符号链接仅展示，不允许通过链接访问或修改文件。"
-                        : volume.root.type === "s3"
-                          ? "更改直接应用到 S3 对象。删除为永久删除，重命名会先复制并校验目标。"
-                          : "文件保留在原始目录，所有更改直接应用到本地文件系统。"}
-                    </p>
-                  </div>
-                </aside>
-              )}
-            </div>
-            <nav className="pathbar" aria-label="当前路径">
-              <button
-                onClick={() => navigate(volume.id, "")}
-                title={
-                  volume.root.type === "local"
-                    ? volume.root.root_path
-                    : volume.name
-                }
-              >
-                <HardDrive size={14} />
-                {volume.name}
-              </button>
-              {path
-                .split("/")
-                .filter(Boolean)
-                .map((part, i, parts) => (
-                  <span key={i}>
-                    <ChevronRight size={12} />
-                    <button
-                      onClick={() =>
-                        navigate(volume.id, parts.slice(0, i + 1).join("/"))
-                      }
-                    >
-                      {part}
-                    </button>
-                  </span>
-                ))}
-            </nav>
-            <footer className="statusbar">
-              <span>
-                {entries.length} 个项目
-                {selectedEntries.length > 0
-                  ? ` · 已选择 ${selectedEntries.length} 项`
-                  : ""}
-                {!state.showHidden &&
-                (entriesQuery.data ?? []).some((entry) =>
-                  entry.name.startsWith("."),
-                )
-                  ? " · 隐藏文件已收起"
-                  : ""}
-              </span>
-              <span>
-                <span className="status-dot" />
-                {volume.read_only
-                  ? "只读访问"
-                  : volume.root.type === "s3"
-                    ? "S3 兼容存储"
-                    : "本地文件系统"}
-                <span className="status-separator">/</span>双击打开文件或文件夹
-              </span>
-            </footer>
+            <FileBrowser
+              volume={volume}
+              path={path}
+              entries={entries}
+              entriesQuery={entriesQuery}
+              search={search}
+              sort={sort}
+              setSort={setSort}
+              selection={selection}
+              selectedEntries={selectedEntries}
+              menu={menu}
+              setMenu={setMenu}
+              openEntry={openEntry}
+              showEntryMenu={showEntryMenu}
+              navigate={navigate}
+            />
           </>
         )}
 
         {state.page === "transfers" && <TransfersPage volumes={volumes} />}
-        {state.page === "settings" && (
-          <div className="page-scroll simple-page">
-            <h1>设置</h1>
-            <section className="settings-card">
-              <h2>
-                <SlidersHorizontal size={19} />
-                浏览偏好
-              </h2>
-              <label>
-                <div>
-                  <strong>显示隐藏文件</strong>
-                  <p>显示名称以「.」开头的文件和目录</p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={state.showHidden}
-                  onChange={state.toggleHidden}
-                />
-              </label>
-              <label>
-                <div>
-                  <strong>显示详情面板</strong>
-                  <p>在文件列表右侧展示项目属性</p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={state.showDetails}
-                  onChange={state.toggleDetails}
-                />
-              </label>
-            </section>
-            <section className="settings-card">
-              <h2>
-                <ShieldCheck size={19} />
-                关于这个版本
-              </h2>
-              <p>Filo 0.1.0 · LocalFS + S3</p>
-              <p>
-                存储连接保存在设备上的 SQLite
-                数据库。只能访问通过系统选择器添加的目录，不跟随符号链接；删除操作需要确认。
-              </p>
-              <p>
-                支持本地与 S3
-                之间的单文件上传、下载、复制和移动；暂不提供文件预览和目录递归传输。
-              </p>
-            </section>
-          </div>
-        )}
+        {state.page === "settings" && <SettingsPage />}
       </main>
 
       {menuEntry && volume && menuPosition && (
@@ -1177,128 +404,17 @@ export default function App() {
         />
       )}
       {dialog && (
-        <Modal
-          title={
-            dialog.type === "add"
-              ? "添加存储空间"
-              : dialog.type === "folder"
-                ? "新建文件夹"
-                : "重命名文件"
-          }
-          busy={mutation.isPending}
+        <StorageActionDialog
+          dialog={dialog}
+          mutation={mutation}
+          submit={submit}
+          name={name}
+          setName={setName}
+          readOnly={readOnly}
+          setReadOnly={setReadOnly}
           onClose={() => setDialog(null)}
-        >
-          <form onSubmit={submit}>
-            {dialog.type === "add" ? (
-              <>
-                <p className="modal-description">
-                  把已有目录连接到 Filo，文件会留在原来的位置。
-                </p>
-                <div className="provider-choice">
-                  <span className="drive-tile">
-                    <HardDrive size={23} />
-                  </span>
-                  <div>
-                    <strong>本地文件系统</strong>
-                    <p>选择这台电脑上的任意已有目录</p>
-                  </div>
-                  <Check size={19} />
-                </div>
-                <button
-                  type="button"
-                  className="provider-choice s3-choice"
-                  disabled={!desktop}
-                  onClick={() => {
-                    setDialog(null);
-                    setAddingS3(true);
-                  }}
-                >
-                  <Cloud size={23} />
-                  <div>
-                    <strong>S3 兼容存储</strong>
-                    <p>RustFS、MinIO、AWS S3 等</p>
-                  </div>
-                  <ChevronRight size={19} />
-                </button>
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={readOnly}
-                    onChange={(event) => setReadOnly(event.target.checked)}
-                  />
-                  以只读方式添加<span>适合先浏览现有文件</span>
-                </label>
-                {!desktop && (
-                  <p className="error-text">
-                    请在桌面应用中使用系统目录选择器。
-                  </p>
-                )}
-              </>
-            ) : (
-              <>
-                <label className="field-label" htmlFor="entry-name">
-                  {dialog.type === "folder" ? "文件夹名称" : "文件名称"}
-                </label>
-                <input
-                  id="entry-name"
-                  autoFocus
-                  className="text-input"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  required
-                  maxLength={255}
-                  placeholder="输入名称"
-                />
-                <p className="field-help">
-                  {dialog.type === "folder"
-                    ? "将在当前目录中创建，不会覆盖已有项目。"
-                    : "只修改当前文件的名称，不会覆盖同名项目。"}
-                </p>
-              </>
-            )}
-            {mutation.isError && (
-              <p className="error-text" role="alert">
-                {errorMessage(mutation.error)}
-              </p>
-            )}
-            <div className="modal-footer">
-              <button
-                type="button"
-                className="secondary"
-                disabled={mutation.isPending}
-                onClick={() => setDialog(null)}
-              >
-                取消
-              </button>
-              <button
-                type="submit"
-                className="primary"
-                disabled={
-                  mutation.isPending ||
-                  (dialog.type === "add" && !desktop) ||
-                  ((dialog.type === "folder" || dialog.type === "rename") &&
-                    (!name.trim() ||
-                      name === "." ||
-                      name === ".." ||
-                      /[/\\:\0]/.test(name)))
-                }
-              >
-                {mutation.isPending ? (
-                  <LoaderCircle size={16} className="spin" />
-                ) : dialog.type === "add" ? (
-                  <FolderOpen size={16} />
-                ) : null}
-                {mutation.isPending
-                  ? "正在处理…"
-                  : dialog.type === "add"
-                    ? "选择本地目录"
-                    : dialog.type === "folder"
-                      ? "创建文件夹"
-                      : "保存名称"}
-              </button>
-            </div>
-          </form>
-        </Modal>
+          onAddS3={() => setAddingS3(true)}
+        />
       )}
     </div>
   );

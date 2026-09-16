@@ -1,0 +1,136 @@
+.destination-browser {
+  margin: 10px 0;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.destination-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: #f3f3f3;
+  font-size: 12px;
+}
+.destination-path span {
+  overflow-wrap: anywhere;
+}
+.destination-folders {
+  max-height: 180px;
+  overflow: auto;
+  padding: 5px;
+}
+.destination-folders > button {
+  display: flex;
+  width: 100%;
+  gap: 7px;
+  padding: 5px 7px;
+  text-align: left;
+  border-radius: 4px;
+}
+.destination-folders > button:hover {
+  background: #edf4ff;
+}
+.destination-folders > button span {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.destination-folders svg {
+  color: #1683df;
+  flex-shrink: 0;
+}
+.destination-folders p {
+  padding: 8px;
+  color: #888;
+  font-size: 12px;
+}
+.transfer-list {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #dedede;
+  border-radius: 7px;
+  overflow: hidden;
+}
+.transfer-list:empty {
+  display: none;
+}
+.transfers-page > h1 {
+  margin-bottom: 4px;
+}
+.transfer-item {
+  min-width: 0;
+  padding: 10px 12px;
+  background: #fff;
+}
+.transfer-item + .transfer-item {
+  border-top: 1px solid #e7e7e7;
+}
+.transfer-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  margin-bottom: 4px;
+}
+.transfer-heading > svg {
+  color: #1683df;
+  flex-shrink: 0;
+}
+.transfer-heading strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.transfer-state {
+  color: #888;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.transfer-heading .icon-button {
+  height: 24px;
+  min-width: 24px;
+  padding: 3px;
+}
+.transfer-state.completed {
+  color: #348747;
+}
+.transfer-state.failed {
+  color: #bc473d;
+}
+.transfer-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #737373;
+  margin: 2px 0;
+}
+.transfer-item progress {
+  display: block;
+  width: 100%;
+  height: 4px;
+  margin: 8px 0 6px;
+  border: 0;
+  border-radius: 3px;
+  overflow: hidden;
+  accent-color: #1683df;
+}
+.transfer-item progress::-webkit-progress-bar {
+  background: #ebebeb;
+}
+.transfer-item progress::-webkit-progress-value {
+  background: #1683df;
+}
+.transfer-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #999;
+  font-size: 11px;
+}

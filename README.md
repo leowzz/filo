@@ -45,6 +45,10 @@ migrations/                  连接、存储空间、传输任务表及 S3 迁�
 docs/                        从 init.md 整理的开发指导
 ```
 
+前端 `App.tsx` 负责查询、操作状态与页面组装；侧栏、顶部工具栏、概览、设置、文件浏览、详情及操作弹窗各自独立。`styles.css` 仅组织 `styles/` 下的分区样式，导入顺序保留层叠关系。
+
+`provider-opendal` 的 `local/` 与 `s3/` 分别封装适配器；本地路径校验、防覆盖重命名、暂存写入和 S3 流式读写独立成模块。`storage-application` 按存储位置管理（`volumes`）、文件操作（`entries`）、传输调度（`transfers`）及传输执行与校验（`transfers/execution`）划分，测试放在对应模块的 `tests.rs`。新增逻辑优先归入对应职责，入口文件只保留组装与必要的共享状态。
+
 OpenDAL 类型只出现在 `provider-opendal` 中。为了防止并发目标覆盖，macOS/Linux 的单文件重命名使用 Provider 内封装的 `renameat_with(NOREPLACE)`；浏览、创建目录与删除使用 OpenDAL；流式传输使用 Provider 内部的文件句柄和独占临时文件，校验后以 no-clobber 方式发布。系统打开和回收站也封装在 Provider 内，前端只提交受约束的 StorageLocator，不安装或调用 FS Plugin。
 
 复制和移动入口在文件工具栏及操作菜单中。目标位置须可写；移动的源位置也须可写。文件按 256 KiB 分块传输，大小与 SHA-256 校验通过后发布目标，同名文件不会被覆盖。本地与 S3 写任务依次执行，支持取消排队、复制及校验中的任务；文件提交开始后会完成操作。连接有传输任务时，需先取消或等待任务完成再编辑、移除。

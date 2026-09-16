@@ -1,4 +1,5 @@
 use super::*;
+use std::path::PathBuf;
 use storage_provider_api::{StagedWrite, StorageReader};
 
 /// A file picker authorizes one file, never all its siblings.
