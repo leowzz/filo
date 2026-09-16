@@ -11,19 +11,47 @@ impl StorageService {
     }
 
     pub async fn list_volumes(&self) -> StorageResult<Vec<VolumeView>> {
-        Ok(self
-            .repository
+        let connections = self.repository.list_connections().await?;
+        self.repository
             .list_volumes()
             .await?
             .into_iter()
-            .map(|volume| VolumeView {
-                capabilities: match volume.root {
+            .map(|volume| {
+                let capabilities = match &volume.root {
                     VolumeRoot::Local { .. } => StorageCapabilities::local(volume.read_only),
                     VolumeRoot::S3 { .. } => StorageCapabilities::s3(volume.read_only),
-                },
-                volume,
+                    VolumeRoot::Remote { .. } => {
+                        let connection = connections
+                            .iter()
+                            .find(|connection| connection.id == volume.connection_id)
+                            .ok_or_else(|| {
+                                StorageError::new(
+                                    StorageErrorCode::InvalidConfiguration,
+                                    "远程位置缺少匹配的连接配置",
+                                )
+                            })?;
+                        if connection.provider != ProviderKind::Remote {
+                            return Err(StorageError::new(
+                                StorageErrorCode::InvalidConfiguration,
+                                "远程位置缺少匹配的连接配置",
+                            ));
+                        }
+                        let config: RemoteConnectionConfig =
+                            serde_json::from_value(connection.config.clone()).map_err(|_| {
+                                StorageError::new(
+                                    StorageErrorCode::InvalidConfiguration,
+                                    "远程连接配置损坏",
+                                )
+                            })?;
+                        StorageCapabilities::remote(config.protocol, volume.read_only)
+                    }
+                };
+                Ok(VolumeView {
+                    capabilities,
+                    volume,
+                })
             })
-            .collect())
+            .collect()
     }
 
     /// Called only with a path returned by the native dialog inside Rust.

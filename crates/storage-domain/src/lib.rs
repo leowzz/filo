@@ -8,6 +8,58 @@ use uuid::Uuid;
 pub enum ProviderKind {
     LocalFs,
     S3,
+    Remote,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RemoteProtocol {
+    Ftp,
+    Ftps,
+    Sftp,
+    Smb,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteConnectionConfig {
+    pub protocol: RemoteProtocol,
+    pub host: String,
+    pub port: u16,
+    #[serde(default)]
+    pub share: String,
+    #[serde(default)]
+    pub known_hosts: String,
+}
+
+// Never derive Debug: remote credentials are secret and must not enter logs.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RemoteCredentials {
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub password: String,
+    #[serde(default)]
+    pub private_key: String,
+    #[serde(default)]
+    pub passphrase: String,
+    #[serde(default)]
+    pub domain: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RemoteStorageInput {
+    pub name: String,
+    pub protocol: RemoteProtocol,
+    pub host: String,
+    pub port: u16,
+    pub path: String,
+    #[serde(default)]
+    pub share: String,
+    #[serde(default)]
+    pub known_hosts: String,
+    pub read_only: bool,
+    /// Omit when editing to retain the saved credentials.
+    pub credentials: Option<RemoteCredentials>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -62,6 +114,7 @@ pub struct StorageConnection {
 pub enum VolumeRoot {
     Local { root_path: std::path::PathBuf },
     S3 { bucket: String, prefix: String },
+    Remote { path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,6 +281,34 @@ pub struct StorageCapabilities {
 }
 
 impl StorageCapabilities {
+    pub fn remote(protocol: RemoteProtocol, read_only: bool) -> Self {
+        let safe_write =
+            !read_only && !matches!(protocol, RemoteProtocol::Ftp | RemoteProtocol::Ftps);
+        Self {
+            hierarchy: HierarchySemantics::NativeDirectory,
+            rename: if read_only || !safe_write {
+                RenameSemantics::Unsupported
+            } else {
+                RenameSemantics::Atomic
+            },
+            create_directory: !read_only,
+            write: safe_write,
+            range_read: matches!(protocol, RemoteProtocol::Sftp | RemoteProtocol::Smb),
+            multipart_write: false,
+            native_copy: false,
+            server_side_copy: false,
+            recursive_delete: false,
+            presigned_url: false,
+            versioning: false,
+            custom_metadata: false,
+            tags: false,
+            watch_changes: false,
+            delete: !read_only,
+            trash: false,
+            native_open: false,
+        }
+    }
+
     pub fn s3(read_only: bool) -> Self {
         Self {
             hierarchy: HierarchySemantics::VirtualPrefix,
@@ -424,5 +505,21 @@ mod tests {
         let caps = StorageCapabilities::local(true);
         assert!(!caps.create_directory && !caps.delete && !caps.native_copy);
         assert!(matches!(caps.rename, RenameSemantics::Unsupported));
+    }
+
+    #[test]
+    fn remote_capabilities_reflect_safe_write_and_range_support() {
+        let ftp = StorageCapabilities::remote(RemoteProtocol::Ftp, false);
+        assert!(!ftp.write);
+        assert!(!ftp.range_read);
+        assert!(ftp.create_directory && ftp.delete);
+        assert!(matches!(ftp.rename, RenameSemantics::Unsupported));
+
+        let sftp = StorageCapabilities::remote(RemoteProtocol::Sftp, false);
+        assert!(sftp.write && sftp.range_read);
+        assert!(matches!(sftp.rename, RenameSemantics::Atomic));
+
+        let readonly = StorageCapabilities::remote(RemoteProtocol::Smb, true);
+        assert!(!readonly.write && !readonly.create_directory && !readonly.delete);
     }
 }

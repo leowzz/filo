@@ -1,4 +1,56 @@
 use storage_domain::*;
+use uuid::Uuid;
+
+const REMOTE_CREDENTIAL_MARKER: &str = "filo.remote.v1";
+const REMOTE_CREDENTIAL_PREFIX: &str = "remote:";
+
+/// Remote credentials use the existing credential-store contract without
+/// putting their fields in the SQLite configuration.  The marker prevents a
+/// stale S3 reference from ever being interpreted as a remote credential.
+pub(super) fn remote_reference(id: Uuid) -> String {
+    format!("{REMOTE_CREDENTIAL_PREFIX}{id}")
+}
+
+pub(super) fn is_remote_reference(reference: &str) -> bool {
+    reference
+        .strip_prefix(REMOTE_CREDENTIAL_PREFIX)
+        .and_then(|id| Uuid::parse_str(id).ok())
+        .is_some()
+}
+
+pub(super) fn pack_remote_credentials(
+    credentials: &RemoteCredentials,
+) -> StorageResult<S3Credentials> {
+    let secret_access_key = serde_json::to_string(credentials).map_err(|_| {
+        StorageError::new(
+            StorageErrorCode::InvalidConfiguration,
+            "远程凭据无法安全保存",
+        )
+    })?;
+    Ok(S3Credentials {
+        access_key_id: REMOTE_CREDENTIAL_MARKER.into(),
+        secret_access_key,
+        session_token: None,
+    })
+}
+
+pub(super) fn unpack_remote_credentials(
+    credentials: &S3Credentials,
+) -> StorageResult<RemoteCredentials> {
+    if credentials.access_key_id != REMOTE_CREDENTIAL_MARKER || credentials.session_token.is_some()
+    {
+        return Err(StorageError::new(
+            StorageErrorCode::InvalidConfiguration,
+            "远程凭据格式无效，请编辑连接重新保存",
+        ));
+    }
+    serde_json::from_str(&credentials.secret_access_key).map_err(|_| {
+        StorageError::new(
+            StorageErrorCode::InvalidConfiguration,
+            "远程凭据格式无效，请编辑连接重新保存",
+        )
+    })
+}
 
 #[cfg(any(target_os = "macos", test))]
 mod vault;
@@ -14,7 +66,7 @@ pub struct SystemCredentialStore;
 fn error() -> StorageError {
     StorageError::new(
         StorageErrorCode::AccessDenied,
-        "无法访问系统凭据库，请解锁钥匙串或重新输入 S3 凭据",
+        "无法访问系统凭据库，请解锁钥匙串或重新输入连接凭据",
     )
 }
 #[cfg(target_os = "macos")]

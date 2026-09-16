@@ -1,4 +1,4 @@
-use provider_opendal::{OpenDalLocalBackend, OpenDalS3Backend};
+use provider_opendal::{OpenDalLocalBackend, OpenDalS3Backend, RemoteBackend};
 use std::sync::Arc;
 use storage_domain::*;
 use storage_provider_api::{StorageBackend, TransferLimits};
@@ -12,6 +12,7 @@ pub use errors::catch_panic;
 mod entries;
 mod file_operations;
 mod listing;
+mod remote;
 mod s3;
 mod s3_admin;
 mod volumes;
@@ -91,6 +92,39 @@ impl StorageService {
                 Ok(Arc::new(
                     OpenDalS3Backend::new(&volume, &config, &credentials)?
                         .with_transfer_limits(self.transfer_limits().await?),
+                ))
+            }
+            VolumeRoot::Remote { .. } => {
+                let connection = self.connection(volume.connection_id).await?;
+                if connection.provider != ProviderKind::Remote {
+                    return Err(StorageError::new(
+                        StorageErrorCode::InvalidConfiguration,
+                        "远程位置缺少匹配的连接配置",
+                    ));
+                }
+                let config: RemoteConnectionConfig = serde_json::from_value(connection.config)
+                    .map_err(|_| {
+                        StorageError::new(
+                            StorageErrorCode::InvalidConfiguration,
+                            "远程连接配置损坏",
+                        )
+                    })?;
+                let reference = connection.credential_ref.clone().ok_or_else(|| {
+                    StorageError::new(
+                        StorageErrorCode::InvalidConfiguration,
+                        "缺少远程凭据引用，请编辑连接重新保存",
+                    )
+                })?;
+                if !credentials::is_remote_reference(&reference) {
+                    return Err(StorageError::new(
+                        StorageErrorCode::InvalidConfiguration,
+                        "远程凭据引用格式无效，请编辑连接重新保存",
+                    ));
+                }
+                let packed = self.load_credentials(Some(reference)).await?;
+                let credentials = credentials::unpack_remote_credentials(&packed)?;
+                Ok(Arc::new(
+                    RemoteBackend::new(&volume, &config, &credentials).await?,
                 ))
             }
         }

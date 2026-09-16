@@ -190,6 +190,32 @@ impl Repository {
         tx.commit().await.map_err(database_error)
     }
 
+    pub async fn save_remote(
+        &self,
+        connection: &StorageConnection,
+        volume: &StorageVolume,
+    ) -> StorageResult<()> {
+        if connection.provider != ProviderKind::Remote
+            || !matches!(&volume.root, VolumeRoot::Remote { .. })
+            || connection.id != volume.connection_id
+        {
+            return Err(StorageError::new(
+                StorageErrorCode::InvalidConfiguration,
+                "远程连接与存储位置不匹配",
+            ));
+        }
+        let mut tx = self.pool.begin().await.map_err(database_error)?;
+        sqlx::query("INSERT INTO connections (id, name, provider, config_json, credential_ref) VALUES (?, ?, 'remote', ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, provider=excluded.provider, config_json=excluded.config_json, credential_ref=excluded.credential_ref, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')")
+            .bind(connection.id.to_string()).bind(&connection.name)
+            .bind(serde_json::to_string(&connection.config).map_err(database_error)?)
+            .bind(&connection.credential_ref).execute(&mut *tx).await.map_err(database_error)?;
+        sqlx::query("INSERT INTO volumes (id, connection_id, name, root_json, read_only) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, root_json=excluded.root_json, read_only=excluded.read_only, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')")
+            .bind(volume.id.to_string()).bind(volume.connection_id.to_string()).bind(&volume.name)
+            .bind(serde_json::to_string(&volume.root).map_err(database_error)?).bind(volume.read_only)
+            .execute(&mut *tx).await.map_err(database_error)?;
+        tx.commit().await.map_err(database_error)
+    }
+
     /// Removes saved configuration only; never touches the local filesystem.
     pub async fn remove_local(&self, volume_id: Uuid) -> StorageResult<()> {
         let mut tx = self.pool.begin().await.map_err(database_error)?;

@@ -109,7 +109,7 @@ impl StorageService {
             .await
             .map_err(|_| configuration("凭据读取任务失败"))?
     }
-    async fn store_credentials(
+    pub(super) async fn store_credentials(
         &self,
         reference: String,
         credentials: S3Credentials,
@@ -119,7 +119,7 @@ impl StorageService {
             .await
             .map_err(|_| configuration("凭据保存任务失败"))?
     }
-    async fn delete_credentials(&self, reference: String) -> StorageResult<()> {
+    pub(super) async fn delete_credentials(&self, reference: String) -> StorageResult<()> {
         let store = self.credentials.clone();
         tokio::task::spawn_blocking(move || store.delete(&reference))
             .await

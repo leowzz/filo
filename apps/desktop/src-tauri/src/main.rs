@@ -43,6 +43,20 @@ async fn test_s3_connection(
 ) -> StorageResult<()> {
     service.test_s3_connection(volume_id, input).await
 }
+async fn save_remote_storage(
+    service: State<'_, StorageService>,
+    volume_id: Option<uuid::Uuid>,
+    input: RemoteStorageInput,
+) -> StorageResult<StorageVolume> {
+    service.save_remote_storage(volume_id, input).await
+}
+async fn test_remote_connection(
+    service: State<'_, StorageService>,
+    volume_id: Option<uuid::Uuid>,
+    input: RemoteStorageInput,
+) -> StorageResult<()> {
+    service.test_remote_connection(volume_id, input).await
+}
 async fn transfer_local_file(
     app: tauri::AppHandle,
     service: State<'_, StorageService>,
@@ -359,6 +373,8 @@ fn main() {
             save_transfer_settings,
             save_s3_storage,
             test_s3_connection,
+            save_remote_storage,
+            test_remote_connection,
             transfer_local_file,
             dropped_files::upload_dropped_files,
             list_connections,
