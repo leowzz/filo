@@ -1,7 +1,55 @@
+# JavaScript dependencies and local package cache
 node_modules/
+.pnpm-store/
+
+# Vite / TypeScript build output and caches
 dist/
-target/
-.DS_Store
-*.log
-apps/desktop/src-tauri/gen/
+.vite/
 *.tsbuildinfo
+.eslintcache
+
+# Rust builds, app bundles, and rustfmt backups
+target/
+**/*.rs.bk
+
+# Tauri-generated API schemas (keep native project source if added later)
+/apps/desktop/src-tauri/gen/schemas/
+
+# Test output
+coverage/
+
+# Local environment configuration (keep shareable templates)
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+!.env.*.example
+!.env.*.sample
+!.env.*.template
+
+# Local application database, including SQLite sidecar files
+# Restrict to Filo's runtime filename so test fixtures can still be committed.
+filo.sqlite
+filo.sqlite-wal
+filo.sqlite-shm
+filo.sqlite-journal
+
+# Runtime logs
+*.log
+logs/
+
+# macOS / Windows filesystem metadata
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+
+# Personal IDE state and editor temporary files
+.idea/
+*.swp
+*.swo
+*~
+
+# Commit Cargo.lock, pnpm-lock.yaml, migrations, app icons, and shared
+# .vscode configuration for reproducible builds and team development.
