@@ -160,16 +160,6 @@ impl FtpSession {
         .await
     }
 
-    async fn mlsd(&mut self, path: Option<&str>) -> FtpResult<Vec<String>> {
-        ftp_timeout(async {
-            match self {
-                Self::Plain(session) => session.mlsd(path).await,
-                Self::Secure(session) => session.mlsd(path).await,
-            }
-        })
-        .await
-    }
-
     async fn list(&mut self, path: Option<&str>) -> FtpResult<Vec<String>> {
         ftp_timeout(async {
             match self {
@@ -439,16 +429,12 @@ impl FtpBackend {
 
     async fn listing(&self, session: &mut FtpSession, parent: &str) -> StorageResult<Vec<FtpFile>> {
         let path = (!parent.is_empty()).then_some(parent);
-        let lines = match session.list(path).await {
-            Ok(lines) => lines,
-            Err(_) => session.mlsd(path).await.map_err(ftp_error)?,
-        };
+        let lines = session.list(path).await.map_err(ftp_listing_error)?;
         lines
             .into_iter()
             .filter(|line| !line.trim_start().starts_with("total "))
             .map(|line| {
                 ListParser::parse_posix(&line)
-                    .or_else(|_| ListParser::parse_mlsd(&line))
                     .or_else(|_| ListParser::parse_dos(&line))
                     .map_err(|_| {
                         StorageError::new(StorageErrorCode::Io, "FTP 返回的目录列表无法解析")
@@ -521,12 +507,7 @@ impl FtpBackend {
         let mut session = self.connect().await?;
         // connect() already changes into the configured root. Passing root a
         // second time would incorrectly test root/root on relative roots.
-        match session.mlsd(None).await {
-            Ok(_) => {}
-            Err(_) => {
-                session.list(None).await.map_err(ftp_error)?;
-            }
-        }
+        session.list(None).await.map_err(ftp_listing_error)?;
         Ok(())
     }
 }
@@ -577,6 +558,9 @@ impl StorageBackend for FtpBackend {
         }
         let mut session = self.connect().await?;
         let file = self.safe_leaf(&mut session, &logical).await?;
+        if file.is_symlink() {
+            return Err(denied("远程符号链接不能访问"));
+        }
         let mut entry = self.entry(
             logical
                 .rsplit_once('/')
@@ -636,6 +620,9 @@ impl StorageBackend for FtpBackend {
         let logical = self.path(locator, false)?;
         let mut session = self.connect().await?;
         let entry = self.safe_leaf(&mut session, &logical).await?;
+        if entry.is_symlink() {
+            return Err(denied("远程符号链接不能访问"));
+        }
         if !entry.is_file() {
             return Err(unsupported("当前只支持读取普通文件"));
         }
@@ -731,6 +718,23 @@ where
         })
 }
 
+fn ftp_listing_error(error: FtpError) -> StorageError {
+    match error {
+        FtpError::UnexpectedResponse(response)
+            if matches!(
+                response.status,
+                Status::BadCommand
+                    | Status::BadArguments
+                    | Status::NotImplemented
+                    | Status::NotImplementedParameter
+            ) =>
+        {
+            unsupported("FTP 服务端不支持安全目录列表")
+        }
+        other => ftp_error(other),
+    }
+}
+
 fn ftp_error(error: FtpError) -> StorageError {
     match error {
         FtpError::ConnectionError(error) if error.kind() == io::ErrorKind::TimedOut => {
@@ -773,5 +777,128 @@ fn network_error() -> StorageError {
         code: StorageErrorCode::Network,
         message: "FTP 请求失败，请检查网络和服务状态".into(),
         retryable: true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Deserialize;
+    use std::path::PathBuf;
+    use tokio::io::AsyncReadExt;
+
+    #[derive(Deserialize)]
+    struct Fixture {
+        host: String,
+        ftp_port: u16,
+        ftps_port: u16,
+        username: String,
+        password: String,
+        tls_ca: PathBuf,
+    }
+
+    fn fixture() -> Option<Fixture> {
+        let path = std::env::var_os("FILO_TEST_REMOTE_FIXTURE")?;
+        let bytes = std::fs::read(path).expect("FILO_TEST_REMOTE_FIXTURE must be readable");
+        Some(serde_json::from_slice(&bytes).expect("FILO_TEST_REMOTE_FIXTURE must be valid JSON"))
+    }
+
+    fn fixture_volume(path: &str, protocol: RemoteProtocol) -> StorageVolume {
+        StorageVolume {
+            id: Uuid::new_v4(),
+            connection_id: Uuid::new_v4(),
+            name: format!("{protocol:?} fixture"),
+            root: VolumeRoot::Remote {
+                path: path.to_owned(),
+            },
+            read_only: false,
+        }
+    }
+
+    fn fixture_locator(volume_id: Uuid, logical_path: &str) -> StorageLocator {
+        StorageLocator {
+            volume_id,
+            logical_path: logical_path.to_owned(),
+            version_id: None,
+        }
+    }
+
+    async fn assert_fixture_protocol(fixture: &Fixture, protocol: RemoteProtocol, port: u16) {
+        let volume = fixture_volume("", protocol);
+        let config = RemoteConnectionConfig {
+            protocol,
+            host: fixture.host.clone(),
+            port,
+            share: String::new(),
+            known_hosts: String::new(),
+        };
+        let credentials = RemoteCredentials {
+            username: fixture.username.clone(),
+            password: fixture.password.clone(),
+            private_key: String::new(),
+            passphrase: String::new(),
+            domain: String::new(),
+        };
+        let backend = FtpBackend::new(&volume, &config, &credentials).unwrap();
+        backend.test_connection().await.unwrap();
+
+        let root = fixture_locator(volume.id, "");
+        let entries = backend.list(&root).await.unwrap();
+        assert!(entries.iter().any(|entry| entry.name == "seed.txt"));
+        assert!(entries.iter().any(|entry| {
+            entry.name == "outside-link" && entry.kind == StorageEntryKind::Symlink
+        }));
+
+        let mut reader = backend
+            .open_read(&fixture_locator(volume.id, "seed.txt"))
+            .await
+            .unwrap();
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await.unwrap();
+        assert_eq!(bytes, b"Filo remote fixture\n");
+
+        let link = fixture_locator(volume.id, "outside-link");
+        assert_eq!(
+            backend.stat(&link).await.unwrap_err().code,
+            StorageErrorCode::AccessDenied
+        );
+        let read_error = match backend.open_read(&link).await {
+            Ok(_) => panic!("FTP read must reject symlink"),
+            Err(error) => error,
+        };
+        assert_eq!(read_error.code, StorageErrorCode::AccessDenied);
+        let nested = fixture_locator(volume.id, "outside-link/secret.txt");
+        assert_eq!(
+            backend.list(&nested).await.unwrap_err().code,
+            StorageErrorCode::AccessDenied
+        );
+        assert_eq!(
+            backend.create_dir(&nested).await.unwrap_err().code,
+            StorageErrorCode::AccessDenied
+        );
+        assert_eq!(
+            backend.delete(&nested).await.unwrap_err().code,
+            StorageErrorCode::AccessDenied
+        );
+
+        let symlink_root = fixture_volume("outside-link", protocol);
+        let symlink_backend = FtpBackend::new(&symlink_root, &config, &credentials).unwrap();
+        assert_eq!(
+            symlink_backend.test_connection().await.unwrap_err().code,
+            StorageErrorCode::AccessDenied
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires FILO_TEST_REMOTE_FIXTURE and disposable FTP/FTPS services"]
+    async fn ftp_fixture_operations_reject_symlink_escape() {
+        let Some(fixture) = fixture() else {
+            return;
+        };
+        // The disposable FTPS service uses a per-run CA. rustls-native-certs
+        // intentionally honors this standard test-only trust override.
+        std::env::set_var("SSL_CERT_FILE", &fixture.tls_ca);
+        assert_fixture_protocol(&fixture, RemoteProtocol::Ftp, fixture.ftp_port).await;
+        assert_fixture_protocol(&fixture, RemoteProtocol::Ftps, fixture.ftps_port).await;
     }
 }

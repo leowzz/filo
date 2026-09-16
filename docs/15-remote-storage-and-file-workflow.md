@@ -24,7 +24,7 @@
 
 - FTPS 使用显式 TLS（AUTH TLS），控制与数据连接都加密，服务端证书必须受系统信任；没有跳过证书检查的选项。
 - SFTP 必须填写可信的 known_hosts 主机公钥。使用未哈希的确切主机条目，非默认端口使用 `[主机]:端口`；暂不接受通配符或哈希主机名，公钥不匹配时拒绝连接。
-- FTP / FTPS 暂不提供上传和重命名，避免服务端 RNTO 静默覆盖已有文件；可浏览、读取、下载、创建目录及删除。只读模式进一步关闭写操作。
+- FTP / FTPS 暂不提供上传和重命名，避免服务端 RNTO 静默覆盖已有文件；可浏览、读取、下载、创建目录及删除。只读模式进一步关闭写操作。服务端必须支持保留符号链接信息的 LIST 目录列表，不使用可能解引用链接的 MLSD 作为安全检查后备。
 - SFTP 和 SMB 上传先写远程临时文件，经内容校验后以不覆盖已有目标的方式提交；暂不提供覆盖替换，可使用自动改名。SMB 不支持 DFS 转发。
 - 远程协议没有回收站。删除前明确确认永久删除；不跟随符号链接或 SMB reparse point。
 
@@ -41,8 +41,9 @@ uv run scripts/remote-test-servers.py /tmp/filo-remote-fixture.json
 真实服务验证已通过：
 
 - FTP / FTPS、SFTP、SMB 的连接测试、保存、编辑保留凭据和重启恢复。
-- FTP / FTPS 下载、创建及删除目录、禁止上传；FTPS 校验测试 CA。
+- FTP / FTPS 下载、创建及删除目录、禁止上传；FTPS 校验测试 CA。真实 Provider 测试拒绝符号链接根目录、链接子项及其下级路径。
 - SFTP / SMB 与本地之间复制、移动及内容校验；只读、错误认证、路径逃逸和活动传输期间禁止编辑。
+- SFTP RSA 私钥已在仅允许 RSA SHA-2 的一次性 asyncssh 服务中验证认证与读取。
 - SFTP / SMB Provider 的流式临时写入、同名目标保护和重命名；SFTP 另外验证取消清理、符号链接根目录与错误主机公钥。
 - SQLite / WAL 不保存密码，凭据保存失败回滚，移除连接清理凭据。
 
@@ -53,7 +54,14 @@ FILO_TEST_REMOTE_FIXTURE=/tmp/filo-remote-fixture.json \
   cargo test -p storage-application --test remote_integration -- --ignored
 ```
 
-结果为 2 个测试通过。Provider 的 `sftp_fixture_operations` 与 `smb_fixture_operations` 为显式运行的真实服务测试，普通 `cargo test` 不会启动或连接这些服务。
+结果为 2 个测试通过。Provider 的 FTP/FTPS、SFTP、SMB 共 3 个真实服务测试可一起运行：
+
+```sh
+FILO_TEST_REMOTE_FIXTURE=/tmp/filo-remote-fixture.json \
+  cargo test -p provider-opendal fixture_operations -- --ignored
+```
+
+普通 `cargo test` 不会启动或连接这些服务。RSA 私钥测试单独使用 `FILO_TEST_SFTP_KEY_FIXTURE`，与密码认证服务隔离。
 
 Rust 工作区 `cargo fmt --all --check`、`cargo clippy --workspace --all-targets --locked -- -D warnings` 与 `cargo test --workspace --locked` 通过；常规测试 98 个通过。需要外部服务或系统交互的测试默认忽略，远程协议测试已按上述命令单独执行。
 

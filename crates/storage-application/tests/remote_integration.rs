@@ -613,7 +613,7 @@ async fn remote_application_lifecycle_and_cross_storage_transfers() -> StorageRe
                 )
                 .await
                 .expect_err("remote symlinks must not be transferred");
-            assert_eq!(error.code, StorageErrorCode::Unsupported);
+            assert_eq!(error.code, StorageErrorCode::AccessDenied);
         }
         if matches!(case.protocol, RemoteProtocol::Sftp | RemoteProtocol::Smb) {
             remove_remote_children(&service, &case.volume).await?;
