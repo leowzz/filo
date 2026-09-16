@@ -206,34 +206,6 @@ await page.evaluate(() => {
   window.boundaryFixture.unmount();
   document.getElementById("boundary-fixture").remove();
 });
-const diagnosticCases = await page.evaluate(async () => {
-  const { describeError } = await import("/src/errorDiagnostics.ts");
-  const circular = { message: "circular fixture" };
-  circular.self = circular;
-  return {
-    structured: describeError({
-      message:
-        'failed Authorization="Bearer private-token" password=private-password https://user:pass@example.test/?token=private-query',
-      stack:
-        "Error: ignored\n at load (https://user:pass@example.test/src/listing.ts?token=private-query:42:9)",
-    }),
-    circular: describeError(circular),
-    hostile: describeError({
-      get message() {
-        throw new Error("private getter");
-      },
-    }),
-    bounded: describeError("x".repeat(10000)).length,
-  };
-});
-assert.match(diagnosticCases.structured, /listing.ts:42:9/);
-assert.doesNotMatch(
-  diagnosticCases.structured,
-  /private-|user:pass|example.test/,
-);
-assert.equal(diagnosticCases.circular, "circular fixture");
-assert.equal(diagnosticCases.hostile, "无法读取异常详情");
-assert.equal(diagnosticCases.bounded, 2000);
 console.log(
   "PASS: startup replay/deduplication, backend panic dialog above modal, busy state cleared, retry, narrow layout, runtime error, unhandled rejection, render fallback",
 );

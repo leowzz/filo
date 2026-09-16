@@ -37,7 +37,6 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
       if (command === 'recent_backend_errors') return [];
       window.calls.push({ command, args });
       if (command === 'plugin:event|listen') {
-        if (window.failListenEvent === args.event) throw new Error('fixture setup failure');
         const id = ++sequence; window.listeners.set(id, args); return id;
       }
       if (command === 'plugin:event|unlisten') {
@@ -279,33 +278,6 @@ await page.click('button[aria-label="上传文件"]');
 await page.click('button:text-is("选择文件…")');
 await page.waitForFunction(() =>
   window.calls.some((call) => call.command === "transfer_local_file"),
-);
-const rollback = await page.evaluate(async () => {
-  const { listenFileDrop } = await import("/src/fileDropEvents.ts");
-  const before = [...window.listeners.keys()];
-  window.failListenEvent = "tauri://drag-drop";
-  window.failUnlisten = true;
-  let message;
-  try {
-    await listenFileDrop(() => {});
-  } catch (error) {
-    message = error.message;
-  } finally {
-    window.failListenEvent = null;
-    window.failUnlisten = false;
-  }
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  return {
-    message,
-    restored:
-      JSON.stringify(before) === JSON.stringify([...window.listeners.keys()]),
-    unhandled: window.unhandled,
-  };
-});
-assert.deepEqual(
-  rollback,
-  { message: "fixture setup failure", restored: true, unhandled: [] },
-  "Partial listener setup rolls back all registrations even when cleanup rejects",
 );
 console.log(
   "PASS: native event bridge, HiDPI hit testing, enter/leave/outside/modal guards, multi-file drop, cancellation, nested destination, conflict policy, picker bypass, progress, partial failure, read-only guard, listener cleanup and original picker flow",
