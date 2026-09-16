@@ -17,12 +17,34 @@ export function shouldPromote(tag, latest) {
     !parseVersion(tag).channel && (!latest || compareVersions(tag, latest) > 0)
   );
 }
-function releaseData(repository, path) {
-  const result = spawnSync(
-    "gh",
-    ["api", `repos/${repository}/releases/${path}`],
-    { encoding: "utf8" },
-  );
+export function releaseData(repository, path, spawn = spawnSync) {
+  if (path.startsWith("tags/")) {
+    // The REST tag endpoint only finds published releases. gh also resolves drafts.
+    const lookup = spawn(
+      "gh",
+      [
+        "release",
+        "view",
+        path.slice(5),
+        "--repo",
+        repository,
+        "--json",
+        "databaseId",
+      ],
+      { encoding: "utf8" },
+    );
+    if (lookup.error) throw lookup.error;
+    if (lookup.status !== 0) {
+      if (lookup.stderr.trim() === "release not found") return null;
+      throw new Error(lookup.stderr || "无法查找 GitHub Release");
+    }
+    path = String(JSON.parse(lookup.stdout).databaseId);
+  }
+  // Read REST data by ID to retain asset digests for verification before publication.
+  const result = spawn("gh", ["api", `repos/${repository}/releases/${path}`], {
+    encoding: "utf8",
+  });
+  if (result.error) throw result.error;
   if (result.status === 0) return JSON.parse(result.stdout);
   if (/HTTP 404/.test(result.stderr)) return null;
   throw new Error(result.stderr || "无法读取 GitHub Release");

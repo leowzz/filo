@@ -32,7 +32,7 @@ import {
   updaterManifest,
   verifyArtifacts,
 } from "./artifacts.mjs";
-import { publish, sameAssets, shouldPromote } from "./publish.mjs";
+import { publish, releaseData, sameAssets, shouldPromote } from "./publish.mjs";
 import { validateReleaseRef } from "./metadata.mjs";
 
 function temporary(t) {
@@ -372,6 +372,105 @@ test("missing or stale artifacts fail; prereleases never promote stable channel"
   assert.equal(shouldPromote("v1.2.4", "v1.2.3"), true);
   assert.equal(sameAssets(["a", "b"], ["b", "a"]), true);
   assert.equal(sameAssets(["a", "b"], ["a"]), false);
+});
+for (const existing of [false, true]) {
+  test(`draft lookup supports ${existing ? "resuming" : "creating"} a release when REST tag lookup returns 404`, (t) => {
+    const dir = assets(t);
+    const data = {
+      id: 42,
+      tag_name: "v1.2.3",
+      draft: true,
+      body: "Release notes",
+      created_at: "2026-01-01T00:00:00Z",
+      assets: [],
+    };
+    let created = existing;
+    const commands = [];
+    const ok = (value) => ({
+      status: 0,
+      stdout: JSON.stringify(value),
+      stderr: "",
+    });
+    const spawn = (command, args) => {
+      assert.equal(command, "gh");
+      if (args[0] === "release") {
+        assert.deepEqual(args, [
+          "release",
+          "view",
+          "v1.2.3",
+          "--repo",
+          "leowzz/filo",
+          "--json",
+          "databaseId",
+        ]);
+        return created
+          ? ok({ databaseId: data.id })
+          : { status: 1, stdout: "", stderr: "release not found\n" };
+      }
+      assert.equal(args[0], "api");
+      if (args[1] === "repos/leowzz/filo/releases/42") return ok(data);
+      assert.ok(
+        [
+          "repos/leowzz/filo/releases/tags/v1.2.3",
+          "repos/leowzz/filo/releases/latest",
+        ].includes(args[1]),
+      );
+      return { status: 1, stdout: "", stderr: "gh: Not Found (HTTP 404)" };
+    };
+    publish(
+      {
+        RELEASE_TAG: "v1.2.3",
+        GITHUB_REPOSITORY: "leowzz/filo",
+        RELEASE_ASSETS: dir,
+      },
+      (repo, path) => releaseData(repo, path, spawn),
+      (_command, args) => {
+        commands.push(args[1]);
+        if (args[1] === "create") {
+          assert.equal(created, false, "must not create duplicate drafts");
+          created = true;
+        }
+        if (args[1] === "upload")
+          data.assets = readdirSync(dir).map((name) => ({
+            name,
+            digest: `sha256:${sha256(join(dir, name))}`,
+          }));
+      },
+    );
+    assert.deepEqual(
+      commands,
+      existing ? ["upload", "edit"] : ["create", "upload", "edit"],
+    );
+    assert.equal(
+      JSON.parse(readFileSync(join(dir, "latest.json"))).notes,
+      data.body,
+    );
+  });
+}
+test("release lookup propagates authentication, network and process errors", () => {
+  for (const stderr of [
+    "gh: Forbidden (HTTP 403)",
+    "gh: Bad credentials (HTTP 401)",
+    "connection reset",
+  ]) {
+    assert.throws(
+      () =>
+        releaseData("leowzz/filo", "tags/v1.2.3", () => ({
+          status: 1,
+          stdout: "",
+          stderr,
+        })),
+      { message: stderr },
+    );
+  }
+  for (const path of ["tags/v1.2.3", "latest"])
+    assert.throws(
+      () =>
+        releaseData("leowzz/filo", path, () => ({
+          error: new Error("spawn gh ENOENT"),
+        })),
+      /ENOENT/,
+    );
 });
 test("draft publication resumes, preserves notes and verifies remote hashes before publishing", (t) => {
   const dir = assets(t);
