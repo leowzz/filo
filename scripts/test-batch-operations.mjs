@@ -20,6 +20,9 @@ const volumes = ['source', 'target'].map(id => ({ id, connection_id: id, name: i
 window.__TAURI_INTERNALS__ = {
  transformCallback: () => 1, unregisterCallback: () => {},
  invoke: async (command, args) => {
+      if (command === 'recent_backend_errors') return [];
+      if (command === 'plugin:event|listen') return 1;
+      if (command === 'plugin:event|unlisten') return;
    window.testCalls.push({command, args});
    if (command === 'list_volumes') return volumes;
    if (command === 'list_transfers') return window.testJobs;

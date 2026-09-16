@@ -168,9 +168,14 @@ impl StorageService {
         );
         let service = self.clone();
         tokio::spawn(async move {
-            let result = service
-                .search_contents(parent, query, show_hidden, &token, &state)
-                .await;
+            let result = crate::catch_panic(service.search_contents(
+                parent,
+                query,
+                show_hidden,
+                &token,
+                &state,
+            ))
+            .await;
             let mut state = state.lock().await;
             if let Err(error) = result {
                 state.errors.push(error.message);

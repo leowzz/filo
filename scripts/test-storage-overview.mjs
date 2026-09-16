@@ -19,6 +19,7 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
       volume('Local demo', {type: 'local', root_path: '/demo'})];
     window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {unregisterListener: () => {}};
     window.__TAURI_INTERNALS__ = {metadata: {currentWindow: {label: 'main'}, currentWebview: {label: 'main'}}, transformCallback: () => 1, unregisterCallback: () => {}, invoke: async (command, args) => {
+      if (command === 'recent_backend_errors') return [];
       if (command === 'plugin:event|listen') return 1;
       if (command === 'plugin:event|unlisten') return;
       if (command === 'list_volumes') return volumes;

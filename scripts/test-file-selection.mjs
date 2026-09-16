@@ -17,7 +17,10 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
       capabilities: { hierarchy: 'native_directory', rename: 'atomic', create_directory: true,
         delete: true, trash: true, native_open: true, native_copy: true }
     };
-    window.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
+    window.__TAURI_INTERNALS__ = { transformCallback: () => 1, unregisterCallback: () => {}, invoke: async (command, args) => {
+      if (command === 'recent_backend_errors') return [];
+      if (command === 'plugin:event|listen') return 1;
+      if (command === 'plugin:event|unlisten') return;
       window.testCalls.push({ command, args });
       if (command === 'list_volumes') return [volume];
       if (command === 'list_transfers') return [];

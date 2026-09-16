@@ -177,45 +177,48 @@ impl StorageService {
         // Shared mutation access allows independent transfers; ordinary mutations
         // retain exclusive access. Cancellation only interrupts preparation here:
         // execution owns its commit boundary and reports the actual outcome.
-        let prepare = async {
-            let guard = self.mutation_lock.read().await;
-            let source = self.backend(job.source.volume_id).await?;
-            let destination = self.backend(job.destination.volume_id).await?;
-            // Auto-renaming reserves the parent, including all candidate names.
-            let mut reserved_destination = job.destination.clone();
-            if policy == ConflictPolicy::Rename {
-                reserved_destination.logical_path = reserved_destination
-                    .logical_path
-                    .rsplit_once('/')
-                    .map(|(parent, _)| parent)
-                    .unwrap_or("")
-                    .into();
+        let result = crate::catch_panic(async {
+            let prepare = async {
+                let guard = self.mutation_lock.read().await;
+                let source = self.backend(job.source.volume_id).await?;
+                let destination = self.backend(job.destination.volume_id).await?;
+                // Auto-renaming reserves the parent, including all candidate names.
+                let mut reserved_destination = job.destination.clone();
+                if policy == ConflictPolicy::Rename {
+                    reserved_destination.logical_path = reserved_destination
+                        .logical_path
+                        .rsplit_once('/')
+                        .map(|(parent, _)| parent)
+                        .unwrap_or("")
+                        .into();
+                }
+                let permit = self
+                    .transfer_scheduler
+                    .acquire(vec![
+                        scheduler::Access::new(
+                            source.as_ref(),
+                            &job.source,
+                            job.kind == TransferKind::Move,
+                        ),
+                        scheduler::Access::new(destination.as_ref(), &reserved_destination, true),
+                    ])
+                    .await;
+                Ok::<_, StorageError>((guard, permit))
+            };
+            let prepared = tokio::select! {
+                biased;
+                _ = token.cancelled() => Err(cancelled()),
+                result = prepare => result,
+            };
+            match prepared {
+                Ok((_guard, _permit)) => {
+                    self.execute_transfer(&mut job, &token, &observer, policy)
+                        .await
+                }
+                Err(error) => Err(error),
             }
-            let permit = self
-                .transfer_scheduler
-                .acquire(vec![
-                    scheduler::Access::new(
-                        source.as_ref(),
-                        &job.source,
-                        job.kind == TransferKind::Move,
-                    ),
-                    scheduler::Access::new(destination.as_ref(), &reserved_destination, true),
-                ])
-                .await;
-            Ok::<_, StorageError>((guard, permit))
-        };
-        let prepared = tokio::select! {
-            biased;
-            _ = token.cancelled() => Err(cancelled()),
-            result = prepare => result,
-        };
-        let result = match prepared {
-            Ok((_guard, _permit)) => {
-                self.execute_transfer(&mut job, &token, &observer, policy)
-                    .await
-            }
-            Err(error) => Err(error),
-        };
+        })
+        .await;
         match result {
             Ok(()) if job.state != TransferState::Skipped => job.state = TransferState::Completed,
             Ok(()) => {}

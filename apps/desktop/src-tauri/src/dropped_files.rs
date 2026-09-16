@@ -41,7 +41,7 @@ impl DroppedFiles {
     }
 }
 
-#[tauri::command]
+crate::errors::commands! {
 pub async fn upload_dropped_files(
     window: tauri::Window,
     dropped: State<'_, DroppedFiles>,
@@ -105,6 +105,7 @@ pub async fn upload_dropped_files(
         }
     }
     Ok(batch)
+}
 }
 
 #[cfg(test)]

@@ -90,6 +90,69 @@ impl StorageBackend for GatedSource {
 }
 
 #[tokio::test]
+async fn panicking_transfer_fails_and_releases_active_state() {
+    let fixture = Fixture::new().await;
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    gate.close(); // GatedSource panics when attempting to read through this closed gate.
+    let inner = fixture.service.backend(fixture.source_id).await.unwrap();
+    fixture
+        .service
+        .temporary_backends
+        .lock()
+        .await
+        .insert(fixture.source_id, Arc::new(GatedSource { inner, gate }));
+    let request = fixture.job(TransferKind::Copy);
+    let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
+    let job = fixture
+        .service
+        .start_transfer(
+            request.kind,
+            request.source.clone(),
+            request.destination.clone(),
+            Arc::new(move |job| {
+                let _ = sender.send(job);
+            }),
+        )
+        .await
+        .unwrap();
+    let result = fixture.result(job.id).await;
+    assert_eq!(result.state, TransferState::Failed);
+    assert_eq!(result.error_code, Some(StorageErrorCode::Internal));
+    assert!(!fixture.service.transfers.lock().await.contains_key(&job.id));
+    assert!(!fixture
+        .service
+        .temporary_backends
+        .lock()
+        .await
+        .contains_key(&fixture.source_id));
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(event) = events.recv().await {
+            if event.state == TransferState::Failed {
+                return;
+            }
+        }
+        panic!("missing terminal progress event");
+    })
+    .await
+    .unwrap();
+    // The same destination can be used again after cleanup.
+    let retried = fixture
+        .service
+        .start_transfer(
+            request.kind,
+            request.source,
+            request.destination,
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture.result(retried.id).await.state,
+        TransferState::Completed
+    );
+}
+
+#[tokio::test]
 async fn independent_transfers_run_together_and_queued_cancellation_is_isolated() {
     let fixture = Fixture::new().await;
     let gate = Arc::new(tokio::sync::Semaphore::new(0));

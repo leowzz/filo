@@ -16,6 +16,41 @@
 .modal::backdrop {
   background: #00000023;
 }
+.global-error-dialog {
+  width: 480px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.global-error-dialog h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.global-error-dialog h2 svg {
+  color: #c14b3d;
+}
+.global-error-dialog details {
+  margin-top: 12px;
+}
+.global-error-dialog summary {
+  cursor: pointer;
+}
+.global-error-dialog pre {
+  margin-top: 8px;
+  padding: 10px;
+  background: #ededed;
+  border-radius: 5px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.app-crash {
+  margin: auto;
+  max-width: 480px;
+  padding: 32px;
+  display: grid;
+  gap: 16px;
+}
 .modal-head {
   display: flex;
   align-items: center;

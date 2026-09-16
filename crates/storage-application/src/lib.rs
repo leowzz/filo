@@ -7,6 +7,8 @@ use tokio::sync::{Mutex, OnceCell, RwLock};
 use uuid::Uuid;
 mod browsing;
 mod credentials;
+mod errors;
+pub use errors::catch_panic;
 mod entries;
 mod file_operations;
 mod listing;

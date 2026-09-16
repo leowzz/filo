@@ -11,6 +11,9 @@ window.isTauri=true;window.calls=[];window.stamp='1';window.added=false;window.v
 const volume={id:'s3',connection_id:'s3',name:'RustFS',read_only:false,root:{type:'s3',bucket:'test-bucket',prefix:''},capabilities:{hierarchy:'virtual_prefix',rename:'copy_then_delete',create_directory:true,write:true,delete:true,recursive_delete:true,native_open:false}};
 const entry=name=>({name,kind:'file',size:100,modified_at:'2026-09-16T00:00:00Z',etag:'original',locator:{volume_id:'s3',logical_path:name,version_id:null}});
 window.__TAURI_INTERNALS__={transformCallback:()=>1,unregisterCallback:()=>{},invoke:async(command,args)=>{
+      if (command === 'recent_backend_errors') return [];
+      if (command === 'plugin:event|listen') return 1;
+      if (command === 'plugin:event|unlisten') return;
 window.calls.push({command,args});
 if(command==='list_volumes')return [volume];if(command==='list_transfers')return [];
 if(command==='directory_stamp')return window.stamp;

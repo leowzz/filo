@@ -14,6 +14,7 @@ window.testVolumes=[];
 window.testConnections=[];
 window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{}};
 window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:()=>1,unregisterCallback:()=>{},invoke:async(command,args)=>{
+      if (command === 'recent_backend_errors') return [];
   if(command==='plugin:event|listen')return 1;
   if(command==='plugin:event|unlisten')return;
   if(command==='directory_stamp')return '1';
@@ -88,7 +89,8 @@ assert.ok(
       item.textLeft === iconGeometry[0].textLeft,
   ),
 );
-await page.screenshot({ path: "/tmp/filo-provider-icons.png" });
+if (!globalThis.filoSkipScreenshot)
+  await page.screenshot({ path: "/tmp/filo-provider-icons.png" });
 await page.click(".storage-section input[type=checkbox]");
 await page.click('button:text-is("选择本地目录")');
 await page.waitForFunction(() => window.localReadOnly === true);

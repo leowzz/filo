@@ -13,6 +13,9 @@ window.testCalls = []; window.testJobs = []; window.failMore = false;
 const volumes = ['source', 'target'].map(id => ({ id, connection_id: id, name: id, read_only: false,
  root: {type:'local',root_path:'/'+id}, capabilities:{hierarchy:'native_directory',rename:'atomic',create_directory:true,write:true,delete:true,recursive_delete:true,trash:true,native_open:true} }));
 window.__TAURI_INTERNALS__ = { transformCallback: () => 1, unregisterCallback: () => {}, invoke: async (command,args) => {
+      if (command === 'recent_backend_errors') return [];
+      if (command === 'plugin:event|listen') return 1;
+      if (command === 'plugin:event|unlisten') return;
  window.testCalls.push({command,args});
  if(command==='list_volumes') return volumes;
  if(command==='list_transfers') return window.testJobs;

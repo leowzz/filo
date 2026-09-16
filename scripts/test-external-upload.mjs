@@ -31,6 +31,7 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
     transformCallback: callback => { const id = ++sequence; callbacks.set(id, callback); return id; },
     unregisterCallback: id => callbacks.delete(id),
     invoke: async (command, args) => {
+      if (command === 'recent_backend_errors') return [];
       window.calls.push({ command, args });
       if (command === 'plugin:event|listen') { const id = ++sequence; window.listeners.set(id, args); return id; }
       if (command === 'plugin:event|unlisten') { window.listeners.delete(args.eventId); return; }

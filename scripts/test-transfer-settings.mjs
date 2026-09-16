@@ -7,7 +7,10 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", { source: `(() => {
   window.isTauri = true;
   window.settingsCalls = [];
   window.failSave = false;
-  window.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
+  window.__TAURI_INTERNALS__ = { transformCallback: () => 1, unregisterCallback: () => {}, invoke: async (command, args) => {
+      if (command === 'recent_backend_errors') return [];
+      if (command === 'plugin:event|listen') return 1;
+      if (command === 'plugin:event|unlisten') return;
     if (command === 'list_volumes' || command === 'list_transfers') return [];
     if (command === 'get_transfer_settings') return JSON.parse(sessionStorage.getItem('filo-test-limits') || '{"upload_kib_per_second":0,"download_kib_per_second":0}');
     if (command === 'save_transfer_settings') {

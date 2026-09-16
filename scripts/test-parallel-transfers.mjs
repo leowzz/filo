@@ -26,6 +26,9 @@ window.advance = (id, state, bytes, channel = true) => {
 window.__TAURI_INTERNALS__ = {
   transformCallback: () => 1, unregisterCallback: () => {},
   invoke: async (cmd, args) => {
+      if (cmd === 'recent_backend_errors') return [];
+      if (cmd === 'plugin:event|listen') return 1;
+      if (cmd === 'plugin:event|unlisten') return;
     if (cmd === 'list_volumes') return [volume];
     if (cmd === 'list_entries') { window.reads++; return [...window.entries]; }
     if (cmd === 'list_entries_page') { window.reads++; return {entries:[...window.entries], total:window.entries.length, next_cursor:null}; }

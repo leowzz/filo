@@ -7,15 +7,21 @@ use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 mod dropped_files;
+mod errors;
 
-#[tauri::command]
+#[derive(serde::Serialize)]
+struct FileTransferBatch {
+    jobs: Vec<TransferJob>,
+    failures: Vec<String>,
+}
+
+errors::commands! {
 async fn get_transfer_settings(
     service: State<'_, StorageService>,
 ) -> StorageResult<TransferSettings> {
     service.transfer_settings().await
 }
 
-#[tauri::command]
 async fn save_transfer_settings(
     service: State<'_, StorageService>,
     settings: TransferSettings,
@@ -23,7 +29,6 @@ async fn save_transfer_settings(
     service.save_transfer_settings(settings).await
 }
 
-#[tauri::command]
 async fn save_s3_storage(
     service: State<'_, StorageService>,
     volume_id: Option<uuid::Uuid>,
@@ -31,7 +36,6 @@ async fn save_s3_storage(
 ) -> StorageResult<StorageVolume> {
     service.save_s3_storage(volume_id, input).await
 }
-#[tauri::command]
 async fn test_s3_connection(
     service: State<'_, StorageService>,
     volume_id: Option<uuid::Uuid>,
@@ -39,7 +43,6 @@ async fn test_s3_connection(
 ) -> StorageResult<()> {
     service.test_s3_connection(volume_id, input).await
 }
-#[tauri::command]
 async fn transfer_local_file(
     app: tauri::AppHandle,
     service: State<'_, StorageService>,
@@ -108,23 +111,14 @@ async fn transfer_local_file(
     Ok(Some(batch))
 }
 
-#[derive(serde::Serialize)]
-struct FileTransferBatch {
-    jobs: Vec<TransferJob>,
-    failures: Vec<String>,
-}
-
-#[tauri::command]
 async fn list_connections(
     service: State<'_, StorageService>,
 ) -> StorageResult<Vec<StorageConnection>> {
     service.list_connections().await
 }
-#[tauri::command]
 async fn list_volumes(service: State<'_, StorageService>) -> StorageResult<Vec<VolumeView>> {
     service.list_volumes().await
 }
-#[tauri::command]
 async fn create_local_storage(
     app: tauri::AppHandle,
     service: State<'_, StorageService>,
@@ -149,14 +143,12 @@ async fn create_local_storage(
         .await
         .map(Some)
 }
-#[tauri::command]
 async fn list_entries(
     service: State<'_, StorageService>,
     parent: StorageLocator,
 ) -> StorageResult<Vec<StorageEntry>> {
     service.list_entries(parent).await
 }
-#[tauri::command]
 async fn update_local_storage(
     app: tauri::AppHandle,
     service: State<'_, StorageService>,
@@ -190,7 +182,6 @@ async fn update_local_storage(
         .await
         .map(Some)
 }
-#[tauri::command]
 async fn start_transfer(
     service: State<'_, StorageService>,
     kind: TransferKind,
@@ -211,18 +202,15 @@ async fn start_transfer(
         )
         .await
 }
-#[tauri::command]
 async fn list_transfers(service: State<'_, StorageService>) -> StorageResult<Vec<TransferJob>> {
     service.list_transfers().await
 }
-#[tauri::command]
 async fn cancel_transfer(
     service: State<'_, StorageService>,
     job_id: uuid::Uuid,
 ) -> StorageResult<()> {
     service.cancel_transfer(job_id).await
 }
-#[tauri::command]
 async fn remove_local_storage(
     service: State<'_, StorageService>,
     volume_id: uuid::Uuid,
@@ -230,7 +218,6 @@ async fn remove_local_storage(
 ) -> StorageResult<()> {
     service.remove_local_storage(volume_id, confirmed).await
 }
-#[tauri::command]
 async fn list_entries_page(
     service: State<'_, StorageService>,
     parent: StorageLocator,
@@ -242,14 +229,12 @@ async fn list_entries_page(
         .list_entries_page(parent, options, cursor, limit.unwrap_or(200))
         .await
 }
-#[tauri::command]
 async fn stat_entry(
     service: State<'_, StorageService>,
     locator: StorageLocator,
 ) -> StorageResult<StorageEntry> {
     service.stat_entry(locator).await
 }
-#[tauri::command]
 async fn create_directory(
     service: State<'_, StorageService>,
     parent: StorageLocator,
@@ -257,7 +242,6 @@ async fn create_directory(
 ) -> StorageResult<()> {
     service.create_directory(parent, name).await
 }
-#[tauri::command]
 async fn rename_entry(
     service: State<'_, StorageService>,
     source: StorageLocator,
@@ -268,14 +252,12 @@ async fn rename_entry(
         .rename_entry_with_policy(source, name, conflict_policy.unwrap_or_default())
         .await
 }
-#[tauri::command]
 async fn open_entry(
     service: State<'_, StorageService>,
     locator: StorageLocator,
 ) -> StorageResult<()> {
     service.open_entry(locator).await
 }
-#[tauri::command]
 async fn delete_entry(
     service: State<'_, StorageService>,
     locator: StorageLocator,
@@ -288,7 +270,6 @@ async fn delete_entry(
         .await
 }
 
-#[tauri::command]
 async fn preview_entry(
     service: State<'_, StorageService>,
     locator: StorageLocator,
@@ -296,14 +277,12 @@ async fn preview_entry(
 ) -> StorageResult<Preview> {
     service.preview_entry(locator, thumbnail).await
 }
-#[tauri::command]
 async fn directory_stamp(
     service: State<'_, StorageService>,
     parent: StorageLocator,
 ) -> StorageResult<String> {
     service.directory_stamp(parent).await
 }
-#[tauri::command]
 async fn start_content_search(
     service: State<'_, StorageService>,
     parent: StorageLocator,
@@ -314,7 +293,6 @@ async fn start_content_search(
         .start_content_search(parent, query, show_hidden)
         .await
 }
-#[tauri::command]
 async fn content_search_status(
     service: State<'_, StorageService>,
     id: uuid::Uuid,
@@ -322,13 +300,17 @@ async fn content_search_status(
 ) -> StorageResult<ContentSearch> {
     service.content_search_status(id, cancel).await
 }
-#[tauri::command]
 async fn manage_s3(
     service: State<'_, StorageService>,
     locator: StorageLocator,
     action: S3Action,
 ) -> StorageResult<serde_json::Value> {
     service.manage_s3(locator, action).await
+}
+
+async fn recent_backend_errors(reports: State<'_, errors::ErrorReports>) -> StorageResult<Vec<errors::BackendError>> {
+    Ok(reports.recent())
+}
 }
 
 fn main() {
@@ -357,6 +339,7 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            errors::install(app.handle().clone());
             let data = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data)?;
             let repository =
@@ -366,6 +349,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            recent_backend_errors,
             preview_entry,
             directory_stamp,
             start_content_search,
