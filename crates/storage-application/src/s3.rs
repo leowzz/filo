@@ -27,6 +27,9 @@ impl SelectedFileBackend {
 }
 #[async_trait::async_trait]
 impl StorageBackend for SelectedFileBackend {
+    fn storage_path(&self, locator: &StorageLocator) -> Option<(String, String)> {
+        self.inner.storage_path(locator)
+    }
     fn volume_id(&self) -> Uuid {
         self.inner.volume_id()
     }
@@ -167,7 +170,7 @@ impl StorageService {
         if let Some(id) = id {
             drop(self.idle_volume(id).await?);
         }
-        let _guard = self.mutation_lock.lock().await;
+        let _guard = self.mutation_lock.write().await;
         let _transfers = if let Some(id) = id {
             Some(self.idle_volume(id).await?)
         } else {

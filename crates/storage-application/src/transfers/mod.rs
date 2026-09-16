@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 pub type TransferObserver = Arc<dyn Fn(TransferJob) + Send + Sync>;
 mod execution;
+pub(crate) mod scheduler;
 
 #[cfg(test)]
 mod tests;
@@ -63,7 +64,7 @@ impl StorageService {
         if source.logical_path.is_empty() || destination.logical_path.is_empty() {
             return Err(StorageError::new(
                 StorageErrorCode::InvalidPath,
-                "请选择普通文件和目标文件名",
+                "请选择文件或文件夹，并填写目标名称",
             ));
         }
         plan(kind, &source, &destination)?;
@@ -79,6 +80,12 @@ impl StorageService {
         let source_backend = self.backend(source.volume_id).await?;
         let destination_backend = self.backend(destination.volume_id).await?;
         let entry = source_backend.stat(&source).await?;
+        crate::tree::check_overlap(
+            source_backend.as_ref(),
+            destination_backend.as_ref(),
+            &source,
+            &destination,
+        )?;
         check_permissions(
             kind,
             &entry,
@@ -136,15 +143,34 @@ impl StorageService {
         token: CancellationToken,
         observer: TransferObserver,
     ) {
-        // Local writes remain serialized. Queued jobs can be cancelled immediately.
-        let result = tokio::select! {
+        // Shared mutation access allows independent transfers; ordinary mutations
+        // retain exclusive access. Cancellation only interrupts preparation here:
+        // execution owns its commit boundary and reports the actual outcome.
+        let prepare = async {
+            let guard = self.mutation_lock.read().await;
+            let source = self.backend(job.source.volume_id).await?;
+            let destination = self.backend(job.destination.volume_id).await?;
+            let permit = self
+                .transfer_scheduler
+                .acquire(vec![
+                    scheduler::Access::new(
+                        source.as_ref(),
+                        &job.source,
+                        job.kind == TransferKind::Move,
+                    ),
+                    scheduler::Access::new(destination.as_ref(), &job.destination, true),
+                ])
+                .await;
+            Ok::<_, StorageError>((guard, permit))
+        };
+        let prepared = tokio::select! {
             biased;
             _ = token.cancelled() => Err(cancelled()),
-            guard = self.mutation_lock.lock() => {
-                let result = self.execute_transfer(&mut job, &token, &observer).await;
-                drop(guard);
-                result
-            }
+            result = prepare => result,
+        };
+        let result = match prepared {
+            Ok((_guard, _permit)) => self.execute_transfer(&mut job, &token, &observer).await,
+            Err(error) => Err(error),
         };
         match result {
             Ok(()) => job.state = TransferState::Completed,
@@ -177,10 +203,10 @@ fn check_permissions(
     source: &dyn StorageBackend,
     destination: &dyn StorageBackend,
 ) -> StorageResult<()> {
-    if entry.kind != StorageEntryKind::File {
+    if entry.kind != StorageEntryKind::File && !crate::tree::directory(entry) {
         return Err(StorageError::new(
             StorageErrorCode::Unsupported,
-            "当前只支持普通文件，暂不支持文件夹递归传输",
+            "仅支持普通文件和文件夹，符号链接不能传输",
         ));
     }
     if !destination.capabilities().write

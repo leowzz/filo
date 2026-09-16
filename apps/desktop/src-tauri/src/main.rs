@@ -7,6 +7,21 @@ use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
+async fn get_transfer_settings(
+    service: State<'_, StorageService>,
+) -> StorageResult<TransferSettings> {
+    service.transfer_settings().await
+}
+
+#[tauri::command]
+async fn save_transfer_settings(
+    service: State<'_, StorageService>,
+    settings: TransferSettings,
+) -> StorageResult<TransferSettings> {
+    service.save_transfer_settings(settings).await
+}
+
+#[tauri::command]
 async fn save_s3_storage(
     service: State<'_, StorageService>,
     volume_id: Option<uuid::Uuid>,
@@ -29,7 +44,7 @@ async fn transfer_local_file(
     remote: StorageLocator,
     upload: bool,
     on_progress: tauri::ipc::Channel<TransferJob>,
-) -> StorageResult<Option<TransferJob>> {
+) -> StorageResult<Option<FileTransferBatch>> {
     // Authorize the remote locator before opening any native picker.
     let entry = service.stat_entry(remote.clone()).await?;
     let name = entry.name;
@@ -38,13 +53,14 @@ async fn transfer_local_file(
             app.dialog()
                 .file()
                 .set_title("选择上传文件")
-                .blocking_pick_file()
+                .blocking_pick_files()
         } else {
             app.dialog()
                 .file()
                 .set_title("保存下载文件")
                 .set_file_name(name)
                 .blocking_save_file()
+                .map(|file| vec![file])
         }
     })
     .await
@@ -52,20 +68,46 @@ async fn transfer_local_file(
     let Some(selected) = selected else {
         return Ok(None);
     };
-    let path = selected
-        .into_path()
-        .map_err(|_| StorageError::new(StorageErrorCode::InvalidPath, "请选择本地文件"))?;
-    service
-        .transfer_selected_file(
-            path,
-            remote,
-            upload,
-            std::sync::Arc::new(move |job| {
-                let _ = on_progress.send(job);
-            }),
-        )
-        .await
-        .map(Some)
+    let mut batch = FileTransferBatch {
+        jobs: Vec::new(),
+        failures: Vec::new(),
+    };
+    for selected in selected {
+        let path = match selected.into_path() {
+            Ok(path) => path,
+            Err(_) => {
+                batch.failures.push("无法读取所选文件路径".into());
+                continue;
+            }
+        };
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let on_progress = on_progress.clone();
+        match service
+            .transfer_selected_file(
+                path,
+                remote.clone(),
+                upload,
+                std::sync::Arc::new(move |job| {
+                    let _ = on_progress.send(job);
+                }),
+            )
+            .await
+        {
+            Ok(job) => batch.jobs.push(job),
+            Err(error) => batch.failures.push(format!("{name}：{}", error.message)),
+        }
+    }
+    Ok(Some(batch))
+}
+
+#[derive(serde::Serialize)]
+struct FileTransferBatch {
+    jobs: Vec<TransferJob>,
+    failures: Vec<String>,
 }
 
 #[tauri::command]
@@ -218,8 +260,11 @@ async fn delete_entry(
     locator: StorageLocator,
     mode: DeleteMode,
     confirmed: bool,
+    recursive: Option<bool>,
 ) -> StorageResult<DeleteOutcome> {
-    service.delete_entry(locator, mode, confirmed).await
+    service
+        .delete_entry_recursive(locator, mode, confirmed, recursive.unwrap_or(false))
+        .await
 }
 
 fn main() {
@@ -240,6 +285,8 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_transfer_settings,
+            save_transfer_settings,
             save_s3_storage,
             test_s3_connection,
             transfer_local_file,

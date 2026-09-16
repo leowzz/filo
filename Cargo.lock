@@ -1082,6 +1082,7 @@ dependencies = [
 name = "filo-desktop"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "storage-application",
  "storage-domain",
  "storage-repository",

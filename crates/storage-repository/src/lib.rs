@@ -16,6 +16,22 @@ fn database_error(_: impl std::fmt::Display) -> StorageError {
 }
 
 impl Repository {
+    pub async fn transfer_settings(&self) -> StorageResult<TransferSettings> {
+        let row = sqlx::query("SELECT upload_kib_per_second, download_kib_per_second FROM transfer_settings WHERE id = 1")
+            .fetch_one(&self.pool).await.map_err(database_error)?;
+        Ok(TransferSettings {
+            upload_kib_per_second: row.get::<i64, _>("upload_kib_per_second") as u32,
+            download_kib_per_second: row.get::<i64, _>("download_kib_per_second") as u32,
+        })
+    }
+
+    pub async fn save_transfer_settings(&self, settings: TransferSettings) -> StorageResult<()> {
+        settings.validate()?;
+        sqlx::query("UPDATE transfer_settings SET upload_kib_per_second = ?, download_kib_per_second = ? WHERE id = 1")
+            .bind(i64::from(settings.upload_kib_per_second)).bind(i64::from(settings.download_kib_per_second))
+            .execute(&self.pool).await.map_err(database_error)?;
+        Ok(())
+    }
     pub async fn open(path: &Path) -> StorageResult<Self> {
         let options = SqliteConnectOptions::new()
             .filename(path)
@@ -229,6 +245,38 @@ impl Repository {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn transfer_limits_default_to_unlimited_and_survive_reopening() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("limits.db");
+        let repo = Repository::open(&path).await.unwrap();
+        assert_eq!(
+            repo.transfer_settings().await.unwrap(),
+            TransferSettings::default()
+        );
+        let settings = TransferSettings {
+            upload_kib_per_second: 1024,
+            download_kib_per_second: 2048,
+        };
+        repo.save_transfer_settings(settings).await.unwrap();
+        assert!(repo
+            .save_transfer_settings(TransferSettings {
+                upload_kib_per_second: u32::MAX,
+                ..settings
+            })
+            .await
+            .is_err());
+        repo.pool.close().await;
+        let repo = Repository::open(&path).await.unwrap();
+        assert_eq!(repo.transfer_settings().await.unwrap(), settings);
+        repo.save_transfer_settings(TransferSettings::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.transfer_settings().await.unwrap(),
+            TransferSettings::default()
+        );
+    }
     #[tokio::test]
     async fn reopening_marks_unfinished_transfers_interrupted() {
         let dir = tempfile::tempdir().unwrap();

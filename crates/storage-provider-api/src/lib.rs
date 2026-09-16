@@ -2,6 +2,8 @@ use std::pin::Pin;
 use storage_domain::*;
 use tokio::io::AsyncRead;
 use uuid::Uuid;
+mod rate_limit;
+pub use rate_limit::{RateLimit, TransferLimits};
 
 pub type StorageReader = Pin<Box<dyn AsyncRead + Send + Unpin>>;
 
@@ -17,9 +19,20 @@ pub trait StagedWrite: Send {
 /// Provider-independent browsing, mutation and staged streaming operations.
 #[async_trait::async_trait]
 pub trait StorageBackend: Send + Sync {
+    fn is_remote(&self) -> bool {
+        false
+    }
     fn volume_id(&self) -> Uuid;
     fn capabilities(&self) -> StorageCapabilities;
     async fn list(&self, parent: &StorageLocator) -> StorageResult<Vec<StorageEntry>>;
+    /// Mutation traversal must never silently skip unsupported or disappearing entries.
+    async fn list_for_mutation(&self, parent: &StorageLocator) -> StorageResult<Vec<StorageEntry>> {
+        self.list(parent).await
+    }
+    /// Physical namespace and path, used to detect overlapping connected roots.
+    fn storage_path(&self, _locator: &StorageLocator) -> Option<(String, String)> {
+        None
+    }
     async fn stat(&self, locator: &StorageLocator) -> StorageResult<StorageEntry>;
     async fn create_dir(&self, locator: &StorageLocator) -> StorageResult<()>;
     async fn rename(&self, source: &StorageLocator, target: &StorageLocator) -> StorageResult<()>;

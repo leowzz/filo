@@ -19,12 +19,14 @@ import {
   X,
 } from "lucide-react";
 import { useBrowser } from "./store";
+import { TransferTasksMenu } from "./TransferTasksMenu";
 import {
   isDirectory,
   type DeleteMode,
   type Entry,
   type Locator,
   type TransferKind,
+  type TransferJob,
   type Volume,
 } from "./types";
 
@@ -34,6 +36,7 @@ export function AppHeader({
   volume,
   path,
   selected,
+  selectedEntries,
   parent,
   search,
   setSearch,
@@ -48,10 +51,16 @@ export function AppHeader({
   onFileTransfer,
   onRefresh,
   isFetching,
+  transfers,
+  uploadIds,
+  transfersLoading,
+  transfersError,
+  onRetryTransfers,
 }: {
   volume?: Volume;
   path: string;
   selected?: Entry;
+  selectedEntries: Entry[];
   parent: Locator;
   search: string;
   setSearch: (search: string) => void;
@@ -61,13 +70,21 @@ export function AppHeader({
   transferPending: boolean;
   openEntry: (entry: Entry) => void;
   openDialog: (dialog: Dialog) => void;
-  setTransferDialog: (dialog: { entry: Entry; kind: TransferKind }) => void;
-  setDeleteDialog: (dialog: { entry: Entry; mode: DeleteMode }) => void;
+  setTransferDialog: (dialog: { entries: Entry[]; kind: TransferKind }) => void;
+  setDeleteDialog: (dialog: { entries: Entry[]; mode: DeleteMode }) => void;
   onFileTransfer: (request: { remote: Locator; upload: boolean }) => void;
   onRefresh: () => void;
   isFetching: boolean;
+  transfers: TransferJob[];
+  uploadIds: Set<string>;
+  transfersLoading: boolean;
+  transfersError: boolean;
+  onRetryTransfers: () => void;
 }) {
   const state = useBrowser();
+  const canOperate =
+    selectedEntries.length > 0 &&
+    selectedEntries.every((entry) => entry.kind !== "symlink");
   return (
     <header className="topbar" data-tauri-drag-region>
       <div className="topbar-title" data-tauri-drag-region>
@@ -183,7 +200,7 @@ export function AppHeader({
             aria-label="重命名"
             disabled={
               !selected ||
-              selected.kind !== "file" ||
+              selected.kind === "symlink" ||
               volume.capabilities.rename === "unsupported"
             }
             onClick={() =>
@@ -196,9 +213,10 @@ export function AppHeader({
             className="icon-button"
             title="复制到…"
             aria-label="复制到"
-            disabled={selected?.kind !== "file"}
+            disabled={!canOperate}
             onClick={() =>
-              selected && setTransferDialog({ entry: selected, kind: "copy" })
+              canOperate &&
+              setTransferDialog({ entries: selectedEntries, kind: "copy" })
             }
           >
             <Copy size={18} />
@@ -207,9 +225,10 @@ export function AppHeader({
             className="icon-button"
             title="移动到…"
             aria-label="移动到"
-            disabled={selected?.kind !== "file" || volume.read_only}
+            disabled={!canOperate || volume.read_only}
             onClick={() =>
-              selected && setTransferDialog({ entry: selected, kind: "move" })
+              canOperate &&
+              setTransferDialog({ entries: selectedEntries, kind: "move" })
             }
           >
             <FolderInput size={18} />
@@ -218,13 +237,10 @@ export function AppHeader({
             className="icon-button"
             title={volume.capabilities.trash ? "移入回收站" : "删除"}
             aria-label={volume.capabilities.trash ? "移入回收站" : "删除"}
-            disabled={
-              !selected ||
-              selected.kind === "symlink" ||
-              !volume.capabilities.delete
-            }
+            disabled={!canOperate || !volume.capabilities.delete}
             onClick={() =>
-              selected && setDeleteDialog({ entry: selected, mode: "default" })
+              canOperate &&
+              setDeleteDialog({ entries: selectedEntries, mode: "default" })
             }
           >
             <Trash2 size={18} />
@@ -281,6 +297,14 @@ export function AppHeader({
           <Plus size={21} />
         </button>
       )}
+      <TransferTasksMenu
+        jobs={transfers}
+        uploadIds={uploadIds}
+        loading={transfersLoading}
+        error={transfersError}
+        onRetry={onRetryTransfers}
+        onViewAll={() => state.setPage("transfers")}
+      />
     </header>
   );
 }

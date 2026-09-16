@@ -263,6 +263,90 @@ async fn rustfs_roundtrip_and_safety() {
         .unwrap();
     assert_eq!(wait(&service, job).await.state, TransferState::Completed);
 
+    // Recursive folders preserve hidden files and empty prefixes in both directions.
+    std::fs::create_dir_all(local_dir.path().join("tree/sub/empty")).unwrap();
+    std::fs::write(local_dir.path().join("tree/.hidden"), b"hidden").unwrap();
+    std::fs::write(local_dir.path().join("tree/sub/file"), b"nested").unwrap();
+    let copied = transfer(
+        &service,
+        TransferKind::Copy,
+        locator(&local, "tree"),
+        locator(&remote, "tree"),
+    )
+    .await;
+    assert_eq!(
+        copied.state,
+        TransferState::Completed,
+        "{:?}",
+        copied.error_message
+    );
+    assert!(service
+        .stat_entry(locator(&remote, "tree/sub/empty"))
+        .await
+        .is_ok());
+    service
+        .rename_entry(locator(&remote, "tree"), "renamed-tree".into())
+        .await
+        .unwrap();
+    assert!(service
+        .list_entries(locator(&remote, "tree"))
+        .await
+        .unwrap()
+        .is_empty());
+    let mut nested_input = input.clone();
+    nested_input.prefix.push_str("/renamed-tree/sub");
+    let nested = service.save_s3_storage(None, nested_input).await.unwrap();
+    assert!(service
+        .start_transfer(
+            TransferKind::Copy,
+            locator(&remote, "renamed-tree"),
+            locator(&nested, "inside"),
+            Arc::new(|_| {})
+        )
+        .await
+        .is_err());
+    service.remove_local_storage(nested.id, true).await.unwrap();
+    let moved = transfer(
+        &service,
+        TransferKind::Move,
+        locator(&remote, "renamed-tree"),
+        locator(&other, "tree"),
+    )
+    .await;
+    assert_eq!(
+        moved.state,
+        TransferState::Completed,
+        "{:?}",
+        moved.error_message
+    );
+    let download = transfer(
+        &service,
+        TransferKind::Copy,
+        locator(&other, "tree"),
+        locator(&local, "downloaded-tree"),
+    )
+    .await;
+    assert_eq!(
+        download.state,
+        TransferState::Completed,
+        "{:?}",
+        download.error_message
+    );
+    assert_eq!(
+        std::fs::read(local_dir.path().join("downloaded-tree/sub/file")).unwrap(),
+        b"nested"
+    );
+    assert!(local_dir.path().join("downloaded-tree/sub/empty").is_dir());
+    service
+        .delete_entry_recursive(locator(&other, "tree"), DeleteMode::Permanent, true, true)
+        .await
+        .unwrap();
+    assert!(service
+        .list_entries(locator(&other, "tree"))
+        .await
+        .unwrap()
+        .is_empty());
+
     // Root protection, path traversal, read-only enforcement, and keychain reference rotation.
     assert!(service
         .delete_entry(locator(&remote, ""), DeleteMode::Permanent, true)

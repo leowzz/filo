@@ -1,10 +1,8 @@
-.PHONY: dev build demo check test
+.PHONY: dev build check test
 dev:
 	pnpm dev
 build:
 	pnpm --filter @filo/desktop tauri build
-demo:
-	node scripts/build-demo.mjs
 check:
 	pnpm check
 	pnpm lint

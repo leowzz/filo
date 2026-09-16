@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@11.9.0",
   "scripts": {
-    "dev": "pnpm --filter @filo/desktop tauri dev",
+    "dev": "node scripts/dev.mjs",
     "dev:web": "pnpm --filter @filo/desktop dev",
     "build": "pnpm --filter @filo/desktop build",
     "check": "pnpm --filter @filo/desktop check",

@@ -195,3 +195,13 @@
   margin-top: 1px;
   color: #1683df;
 }
+
+.batch-items {
+  max-height: 160px;
+  overflow: auto;
+  padding-left: 22px;
+  margin: 12px 0;
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}

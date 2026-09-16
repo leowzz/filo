@@ -154,6 +154,46 @@ impl StorageBackend for OpenDalLocalBackend {
         StorageCapabilities::local(self.read_only)
     }
 
+    fn storage_path(&self, locator: &StorageLocator) -> Option<(String, String)> {
+        let path = self
+            .root
+            .join(&locator.logical_path)
+            .to_string_lossy()
+            .into_owned();
+        // Conservatively protect aliases on the default case-insensitive macOS filesystem.
+        Some((
+            "local".into(),
+            if cfg!(target_os = "macos") {
+                path.to_lowercase()
+            } else {
+                path
+            },
+        ))
+    }
+
+    async fn list_for_mutation(&self, parent: &StorageLocator) -> StorageResult<Vec<StorageEntry>> {
+        let logical = self.check_locator(parent)?;
+        let path = self.checked_path(&logical, false).await?;
+        let mut reader = tokio::fs::read_dir(path).await.map_err(io_error)?;
+        let mut entries = Vec::new();
+        while let Some(item) = reader.next_entry().await.map_err(io_error)? {
+            let name = item.file_name().into_string().map_err(|_| {
+                StorageError::new(
+                    StorageErrorCode::Unsupported,
+                    "文件夹包含无法识别的文件名，操作已停止",
+                )
+            })?;
+            validate_name(&name)?;
+            let child = if logical.is_empty() {
+                name
+            } else {
+                format!("{logical}/{name}")
+            };
+            entries.push(self.entry(&child, &item.path()).await?);
+        }
+        Ok(entries)
+    }
+
     async fn open(&self, locator: &StorageLocator) -> StorageResult<()> {
         let path = self.open_path(locator).await?;
         tokio::task::spawn_blocking(move || {
@@ -269,10 +309,9 @@ impl StorageBackend for OpenDalLocalBackend {
         let logical = self.check_locator(locator)?;
         self.writable(&logical)?;
         self.require_absent(&logical).await?;
-        self.operator
-            .create_dir(&format!("{logical}/"))
+        tokio::fs::create_dir(self.checked_path(&logical, true).await?)
             .await
-            .map_err(provider_error)
+            .map_err(io_error)
     }
 
     async fn rename(&self, source: &StorageLocator, target: &StorageLocator) -> StorageResult<()> {
@@ -281,10 +320,19 @@ impl StorageBackend for OpenDalLocalBackend {
         self.writable(&source_path)?;
         self.writable(&target_path)?;
         self.checked_path(&source_path, false).await?;
-        if self.stat(source).await?.kind != StorageEntryKind::File {
+        if !matches!(
+            self.stat(source).await?.kind,
+            StorageEntryKind::File | StorageEntryKind::Directory
+        ) {
             return Err(StorageError::new(
                 StorageErrorCode::Unsupported,
-                "初版只支持重命名普通文件",
+                "仅支持重命名普通文件和文件夹",
+            ));
+        }
+        if target_path.starts_with(&format!("{source_path}/")) {
+            return Err(StorageError::new(
+                StorageErrorCode::InvalidPath,
+                "不能将文件夹移入自身内部",
             ));
         }
         self.require_absent(&target_path).await?;
@@ -300,10 +348,10 @@ impl StorageBackend for OpenDalLocalBackend {
         self.checked_path(&logical, false).await?;
         let entry = self.stat(locator).await?;
         let path = if entry.kind == StorageEntryKind::Directory {
-            if !self.list(locator).await?.is_empty() {
+            if !self.list_for_mutation(locator).await?.is_empty() {
                 return Err(StorageError::new(
                     StorageErrorCode::Unsupported,
-                    "初版只允许删除空目录，请先移出目录内文件",
+                    "文件夹仍有内容，未删除该文件夹",
                 ));
             }
             format!("{logical}/")

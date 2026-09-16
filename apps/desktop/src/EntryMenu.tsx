@@ -18,6 +18,7 @@ import {
 
 export function EntryMenu({
   entry,
+  entries,
   volume,
   position,
   onClose,
@@ -28,6 +29,7 @@ export function EntryMenu({
   onDelete,
 }: {
   entry: Entry;
+  entries: Entry[];
   volume: Volume;
   position: { x: number; y: number; trigger: HTMLElement };
   onClose: () => void;
@@ -94,13 +96,20 @@ export function EntryMenu({
     action();
   };
   const canOpen =
-    isDirectory(entry) ||
-    (entry.kind === "file" && volume.capabilities.native_open);
+    entries.length === 1 &&
+    (isDirectory(entry) ||
+      (entry.kind === "file" && volume.capabilities.native_open));
+  const canOperate =
+    entries.length > 0 && entries.every((item) => item.kind !== "symlink");
   return (
     <div
       ref={ref}
       role="menu"
-      aria-label={`${entry.name} 操作菜单`}
+      aria-label={
+        entries.length > 1
+          ? `${entries.length} 项操作菜单`
+          : `${entry.name} 操作菜单`
+      }
       className="entry-menu"
       style={{
         left: Math.max(8, Math.min(position.x, window.innerWidth - 208)),
@@ -116,11 +125,15 @@ export function EntryMenu({
         <ExternalLink size={14} />
         {isDirectory(entry) ? "打开文件夹" : "打开"}
       </button>
-      <button role="menuitem" onClick={() => perform(onDetails)}>
+      <button
+        role="menuitem"
+        disabled={entries.length !== 1}
+        onClick={() => perform(onDetails)}
+      >
         <Info size={14} />
         显示简介
       </button>
-      {entry.kind === "file" && (
+      {canOperate && (
         <>
           <div className="menu-separator" />
           <button
@@ -140,7 +153,10 @@ export function EntryMenu({
           </button>
           <button
             role="menuitem"
-            disabled={volume.capabilities.rename === "unsupported"}
+            disabled={
+              entries.length !== 1 ||
+              volume.capabilities.rename === "unsupported"
+            }
             onClick={() => perform(onRename)}
           >
             <Pencil size={14} />
@@ -148,7 +164,7 @@ export function EntryMenu({
           </button>
         </>
       )}
-      {entry.kind !== "symlink" && (
+      {canOperate && (
         <>
           <div className="menu-separator" />
           <button
@@ -166,7 +182,7 @@ export function EntryMenu({
             onClick={() => perform(() => onDelete("permanent"))}
           >
             <X size={14} />
-            强制删除…
+            永久删除…
           </button>
         </>
       )}

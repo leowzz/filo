@@ -1,9 +1,9 @@
 use provider_opendal::{OpenDalLocalBackend, OpenDalS3Backend};
 use std::sync::Arc;
 use storage_domain::*;
-use storage_provider_api::StorageBackend;
+use storage_provider_api::{StorageBackend, TransferLimits};
 use storage_repository::Repository;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OnceCell, RwLock};
 use uuid::Uuid;
 mod credentials;
 mod entries;
@@ -13,6 +13,7 @@ mod volumes;
 pub use credentials::{CredentialStore, SystemCredentialStore};
 mod operation_planner;
 mod transfers;
+mod tree;
 pub use transfers::TransferObserver;
 
 #[derive(serde::Serialize)]
@@ -25,7 +26,10 @@ pub struct VolumeView {
 #[derive(Clone)]
 pub struct StorageService {
     repository: Repository,
-    mutation_lock: Arc<Mutex<()>>,
+    mutation_lock: Arc<RwLock<()>>,
+    transfer_scheduler: Arc<transfers::scheduler::TransferScheduler>,
+    transfer_limits: Arc<OnceCell<Arc<TransferLimits>>>,
+    settings_lock: Arc<Mutex<()>>,
     credentials: Arc<dyn CredentialStore>,
     temporary_backends: Arc<Mutex<std::collections::HashMap<Uuid, Arc<dyn StorageBackend>>>>,
     transfers: Arc<Mutex<std::collections::HashMap<Uuid, transfers::ActiveTransfer>>>,
@@ -41,7 +45,10 @@ impl StorageService {
             credentials,
             temporary_backends: Arc::new(Mutex::new(std::collections::HashMap::new())),
             repository,
-            mutation_lock: Arc::new(Mutex::new(())),
+            mutation_lock: Arc::new(RwLock::new(())),
+            transfer_scheduler: Arc::new(transfers::scheduler::TransferScheduler::default()),
+            transfer_limits: Arc::new(OnceCell::new()),
+            settings_lock: Arc::new(Mutex::new(())),
             transfers: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
@@ -67,12 +74,38 @@ impl StorageService {
                 let config = serde_json::from_value(connection.config).map_err(|_| {
                     StorageError::new(StorageErrorCode::InvalidConfiguration, "S3 配置损坏")
                 })?;
-                Ok(Arc::new(OpenDalS3Backend::new(
-                    &volume,
-                    &config,
-                    &credentials,
-                )?))
+                Ok(Arc::new(
+                    OpenDalS3Backend::new(&volume, &config, &credentials)?
+                        .with_transfer_limits(self.transfer_limits().await?),
+                ))
             }
         }
+    }
+
+    async fn transfer_limits(&self) -> StorageResult<Arc<TransferLimits>> {
+        self.transfer_limits
+            .get_or_try_init(|| async {
+                let limits = Arc::new(TransferLimits::default());
+                limits.update(self.repository.transfer_settings().await?);
+                Ok(limits)
+            })
+            .await
+            .cloned()
+    }
+
+    pub async fn transfer_settings(&self) -> StorageResult<TransferSettings> {
+        self.repository.transfer_settings().await
+    }
+
+    pub async fn save_transfer_settings(
+        &self,
+        settings: TransferSettings,
+    ) -> StorageResult<TransferSettings> {
+        settings.validate()?;
+        let _guard = self.settings_lock.lock().await;
+        let limits = self.transfer_limits().await?;
+        self.repository.save_transfer_settings(settings).await?;
+        limits.update(settings);
+        Ok(settings)
     }
 }

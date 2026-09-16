@@ -1,0 +1,60 @@
+// Run with Vite: ego-browser nodejs < scripts/test-transfer-settings.mjs
+const assert = (await import("node:assert/strict")).default;
+const task = await taskSpace(globalThis.filoTestSpace ?? "Filo transfer speed settings");
+console.log({ spaceId: task.spaceId });
+const page = task.page("p1");
+await page.cdp("Page.addScriptToEvaluateOnNewDocument", { source: `(() => {
+  window.isTauri = true;
+  window.settingsCalls = [];
+  window.failSave = false;
+  window.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
+    if (command === 'list_volumes' || command === 'list_transfers') return [];
+    if (command === 'get_transfer_settings') return JSON.parse(sessionStorage.getItem('filo-test-limits') || '{"upload_kib_per_second":0,"download_kib_per_second":0}');
+    if (command === 'save_transfer_settings') {
+      window.settingsCalls.push(args.settings);
+      if (window.failSave) throw {message:'测试保存失败，请重试'};
+      sessionStorage.setItem('filo-test-limits', JSON.stringify(args.settings));
+      return args.settings;
+    }
+    throw new Error('Unexpected IPC: ' + command);
+  }};
+})();` });
+await page.goto("http://127.0.0.1:1420");
+await page.waitForSelector('.sidebar-bottom button');
+await page.click('.sidebar-bottom button');
+await page.waitForSelector('#upload-speed');
+assert.equal(await page.evaluate(() => document.querySelector('#upload-speed').value), '0');
+assert.equal(await page.evaluate(() => document.querySelector('#download-speed').value), '0');
+await page.fill('#upload-speed', '1024');
+await page.fill('#download-speed', '2048');
+await page.click('button:text-is("保存速度设置")');
+await page.waitForSelector('.transfer-settings-saved');
+assert.deepEqual(await page.evaluate(() => window.settingsCalls.at(-1)), {upload_kib_per_second:1024,download_kib_per_second:2048});
+await page.reload();
+await page.waitForSelector('.sidebar-bottom button');
+await page.click('.sidebar-bottom button');
+await page.waitForSelector('#upload-speed');
+assert.equal(await page.evaluate(() => document.querySelector('#upload-speed').value), '1024');
+assert.equal(await page.evaluate(() => document.querySelector('#download-speed').value), '2048');
+await page.fill('#upload-speed', '-1');
+assert.equal(await page.evaluate(() => document.querySelector('.transfer-settings-actions button.primary').disabled), true);
+await page.fill('#upload-speed', '1.5');
+assert.equal(await page.evaluate(() => document.querySelector('.transfer-settings-actions button.primary').disabled), true);
+await page.fill('#upload-speed', '1048577');
+assert.equal(await page.evaluate(() => document.querySelector('.transfer-settings-actions button.primary').disabled), true);
+await page.fill('#upload-speed', '512');
+await page.evaluate(() => window.failSave = true);
+await page.click('button:text-is("保存速度设置")');
+await page.waitForSelector('.settings-card [role="alert"]');
+assert.match(await page.evaluate(() => document.querySelector('.settings-card [role="alert"]').textContent), /测试保存失败/);
+assert.equal(await page.evaluate(() => document.querySelector('#upload-speed').value), '512');
+await page.evaluate(() => window.failSave = false);
+await page.click('button:text-is("恢复不限速")');
+assert.equal(await page.evaluate(() => document.querySelector('#upload-speed').value), '0');
+assert.equal(await page.evaluate(() => document.querySelector('#download-speed').value), '0');
+await page.click('button:text-is("保存速度设置")');
+await page.waitForSelector('.transfer-settings-saved');
+assert.deepEqual(await page.evaluate(() => window.settingsCalls.at(-1)), {upload_kib_per_second:0,download_kib_per_second:0});
+console.log(await page.snapshot());
+console.log('PASS: unlimited defaults, independent values, reload, numeric validation, failed-save recovery, restore unlimited');
+await task.finish({keep: []});

@@ -1,6 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Info, X } from "lucide-react";
-import { useCallback, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
+import { updateTransfer } from "./transferPresentation";
 import { api, desktop, errorMessage } from "./api";
 import { DeleteEntryDialog } from "./DeleteEntryDialog";
 import { EditLocationDialog } from "./EditLocationDialog";
@@ -46,6 +53,31 @@ export default function App() {
   });
   const pendingTransfers =
     transfersQuery.data?.filter(activeTransfer).length ?? 0;
+  const [uploadIds, setUploadIds] = useState<Set<string>>(() => new Set());
+  const previousTransfers = useRef<TransferJob[] | undefined>(undefined);
+  useEffect(() => {
+    const jobs = transfersQuery.data;
+    if (!jobs) return;
+    const previous = previousTransfers.current;
+    previousTransfers.current = jobs;
+    if (!previous) return;
+    const completedIds = new Set(
+      previous.filter((job) => job.state === "completed").map((job) => job.id),
+    );
+    for (const job of jobs) {
+      if (job.state !== "completed" || completedIds.has(job.id)) continue;
+      const refreshParent = (locator: Locator) =>
+        client.invalidateQueries({
+          queryKey: [
+            "entries",
+            locator.volume_id,
+            locator.logical_path.split("/").slice(0, -1).join("/"),
+          ],
+        });
+      void refreshParent(job.destination);
+      if (job.kind === "move") void refreshParent(job.source);
+    }
+  }, [client, transfersQuery.data]);
   const location = state.history[state.index];
   const volume = volumes.find((item) => item.id === location?.volumeId);
   const path = location?.path ?? "";
@@ -72,7 +104,7 @@ export default function App() {
     trigger: HTMLElement;
   } | null>(null);
   const [deleteDialog, setDeleteDialog] = useState<{
-    entry: Entry;
+    entries: Entry[];
     mode: DeleteMode;
   } | null>(null);
   const closeEntryMenu = useCallback(() => setMenu(null), []);
@@ -83,7 +115,7 @@ export default function App() {
   const [editingLocation, setEditingLocation] = useState<Volume | null>(null);
   const [removingLocation, setRemovingLocation] = useState<Volume | null>(null);
   const [transferDialog, setTransferDialog] = useState<{
-    entry: Entry;
+    entries: Entry[];
     kind: TransferKind;
   } | null>(null);
   const closeLocationMenu = useCallback(() => setLocationMenu(null), []);
@@ -123,12 +155,13 @@ export default function App() {
       if (dialog?.type === "rename")
         return api.rename(dialog.entry.locator, name);
     },
+    onSettled: () => client.invalidateQueries({ queryKey: ["entries"] }),
     onSuccess: async (added) => {
       await client.invalidateQueries({ queryKey: ["volumes"] });
       await client.invalidateQueries({ queryKey: ["entries"] });
       if (added) navigate(added.id, "");
       if (dialog?.type !== "add")
-        setNotice(dialog?.type === "rename" ? "文件已重命名" : "文件夹已创建");
+        setNotice(dialog?.type === "rename" ? "已重命名" : "文件夹已创建");
       setDialog(null);
       setSelection(null);
     },
@@ -162,17 +195,27 @@ export default function App() {
   const fileTransfer = useMutation({
     mutationFn: ({ remote, upload }: { remote: Locator; upload: boolean }) =>
       api.transferLocalFile(remote, upload, (job) => {
-        client.setQueryData<TransferJob[]>(["transfers"], (current) => [
-          job,
-          ...(current ?? []).filter((item) => item.id !== job.id),
-        ]);
-        if (!activeTransfer(job))
-          void client.invalidateQueries({ queryKey: ["entries"] });
+        if (upload)
+          setUploadIds((current) =>
+            current.has(job.id) ? current : new Set([...current, job.id]),
+          );
+        client.setQueryData<TransferJob[]>(["transfers"], (current) =>
+          updateTransfer(current, job),
+        );
       }),
-    onSuccess: (job) => {
-      if (job) {
+    onSuccess: (batch, { upload }) => {
+      if (batch) {
+        if (upload)
+          setUploadIds(
+            (current) =>
+              new Set([...current, ...batch.jobs.map((job) => job.id)]),
+          );
         void client.invalidateQueries({ queryKey: ["transfers"] });
-        state.setPage("transfers");
+        if (batch.failures.length)
+          setNotice(
+            `已提交 ${batch.jobs.length} 项，${batch.failures.length} 项未开始：${batch.failures.join("；")}`,
+          );
+        else if (!upload && batch.jobs.length) state.setPage("transfers");
       }
     },
     onError: (error) => setNotice(errorMessage(error)),
@@ -195,7 +238,8 @@ export default function App() {
     y: number,
     trigger: HTMLElement,
   ) {
-    setSelection(entry.locator.logical_path);
+    if (!selectedPaths.has(entry.locator.logical_path))
+      setSelection(entry.locator.logical_path);
     setMenuPosition({ x, y, trigger });
     setMenu(entry.locator.logical_path);
   }
@@ -220,6 +264,7 @@ export default function App() {
           volume={volume}
           path={path}
           selected={selected}
+          selectedEntries={selectedEntries}
           parent={parent}
           search={search}
           setSearch={setSearch}
@@ -239,6 +284,11 @@ export default function App() {
           onFileTransfer={fileTransfer.mutate}
           onRefresh={() => void entriesQuery.refetch()}
           isFetching={entriesQuery.isFetching}
+          transfers={transfersQuery.data ?? []}
+          uploadIds={uploadIds}
+          transfersLoading={transfersQuery.isPending}
+          transfersError={transfersQuery.isError}
+          onRetryTransfers={() => void transfersQuery.refetch()}
         />
 
         {volumesQuery.isError && (
@@ -301,14 +351,19 @@ export default function App() {
       {menuEntry && volume && menuPosition && (
         <EntryMenu
           entry={menuEntry}
+          entries={selectedEntries}
           volume={volume}
           position={menuPosition}
           onClose={closeEntryMenu}
           onOpen={() => openEntry(menuEntry)}
           onDetails={() => showDetails(menuEntry)}
           onRename={() => openDialog({ type: "rename", entry: menuEntry })}
-          onTransfer={(kind) => setTransferDialog({ entry: menuEntry, kind })}
-          onDelete={(mode) => setDeleteDialog({ entry: menuEntry, mode })}
+          onTransfer={(kind) =>
+            setTransferDialog({ entries: selectedEntries, kind })
+          }
+          onDelete={(mode) =>
+            setDeleteDialog({ entries: selectedEntries, mode })
+          }
         />
       )}
       {deleteDialog && volume && (
@@ -316,10 +371,8 @@ export default function App() {
           {...deleteDialog}
           volume={volume}
           onClose={() => setDeleteDialog(null)}
-          onDeleted={(outcome) => {
-            setNotice(
-              outcome === "trashed" ? "已移入系统回收站" : "已永久删除",
-            );
+          onDeleted={(message) => {
+            setNotice(message);
             setSelection(null);
             setDeleteDialog(null);
           }}

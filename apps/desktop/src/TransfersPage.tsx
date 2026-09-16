@@ -7,23 +7,14 @@ import {
   X,
 } from "lucide-react";
 import { api, errorMessage } from "./api";
-import { formatDate, formatSize } from "./components";
+import { formatDate } from "./components";
+import { TransferProgress } from "./TransferProgress";
 import {
-  activeTransfer,
-  type TransferJob,
-  type Volume,
-  type Locator,
-} from "./types";
-
-const labels: Record<TransferJob["state"], string> = {
-  queued: "等待中",
-  running: "传输中",
-  verifying: "校验中",
-  completed: "已完成",
-  failed: "失败",
-  cancelled: "已取消",
-  interrupted: "已中断",
-};
+  sortTransfers,
+  transferStateLabels,
+  transferSummary,
+} from "./transferPresentation";
+import { activeTransfer, type Volume, type Locator } from "./types";
 
 export function TransfersPage({ volumes }: { volumes: Volume[] }) {
   const client = useQueryClient();
@@ -39,10 +30,16 @@ export function TransfersPage({ volumes }: { volumes: Volume[] }) {
   });
   const locationName = (locator: Locator) =>
     `${volumes.find((volume) => volume.id === locator.volume_id)?.name ?? "所选文件或已移除的位置"} / ${locator.logical_path}`;
+  const summary = transferSummary(query.data ?? []);
   return (
     <div className="page-scroll simple-page transfers-page">
       <h1>传输任务</h1>
       <p className="muted">文件上传、下载、复制与移动 · 最近 200 项任务</p>
+      {summary.active.length > 0 && (
+        <p className="transfer-summary" role="status">
+          {summary.label}
+        </p>
+      )}
       {(query.isError || cancel.isError) && (
         <p className="error-text" role="alert">
           {errorMessage(query.error ?? cancel.error)}
@@ -60,13 +57,7 @@ export function TransfersPage({ volumes }: { volumes: Volume[] }) {
         </div>
       )}
       <div className="transfer-list">
-        {query.data?.map((job) => {
-          const percent =
-            job.state === "completed"
-              ? 100
-              : job.bytes_total
-                ? Math.min(100, (job.bytes_transferred / job.bytes_total) * 100)
-                : 0;
+        {sortTransfers(query.data ?? []).map((job) => {
           return (
             <article key={job.id} className="transfer-item">
               <div className="transfer-heading">
@@ -82,7 +73,7 @@ export function TransfersPage({ volumes }: { volumes: Volume[] }) {
                   {job.source.logical_path.split("/").at(-1)}
                 </strong>
                 <span className={`transfer-state ${job.state}`}>
-                  {labels[job.state]}
+                  {transferStateLabels[job.state]}
                 </span>
                 {activeTransfer(job) && (
                   <button
@@ -105,12 +96,8 @@ export function TransfersPage({ volumes }: { volumes: Volume[] }) {
               >
                 到 {locationName(job.destination)}
               </p>
-              <progress max={100} value={percent} aria-label="传输进度" />
+              <TransferProgress job={job} />
               <div className="transfer-meta">
-                <span>
-                  {formatSize(job.bytes_transferred)} /{" "}
-                  {formatSize(job.bytes_total)}
-                </span>
                 <time>{formatDate(job.created_at)}</time>
               </div>
               {job.error_message && (

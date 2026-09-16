@@ -134,3 +134,131 @@
   color: #999;
   font-size: 11px;
 }
+.transfer-tasks {
+  position: relative;
+  flex-shrink: 0;
+}
+.transfer-tasks-trigger {
+  white-space: nowrap;
+  font-size: 12px;
+}
+.transfer-tasks-trigger.is-active {
+  color: var(--accent);
+  background: #007aff0d;
+  padding-inline: 8px;
+}
+.transfer-tasks-popover {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 40;
+  width: min(380px, calc(100vw - 32px));
+  max-height: calc(100vh - 90px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #d8d8d8;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 36px #00000024, 0 2px 6px #0000000a;
+  overflow: hidden;
+  user-select: text;
+}
+.transfer-tasks-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.transfer-tasks-header h2 {
+  flex: 1;
+  font-size: 14px;
+}
+.transfer-tasks-header .muted {
+  font-size: 12px;
+}
+.transfer-tasks-list {
+  overflow-y: auto;
+  min-height: 0;
+}
+.transfer-tasks-list .transfer-item {
+  padding: 12px 14px;
+}
+.transfer-tasks-message {
+  padding: 20px 14px;
+  font-size: 12px;
+}
+.transfer-tasks-message button,
+.transfer-tasks-all {
+  color: var(--accent);
+}
+.transfer-tasks-error {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  margin-top: 8px;
+}
+.transfer-tasks-all {
+  flex-shrink: 0;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.transfer-tasks-all:hover {
+  background: #f5f8fc;
+}
+.transfer-summary {
+  margin-top: 12px;
+  color: var(--accent);
+  font-size: 12px;
+}
+.transfer-percent {
+  color: #666;
+  font-variant-numeric: tabular-nums;
+}
+.transfer-progress {
+  margin-bottom: 6px;
+}
+.transfer-progress.completed progress::-webkit-progress-value {
+  background: #348747;
+}
+.transfer-progress.failed progress::-webkit-progress-value {
+  background: #bc473d;
+}
+.transfer-progress.cancelled progress::-webkit-progress-value,
+.transfer-progress.interrupted progress::-webkit-progress-value {
+  background: #999;
+}
+.transfer-speed-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.transfer-settings-form > label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+}
+.settings-card .error-text {
+  color: #bc473d;
+}
+.transfer-speed-input input {
+  width: 110px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 6px 8px;
+  color: #292929;
+}
+.transfer-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.settings-card .transfer-settings-saved {
+  color: #348747;
+  margin-top: 10px;
+}

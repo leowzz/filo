@@ -56,6 +56,10 @@ export const isDirectory = (entry: Entry) =>
   entry.kind === "directory" || entry.kind === "virtual_prefix";
 
 export type TransferKind = "copy" | "move";
+export type TransferSettings = {
+  upload_kib_per_second: number;
+  download_kib_per_second: number;
+};
 export type DeleteMode = "default" | "permanent";
 export type DeleteOutcome = "trashed" | "permanently_deleted";
 export type TransferJob = {

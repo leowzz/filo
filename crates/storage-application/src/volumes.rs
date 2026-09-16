@@ -32,7 +32,7 @@ impl StorageService {
         path: PathBuf,
         read_only: bool,
     ) -> StorageResult<StorageVolume> {
-        let _guard = self.mutation_lock.lock().await;
+        let _guard = self.mutation_lock.write().await;
         let root = tokio::fs::canonicalize(path)
             .await
             .map_err(|_| StorageError::new(StorageErrorCode::AccessDenied, "无法访问所选目录"))?;
@@ -65,7 +65,7 @@ impl StorageService {
         selected_root: Option<PathBuf>,
     ) -> StorageResult<StorageVolume> {
         drop(self.idle_volume(id).await?);
-        let _guard = self.mutation_lock.lock().await;
+        let _guard = self.mutation_lock.write().await;
         let _transfers = self.idle_volume(id).await?;
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) {
@@ -119,7 +119,7 @@ impl StorageService {
             ));
         }
         drop(self.idle_volume(volume_id).await?);
-        let _guard = self.mutation_lock.lock().await;
+        let _guard = self.mutation_lock.write().await;
         let _transfers = self.idle_volume(volume_id).await?;
         self.remove_storage_configuration(volume_id).await
     }

@@ -9,10 +9,20 @@ import type {
   DeleteOutcome,
   Connection,
   S3Input,
+  TransferSettings,
 } from "./types";
 
 export const desktop = isTauri();
 export const api = {
+  transferSettings: () =>
+    desktop
+      ? invoke<TransferSettings>("get_transfer_settings")
+      : Promise.resolve({
+          upload_kib_per_second: 0,
+          download_kib_per_second: 0,
+        }),
+  saveTransferSettings: (settings: TransferSettings) =>
+    invoke<TransferSettings>("save_transfer_settings", { settings }),
   connections: () =>
     desktop ? invoke<Connection[]>("list_connections") : Promise.resolve([]),
   saveS3: (volumeId: string | null, input: S3Input) =>
@@ -29,11 +39,14 @@ export const api = {
   ) => {
     const channel = new Channel<TransferJob>();
     channel.onmessage = onProgress;
-    return invoke<TransferJob | null>("transfer_local_file", {
-      remote,
-      upload,
-      onProgress: channel,
-    });
+    return invoke<{ jobs: TransferJob[]; failures: string[] } | null>(
+      "transfer_local_file",
+      {
+        remote,
+        upload,
+        onProgress: channel,
+      },
+    );
   },
   volumes: () =>
     desktop ? invoke<Volume[]>("list_volumes") : Promise.resolve([]),
@@ -77,8 +90,13 @@ export const api = {
   rename: (source: Locator, name: string) =>
     invoke<void>("rename_entry", { source, name }),
   open: (locator: Locator) => invoke<void>("open_entry", { locator }),
-  delete: (locator: Locator, mode: DeleteMode) =>
-    invoke<DeleteOutcome>("delete_entry", { locator, mode, confirmed: true }),
+  delete: (locator: Locator, mode: DeleteMode, recursive = false) =>
+    invoke<DeleteOutcome>("delete_entry", {
+      locator,
+      mode,
+      confirmed: true,
+      recursive,
+    }),
 };
 export function errorMessage(error: unknown): string {
   if (error && typeof error === "object" && "message" in error)

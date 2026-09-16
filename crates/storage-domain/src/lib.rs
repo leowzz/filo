@@ -208,7 +208,7 @@ impl StorageCapabilities {
             multipart_write: false,
             native_copy: false,
             server_side_copy: false,
-            recursive_delete: false,
+            recursive_delete: !read_only,
             presigned_url: false,
             versioning: false,
             custom_metadata: false,
@@ -264,6 +264,25 @@ impl StorageError {
 }
 
 pub type StorageResult<T> = Result<T, StorageError>;
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TransferSettings {
+    /// Zero means unlimited. Limits are shared by all tasks in each direction.
+    pub upload_kib_per_second: u32,
+    pub download_kib_per_second: u32,
+}
+
+impl TransferSettings {
+    pub fn validate(&self) -> StorageResult<()> {
+        if self.upload_kib_per_second > 1_048_576 || self.download_kib_per_second > 1_048_576 {
+            return Err(StorageError::new(
+                StorageErrorCode::InvalidConfiguration,
+                "速度限制需为 0 到 1048576 KiB/s 的整数，0 表示不限速",
+            ));
+        }
+        Ok(())
+    }
+}
 
 /// Portable, relative paths. Reject traversal rather than silently resolving it.
 pub fn normalize_path(path: &str) -> StorageResult<String> {

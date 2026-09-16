@@ -2,54 +2,97 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, Trash2 } from "lucide-react";
 import { api, errorMessage } from "./api";
+import { runBatch, type BatchFailure } from "./batch";
 import { Modal } from "./components";
-import type { DeleteMode, DeleteOutcome, Entry, Volume } from "./types";
+import { isDirectory, type DeleteMode, type Entry, type Volume } from "./types";
+
+function unavailable(error: unknown) {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    "code" in error &&
+    error.code === "trash_unavailable"
+  );
+}
 
 export function DeleteEntryDialog({
-  entry,
+  entries,
   mode,
   volume,
   onClose,
   onDeleted,
 }: {
-  entry: Entry;
+  entries: Entry[];
   mode: DeleteMode;
   volume: Volume;
   onClose: () => void;
-  onDeleted: (outcome: DeleteOutcome) => void;
+  onDeleted: (message: string) => void;
 }) {
   const client = useQueryClient();
-  const [trashUnavailable, setTrashUnavailable] = useState(false);
+  const [remaining, setRemaining] = useState(entries);
+  const [failures, setFailures] = useState<BatchFailure<Entry>[]>([]);
+  const [totals, setTotals] = useState({ trashed: 0, permanent: 0 });
+  const [confirmPermanent, setConfirmPermanent] = useState(false);
   const toTrash =
-    mode === "default" && volume.capabilities.trash && !trashUnavailable;
+    mode === "default" && volume.capabilities.trash && !confirmPermanent;
+  const unavailableEntries = failures
+    .filter(({ error }) => unavailable(error))
+    .map(({ item }) => item);
+  const targets = confirmPermanent ? unavailableEntries : remaining;
   const mutation = useMutation({
-    mutationFn: (requestedMode: DeleteMode) =>
-      api.delete(entry.locator, requestedMode),
-    onError: (error, requestedMode) => {
-      if (
-        requestedMode === "default" &&
-        error &&
-        typeof error === "object" &&
-        "code" in error &&
-        error.code === "trash_unavailable"
-      ) {
-        setTrashUnavailable(true);
-      }
-    },
-    onSuccess: async (outcome) => {
+    mutationFn: () =>
+      runBatch(targets, (entry) =>
+        api.delete(
+          entry.locator,
+          confirmPermanent ? "permanent" : mode,
+          isDirectory(entry),
+        ),
+      ),
+    onSuccess: async ({ completed, failed }) => {
+      const processed = new Set(
+        targets.map((entry) => entry.locator.logical_path),
+      );
+      const nextFailures = [
+        ...failures.filter(
+          ({ item }) => !processed.has(item.locator.logical_path),
+        ),
+        ...failed,
+      ];
+      const nextRemaining = [
+        ...remaining.filter(
+          (item) => !processed.has(item.locator.logical_path),
+        ),
+        ...failed.map(({ item }) => item),
+      ];
+      const nextTotals = {
+        trashed:
+          totals.trashed +
+          completed.filter(({ result }) => result === "trashed").length,
+        permanent:
+          totals.permanent +
+          completed.filter(({ result }) => result === "permanently_deleted")
+            .length,
+      };
+      setTotals(nextTotals);
+      setFailures(nextFailures);
+      setRemaining(nextRemaining);
+      setConfirmPermanent(false);
       await client.invalidateQueries({ queryKey: ["entries", volume.id] });
-      onDeleted(outcome);
+      if (nextRemaining.length === 0) {
+        onDeleted(
+          [
+            nextTotals.trashed ? `${nextTotals.trashed} 项已移入回收站` : "",
+            nextTotals.permanent ? `${nextTotals.permanent} 项已永久删除` : "",
+          ]
+            .filter(Boolean)
+            .join("，"),
+        );
+      }
     },
   });
   return (
     <Modal
-      title={
-        trashUnavailable
-          ? "无法移入回收站"
-          : toTrash
-            ? "移入回收站"
-            : "永久删除"
-      }
+      title={toTrash ? "移入回收站" : "永久删除"}
       onClose={onClose}
       busy={mutation.isPending}
     >
@@ -57,41 +100,84 @@ export function DeleteEntryDialog({
         <Trash2 size={25} />
       </div>
       <p className="modal-description">
-        {toTrash ? "将" : "永久删除"} <strong>{entry.name}</strong>
-        {toTrash ? " 移入系统回收站？" : "？"}
+        {toTrash ? "将" : "永久删除"}{" "}
+        <strong>
+          {targets.length === 1
+            ? targets[0].name
+            : `选中的 ${targets.length} 个项目`}
+        </strong>
+        {toTrash ? "移入系统回收站？" : "？"}
       </p>
+      <ul className="batch-items">
+        {targets.map((entry) => (
+          <li key={entry.locator.logical_path}>
+            {entry.name}
+            {isDirectory(entry) ? "（含全部文件及子文件夹）" : ""}
+          </li>
+        ))}
+      </ul>
       <p className="delete-warning">
         {toTrash
-          ? "可以在系统回收站中找回。文件夹会连同其中的内容一起移入回收站。"
-          : `${trashUnavailable ? "此项目无法放入回收站。" : mode === "default" ? "此存储不支持回收站。" : "此操作会跳过回收站。"}继续删除将永久删除，无法找回。${entry.kind === "directory" ? "当前仅允许永久删除空文件夹。" : ""}`}
+          ? "文件夹会连同全部内容一起移入回收站，可以在系统回收站中找回。"
+          : "将永久删除所选项目及文件夹内全部内容，包括隐藏文件。此操作无法撤销。"}
       </p>
-      {mutation.isError &&
-        !(trashUnavailable && mutation.variables === "default") && (
-          <p className="error-text" role="alert">
-            {errorMessage(mutation.error)}
+      {confirmPermanent && (
+        <p className="delete-warning">
+          以下项目未能移入回收站。仅在再次确认后永久删除。
+        </p>
+      )}
+      {failures.length > 0 && (
+        <div role="alert">
+          <p className="error-text">
+            已处理 {totals.trashed + totals.permanent} 项，{remaining.length}{" "}
+            项未完成。重试只处理未完成项。
           </p>
-        )}
+          <ul className="batch-items">
+            {failures.map(({ item, error }) => (
+              <li key={item.locator.logical_path}>
+                <strong>{item.name}</strong>：{errorMessage(error)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {mutation.isError && (
+        <p className="error-text" role="alert">
+          {errorMessage(mutation.error)}
+        </p>
+      )}
       <div className="modal-footer">
         <button
           className="secondary"
           disabled={mutation.isPending}
-          onClick={onClose}
+          onClick={
+            confirmPermanent ? () => setConfirmPermanent(false) : onClose
+          }
         >
-          取消
+          {confirmPermanent ? "返回" : "关闭"}
         </button>
+        {!confirmPermanent && unavailableEntries.length > 0 && (
+          <button
+            className="secondary"
+            disabled={mutation.isPending}
+            onClick={() => setConfirmPermanent(true)}
+          >
+            改为永久删除 {unavailableEntries.length} 项…
+          </button>
+        )}
         <button
           className={toTrash ? "primary" : "danger"}
-          disabled={mutation.isPending}
-          onClick={() => mutation.mutate(trashUnavailable ? "permanent" : mode)}
+          disabled={mutation.isPending || targets.length === 0}
+          onClick={() => mutation.mutate()}
         >
           {mutation.isPending && <LoaderCircle size={16} className="spin" />}
           {mutation.isPending
             ? "正在处理…"
             : toTrash
-              ? "移入回收站"
-              : trashUnavailable
-                ? "仍然永久删除"
-                : "确认永久删除"}
+              ? failures.length
+                ? "重试移入回收站"
+                : "移入回收站"
+              : "确认永久删除"}
         </button>
       </div>
     </Modal>

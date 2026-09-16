@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Folder, ArrowUp, LoaderCircle } from "lucide-react";
+import { updateTransfer } from "./transferPresentation";
 import { api, errorMessage } from "./api";
+import { runBatch, type BatchFailure } from "./batch";
 import { Modal } from "./components";
 import {
   activeTransfer,
@@ -13,18 +15,23 @@ import {
 } from "./types";
 
 export function TransferDialog({
-  entry,
+  entries,
   kind,
   volumes,
   onClose,
   onStarted,
 }: {
-  entry: Entry;
+  entries: Entry[];
   kind: TransferKind;
   volumes: Volume[];
   onClose: () => void;
   onStarted: () => void;
 }) {
+  const entry = entries[0];
+  const [remaining, setRemaining] = useState(entries);
+  const [failures, setFailures] = useState<BatchFailure<Entry>[]>([]);
+  const [submitted, setSubmitted] = useState(0);
+  const multiple = entries.length > 1;
   const writable = volumes.filter((volume) => !volume.read_only);
   const [volumeId, setVolumeId] = useState(
     writable.find((volume) => volume.id !== entry.locator.volume_id)?.id ??
@@ -44,10 +51,19 @@ export function TransferDialog({
       }),
     enabled: !!volumeId,
   });
-  const destinationPath = path ? `${path}/${name}` : name;
-  const sameFile =
-    volumeId === entry.locator.volume_id &&
-    destinationPath === entry.locator.logical_path;
+  const targetPath = (item: Entry) =>
+    path
+      ? `${path}/${multiple ? item.name : name}`
+      : multiple
+        ? item.name
+        : name;
+  const sameFile = remaining.some(
+    (item) =>
+      volumeId === item.locator.volume_id &&
+      (targetPath(item) === item.locator.logical_path ||
+        (isDirectory(item) &&
+          targetPath(item).startsWith(`${item.locator.logical_path}/`))),
+  );
   const valid =
     name.trim().length > 0 &&
     ![".", ".."].includes(name) &&
@@ -56,31 +72,35 @@ export function TransferDialog({
     );
   const mutation = useMutation({
     mutationFn: () =>
-      api.startTransfer(
-        kind,
-        entry.locator,
-        {
-          volume_id: volumeId,
-          logical_path: destinationPath,
-          version_id: null,
-        },
-        (job) => {
-          client.setQueryData<TransferJob[]>(["transfers"], (current) => [
-            job,
-            ...(current ?? []).filter((item) => item.id !== job.id),
-          ]);
-          if (!activeTransfer(job))
-            void client.invalidateQueries({ queryKey: ["entries"] });
-        },
+      runBatch(remaining, (item) =>
+        api.startTransfer(
+          kind,
+          item.locator,
+          {
+            volume_id: volumeId,
+            logical_path: targetPath(item),
+            version_id: null,
+          },
+          (job) => {
+            client.setQueryData<TransferJob[]>(["transfers"], (current) =>
+              updateTransfer(current, job),
+            );
+            if (!activeTransfer(job))
+              void client.invalidateQueries({ queryKey: ["entries"] });
+          },
+        ),
       ),
-    onSuccess: async () => {
+    onSuccess: async ({ completed, failed }) => {
+      setSubmitted((count) => count + completed.length);
+      setRemaining(failed.map(({ item }) => item));
+      setFailures(failed);
       await client.invalidateQueries({ queryKey: ["transfers"] });
-      onStarted();
+      if (failed.length === 0) onStarted();
     },
   });
   return (
     <Modal
-      title={kind === "copy" ? "复制文件" : "移动文件"}
+      title={`${kind === "copy" ? "复制" : "移动"}${multiple ? ` ${entries.length} 个项目` : isDirectory(entry) ? "文件夹" : "文件"}`}
       onClose={onClose}
       busy={mutation.isPending}
     >
@@ -97,7 +117,19 @@ export function TransferDialog({
             mutation.mutate();
         }}
       >
-        <p className="modal-description">{entry.name}</p>
+        <p className="modal-description">
+          {multiple ? `已选 ${entries.length} 项，保留各自名称。` : entry.name}
+        </p>
+        {multiple && (
+          <ul className="batch-items">
+            {entries.map((item) => (
+              <li key={item.locator.logical_path}>
+                {item.name}
+                {isDirectory(item) ? "（含全部内容）" : ""}
+              </li>
+            ))}
+          </ul>
+        )}
         <fieldset className="connection-fields" disabled={mutation.isPending}>
           <label className="field-label" htmlFor="target-volume">
             目标位置
@@ -161,26 +193,45 @@ export function TransferDialog({
                 )}
             </div>
           </div>
-          <label className="field-label" htmlFor="target-name">
-            目标文件名
-          </label>
-          <input
-            id="target-name"
-            className="text-input"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            required
-          />
+          {!multiple && (
+            <>
+              <label className="field-label" htmlFor="target-name">
+                目标名称
+              </label>
+              <input
+                id="target-name"
+                className="text-input"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                required
+              />
+            </>
+          )}
           <p className="field-help">
             {!volumeId
               ? "请先添加可写位置，或右键位置关闭只读访问。"
               : sameFile
-                ? "源文件和目标文件相同，请选择另一个目录或更改文件名。"
+                ? "目标不能是源项目本身或源文件夹内部。"
                 : kind === "move"
-                  ? "目标保存成功后才移除源文件。同名文件不会被覆盖。"
-                  : "复制后保留源文件。同名文件不会被覆盖。"}
+                  ? "全部内容复制并校验成功后才清理源位置。同名项目不会覆盖或合并。"
+                  : "复制文件夹内全部内容，包括隐藏文件和空目录。同名项目不会覆盖或合并。"}
           </p>
         </fieldset>
+        {failures.length > 0 && (
+          <div role="alert">
+            <p className="error-text">
+              已提交 {submitted} 项，{failures.length}{" "}
+              项未开始。再次提交只处理未开始的项目。
+            </p>
+            <ul className="batch-items">
+              {failures.map(({ item, error }) => (
+                <li key={item.locator.logical_path}>
+                  <strong>{item.name}</strong>：{errorMessage(error)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {mutation.isError && (
           <p className="error-text" role="alert">
             {errorMessage(mutation.error)}
@@ -193,8 +244,18 @@ export function TransferDialog({
             disabled={mutation.isPending}
             onClick={onClose}
           >
-            取消
+            关闭
           </button>
+          {submitted > 0 && (
+            <button
+              type="button"
+              className="secondary"
+              disabled={mutation.isPending}
+              onClick={onStarted}
+            >
+              查看传输任务
+            </button>
+          )}
           <button
             className="primary"
             disabled={

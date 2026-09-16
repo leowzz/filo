@@ -13,7 +13,7 @@ impl StorageService {
         parent: StorageLocator,
         name: String,
     ) -> StorageResult<()> {
-        let _guard = self.mutation_lock.lock().await;
+        let _guard = self.mutation_lock.write().await;
         validate_name(&name)?;
         let path = normalize_path(&parent.logical_path)?;
         let target = StorageLocator {
@@ -30,9 +30,14 @@ impl StorageService {
             .await
     }
     pub async fn rename_entry(&self, source: StorageLocator, name: String) -> StorageResult<()> {
-        let _guard = self.mutation_lock.lock().await;
         validate_name(&name)?;
         let normalized = normalize_path(&source.logical_path)?;
+        if normalized.is_empty() {
+            return Err(StorageError::new(
+                StorageErrorCode::AccessDenied,
+                "存储根目录不能重命名",
+            ));
+        }
         let target_path = match normalized.rsplit_once('/') {
             Some((parent, _)) => format!("{parent}/{name}"),
             None => name,
@@ -41,7 +46,35 @@ impl StorageService {
             logical_path: target_path,
             ..source.clone()
         };
-        // Each provider preserves its advertised rename semantics and verifies remote copies.
+        let backend = self.backend(source.volume_id).await?;
+        if backend.stat(&source).await?.kind == StorageEntryKind::VirtualPrefix {
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            let sender = std::sync::Mutex::new(Some(sender));
+            self.start_transfer(
+                TransferKind::Move,
+                source,
+                target,
+                std::sync::Arc::new(move |job| {
+                    if !job.state.active() {
+                        if let Some(sender) = sender.lock().unwrap().take() {
+                            let _ = sender.send(job);
+                        }
+                    }
+                }),
+            )
+            .await?;
+            let job = receiver.await.map_err(|_| {
+                StorageError::new(StorageErrorCode::Internal, "重命名任务中断，请查看传输任务")
+            })?;
+            if job.state != TransferState::Completed {
+                return Err(StorageError::new(
+                    job.error_code.unwrap_or(StorageErrorCode::Io),
+                    job.error_message.unwrap_or_else(|| "重命名未完成".into()),
+                ));
+            }
+            return Ok(());
+        }
+        let _guard = self.mutation_lock.write().await;
         self.backend(source.volume_id)
             .await?
             .rename(&source, &target)
@@ -53,19 +86,56 @@ impl StorageService {
         mode: DeleteMode,
         confirmed: bool,
     ) -> StorageResult<DeleteOutcome> {
+        self.delete_entry_recursive(locator, mode, confirmed, false)
+            .await
+    }
+
+    pub async fn delete_entry_recursive(
+        &self,
+        locator: StorageLocator,
+        mode: DeleteMode,
+        confirmed: bool,
+        recursive: bool,
+    ) -> StorageResult<DeleteOutcome> {
         if !confirmed {
             return Err(StorageError::new(
                 StorageErrorCode::Conflict,
                 "请先确认删除",
             ));
         }
-        let _guard = self.mutation_lock.lock().await;
+        let _guard = self.mutation_lock.write().await;
         let backend = self.backend(locator.volume_id).await?;
+        if recursive && (mode == DeleteMode::Permanent || !backend.capabilities().trash) {
+            if !backend.capabilities().delete || normalize_path(&locator.logical_path)?.is_empty() {
+                return Err(StorageError::new(
+                    StorageErrorCode::AccessDenied,
+                    "只读位置或存储根目录不能删除",
+                ));
+            }
+            let entries = crate::tree::inventory(
+                backend.as_ref(),
+                &locator,
+                &tokio_util::sync::CancellationToken::new(),
+            )
+            .await?;
+            crate::tree::remove_inventory(backend.as_ref(), &entries)
+                .await
+                .map_err(|error| {
+                    StorageError::new(
+                        error.code,
+                        format!(
+                            "删除未全部完成，已删除的内容无法恢复，请刷新检查剩余项目：{}",
+                            error.message
+                        ),
+                    )
+                })?;
+            return Ok(DeleteOutcome::PermanentlyDeleted);
+        }
         file_operations::delete(backend.as_ref(), &locator, mode).await
     }
 
     pub async fn open_entry(&self, locator: StorageLocator) -> StorageResult<()> {
-        let _guard = self.mutation_lock.lock().await;
+        let _guard = self.mutation_lock.write().await;
         self.backend(locator.volume_id).await?.open(&locator).await
     }
 }

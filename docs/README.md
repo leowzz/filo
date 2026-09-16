@@ -14,3 +14,5 @@
 - [本轮 LocalFS Demo：范围、实现与验证](10-local-demo.md)
 
 - [S3 与本机 RustFS：配置、实现与验证](11-s3.md)
+- [批量与文件夹操作：行为、边界与验证](12-batch-and-folders.md)
+- [上传和下载速度设置](13-transfer-speed.md)

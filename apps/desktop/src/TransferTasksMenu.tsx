@@ -1,0 +1,187 @@
+import {
+  ArrowDownUp,
+  CircleCheck,
+  CircleX,
+  LoaderCircle,
+  X,
+} from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { activeTransfer, type TransferJob } from "./types";
+import { TransferProgress } from "./TransferProgress";
+import {
+  sortTransfers,
+  transferStateLabels,
+  transferSummary,
+} from "./transferPresentation";
+
+export function TransferTasksMenu({
+  jobs,
+  uploadIds,
+  loading,
+  error,
+  onRetry,
+  onViewAll,
+}: {
+  jobs: TransferJob[];
+  uploadIds: Set<string>;
+  loading: boolean;
+  error: boolean;
+  onRetry: () => void;
+  onViewAll: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const id = useId();
+  const { active, running, label: summary } = transferSummary(jobs);
+  const uploading = active.filter(
+    (job) => uploadIds.has(job.id) && job.state !== "queued",
+  ).length;
+  const label = active.length
+    ? !running
+      ? `等待中 ${active.length}`
+      : uploading === running
+        ? `上传中 ${uploading}`
+        : `传输中 ${running}`
+    : "传输任务";
+  const recent = sortTransfers(jobs);
+  const visible = [
+    ...recent.filter(activeTransfer),
+    ...recent.filter((job) => !activeTransfer(job)).slice(0, 5),
+  ];
+
+  useEffect(() => {
+    if (!open) return;
+    closeButton.current?.focus();
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Node && !ref.current?.contains(event.target))
+        setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setOpen(false);
+        trigger.current?.focus();
+      }
+    };
+    window.addEventListener("pointerdown", dismiss);
+    window.addEventListener("keydown", escape);
+    return () => {
+      window.removeEventListener("pointerdown", dismiss);
+      window.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+
+  return (
+    <div
+      className="transfer-tasks"
+      ref={ref}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+    >
+      <button
+        ref={trigger}
+        className={`icon-button transfer-tasks-trigger ${active.length ? "is-active" : ""} ${open ? "on" : ""}`}
+        aria-label={label}
+        title={label}
+        aria-expanded={open}
+        aria-controls={open ? id : undefined}
+        aria-haspopup="dialog"
+        onClick={() => setOpen((value) => !value)}
+      >
+        {active.length ? (
+          <LoaderCircle size={18} className="spin" />
+        ) : (
+          <ArrowDownUp size={18} />
+        )}
+        {active.length > 0 && <span>{label}</span>}
+      </button>
+      {open && (
+        <section
+          className="transfer-tasks-popover"
+          id={id}
+          role="dialog"
+          aria-label="传输任务列表"
+        >
+          <div className="transfer-tasks-header">
+            <h2>传输任务</h2>
+            <span className="muted">
+              {active.length ? summary : "最近任务"}
+            </span>
+            <button
+              ref={closeButton}
+              className="icon-button"
+              aria-label="关闭任务列表"
+              onClick={() => {
+                setOpen(false);
+                trigger.current?.focus();
+              }}
+            >
+              <X size={16} />
+            </button>
+          </div>
+          {error && (
+            <p className="transfer-tasks-message error-text" role="alert">
+              无法刷新任务列表 <button onClick={onRetry}>重试</button>
+            </p>
+          )}
+          {loading && (
+            <p className="transfer-tasks-message muted">正在读取任务…</p>
+          )}
+          {!loading && !error && jobs.length === 0 && (
+            <p className="transfer-tasks-message muted">
+              暂无传输任务，上传后可在这里查看进度。
+            </p>
+          )}
+          <div className="transfer-tasks-list">
+            {visible.map((job) => {
+              const upload = uploadIds.has(job.id);
+              const name = job.source.logical_path.split("/").at(-1);
+              return (
+                <article className="transfer-item" key={job.id}>
+                  <div className="transfer-heading">
+                    {activeTransfer(job) ? (
+                      <LoaderCircle size={16} className="spin" />
+                    ) : job.state === "completed" ? (
+                      <CircleCheck size={16} />
+                    ) : (
+                      <CircleX size={16} />
+                    )}
+                    <strong title={name}>{name}</strong>
+                    <span className={`transfer-state ${job.state}`}>
+                      {upload && job.state === "running"
+                        ? "上传中"
+                        : transferStateLabels[job.state]}
+                    </span>
+                  </div>
+                  <div className="transfer-meta">
+                    <span>
+                      {upload ? "上传" : job.kind === "move" ? "移动" : "传输"}
+                    </span>
+                  </div>
+                  <TransferProgress job={job} />
+                  {job.error_message && (
+                    <p className="error-text transfer-tasks-error">
+                      {job.error_message}
+                    </p>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+          <button
+            className="transfer-tasks-all"
+            onClick={() => {
+              setOpen(false);
+              onViewAll();
+            }}
+          >
+            查看全部任务
+          </button>
+        </section>
+      )}
+    </div>
+  );
+}

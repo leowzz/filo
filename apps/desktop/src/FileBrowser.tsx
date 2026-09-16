@@ -58,7 +58,7 @@ export function FileBrowser({
   navigate: (volumeId: string, path: string) => void;
 }) {
   const state = useBrowser();
-  const { setSelection, selectedPaths } = selection;
+  const { selectedPaths } = selection;
   return (
     <>
       <div className="browser-body">
@@ -176,7 +176,6 @@ export function FileBrowser({
                         aria-label={`${entry.name} 操作菜单`}
                         onClick={(event) => {
                           event.stopPropagation();
-                          setSelection(entry.locator.logical_path);
                           if (menu === entry.locator.logical_path)
                             setMenu(null);
                           else {

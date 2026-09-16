@@ -1,11 +1,13 @@
 import { ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { useBrowser } from "./store";
+import { TransferSettingsCard } from "./TransferSettingsCard";
 
 export function SettingsPage() {
   const state = useBrowser();
   return (
     <div className="page-scroll simple-page">
       <h1>设置</h1>
+      <TransferSettingsCard />
       <section className="settings-card">
         <h2>
           <SlidersHorizontal size={19} />

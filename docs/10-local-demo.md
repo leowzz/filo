@@ -1,6 +1,6 @@
 # 本轮 LocalFS Demo
 
-> 本文保留 LocalFS 阶段的实施历史；后续 S3 / Keychain / 跨存储传输已实现，见 [S3 与本机 RustFS](11-s3.md)。
+> 本文保留 LocalFS 阶段的实施历史；后续 S3 / Keychain / 跨存储传输已实现，见 [S3 与本机 RustFS](11-s3.md) 和 [批量与文件夹操作](12-batch-and-folders.md)。
 
 ## 本轮目标
 
@@ -116,7 +116,7 @@
 
 用户反馈访问下载目录频繁出现系统授权弹窗。检查此前演示包发现只有 linker ad-hoc 签名，签名标识为 Rust 可执行文件名称，designated requirement 直接绑定 `cdhash`。这意味着代码重建会改变 macOS 用于识别该版本的签名要求，与连续重新打包后再次授权的现象一致；未读取或改写系统 TCC 授权数据库。
 
-- 新增 `make demo`，从本机 `.env` 或显式环境变量读取 `APPLE_SIGNING_IDENTITY`，调用 Tauri 生成固定证书签名的 macOS 演示包。拒绝空身份或 `-` 临时签名；`.env` 已忽略，仓库仅提供 `.env.example`。不自动创建、导入或调整证书信任。发行构建与公证仍是独立工作。
+- 当时新增本机演示打包入口，从本机 `.env` 或显式环境变量读取 `APPLE_SIGNING_IDENTITY`，调用 Tauri 生成固定证书签名的 macOS 演示包。拒绝空身份或 `-` 临时签名；`.env` 已忽略，仓库仅提供 `.env.example`。不自动创建、导入或调整证书信任。发行构建与公证仍是独立工作。
 - 本机复用已有签名证书，包身份变为 `dev.filo.desktop`，designated requirement 绑定应用标识与证书，避免每次构建绑定新的代码哈希。切换签名后第一次访问仍可能需要用户授权。
 - 所有 `entries` 查询（文件列表和传输目标浏览）关闭窗口重新获得焦点、网络重连时的自动读取；保留导航、手动刷新、文件操作后的失效刷新。外部文件变动需要点击刷新。传输任务轮询不受影响。
 
@@ -124,4 +124,9 @@
 
 依据：[Apple TN3127](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements)、[Tauri macOS 签名](https://v2.tauri.app/distribute/sign/macos/)。
 
-签名文件后续统一迁移至 `~/.config/filo/signing/`，沿用 Dayflow 命名：`certificate.p12`、`password.txt`、`identity.txt`。迁移前后证书与密码文件内容一致，旧项目目录中的副本已移走。`make demo` 在 `APPLE_SIGNING_IDENTITY` 未设置或为空时读取该目录的 `identity.txt`；签名仍使用钥匙串中的原证书。
+签名文件后续统一迁移至 `~/.config/filo/signing/`，沿用 Dayflow 命名：`certificate.p12`、`password.txt`、`identity.txt`。迁移前后证书与密码文件内容一致，旧项目目录中的副本已移走。本机开发入口在 `APPLE_SIGNING_IDENTITY` 未设置或为空时读取该目录的 `identity.txt`；签名仍使用钥匙串中的原证书。
+
+
+## 本地开发统一入口
+
+本地开发现统一为 `make dev`，已移除独立的 demo Make 目标和 `scripts/build-demo.mjs`。`scripts/dev.mjs` 在 macOS 上读取现有证书，给 Tauri 的 Cargo 调用注入目标 runner。`scripts/dev-runner.sh` 在每次编译成功后生成并固定签名 `target/debug/dev-bundle/Filo.app`，严格验证后用 `exec` 启动，保留 Rust 重编译、应用退出码和进程清理行为。前端继续使用 Vite 热更新。Cargo 的原始可执行文件保持不变，签名失败不会启动旧包或临时签名程序。`make build` 继续用于 Release 打包。
