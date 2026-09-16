@@ -36,7 +36,7 @@ git push origin v0.2.0
 
 ## GitHub Actions
 
-`.github/workflows/release.yml` 只响应 `v*` tag push，不响应普通分支/PR，也没有手动发布入口。校验 job 严格核对版本格式、annotated tag、远端分支归属及所有版本来源，并运行发布脚本测试。两个平台分别执行 TypeScript、ESLint、rustfmt、Clippy、Rust 测试，再构建：
+`.github/workflows/release.yml` 只响应 `v*` tag push，不响应普通分支/PR，也没有手动发布入口。校验 job 先重新获取远端版本 tag，避免 checkout 的回退 fetch 将 runner 内的 annotated tag 替换为提交引用；随后核对 tag 指向本次检出提交、版本格式、annotated tag、远端分支归属及所有版本来源，并运行发布脚本测试。两个平台分别执行 TypeScript、ESLint、rustfmt、Clippy、Rust 测试，再构建：
 
 | 目标 | Runner | 产物 |
 | --- | --- | --- |

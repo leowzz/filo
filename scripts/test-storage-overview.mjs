@@ -87,8 +87,9 @@ await page.waitForFunction(() =>
 text = await page.evaluate(
   () => document.querySelector(".storage-overview").textContent,
 );
-assert.match(text, /尚未取得总量/);
-assert.doesNotMatch(text, /对象总容量/);
+assert.match(text, /统计结果不准确/);
+assert.match(text, /已统计对象1,000\+ 个/);
+assert.doesNotMatch(text, /对象总容量|已统计容量|2\.0 KB/);
 assert.equal(
   await page.evaluate(() => window.overviewCalls.length),
   2,

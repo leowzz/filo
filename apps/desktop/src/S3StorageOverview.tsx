@@ -70,14 +70,21 @@ export function S3StorageOverview({ volume }: { volume: Volume }) {
         <>
           <dl>
             <dt>{overview.complete ? "对象数量" : "已统计对象"}</dt>
-            <dd>{overview.object_count.toLocaleString()} 个</dd>
-            <dt>{overview.complete ? "对象总容量" : "已统计容量"}</dt>
-            <dd>{formatSize(overview.total_size)}</dd>
+            <dd>
+              {overview.object_count.toLocaleString()}
+              {overview.complete ? "" : "+"} 个
+            </dd>
+            {overview.complete && (
+              <>
+                <dt>对象总容量</dt>
+                <dd>{formatSize(overview.total_size)}</dd>
+              </>
+            )}
           </dl>
           <p className="storage-overview-note">
             {overview.complete
               ? "仅统计当前版本，不含历史版本和未完成的上传。"
-              : "仅为部分对象的统计，尚未取得总量。为避免遍历整个存储，仅读取一页对象。"}
+              : "统计结果不准确：仅统计了部分对象，尚未取得完整数量。"}
           </p>
           <p className="storage-overview-note">
             更新于{" "}

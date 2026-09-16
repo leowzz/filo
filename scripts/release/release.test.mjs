@@ -33,6 +33,7 @@ import {
   verifyArtifacts,
 } from "./artifacts.mjs";
 import { publish, sameAssets, shouldPromote } from "./publish.mjs";
+import { validateReleaseRef } from "./metadata.mjs";
 
 function temporary(t) {
   const dir = mkdtempSync(join(tmpdir(), "filo-release-test-"));
@@ -79,6 +80,46 @@ function fixture(t) {
   git(dir, "commit", "-m", "fixture");
   return dir;
 }
+function checkoutFixture(t, annotated = true) {
+  const origin = fixture(t);
+  git(origin, "tag", ...(annotated ? ["-a", "-m", "Release"] : []), "v1.2.3");
+  const runner = temporary(t);
+  git(runner, "clone", "--no-local", origin, ".");
+  git(runner, "checkout", "--detach", "v1.2.3");
+  return { origin, runner };
+}
+test("CI restores an annotated tag peeled by checkout fallback fetch", (t) => {
+  const { origin, runner } = checkoutFixture(t);
+  const commit = git(runner, "rev-parse", "HEAD");
+  // Exact refspec observed in the failed Actions checkout log.
+  git(runner, "fetch", "--no-tags", "origin", `+${commit}:refs/tags/v1.2.3`);
+  assert.equal(git(runner, "cat-file", "-t", "refs/tags/v1.2.3"), "commit");
+  validateReleaseRef("v1.2.3", runner);
+  assert.equal(git(runner, "cat-file", "-t", "refs/tags/v1.2.3"), "tag");
+  assert.equal(git(runner, "rev-parse", "HEAD"), commit);
+  assert.equal(
+    git(runner, "rev-parse", "refs/tags/v1.2.3"),
+    git(origin, "rev-parse", "refs/tags/v1.2.3"),
+  );
+});
+test("CI still rejects genuinely lightweight remote tags", (t) => {
+  const { runner } = checkoutFixture(t, false);
+  assert.throws(() => validateReleaseRef("v1.2.3", runner), /annotated tag/);
+});
+test("CI rejects a remote tag moved away from the triggering commit", (t) => {
+  const { origin, runner } = checkoutFixture(t);
+  git(origin, "commit", "--allow-empty", "-m", "new commit");
+  git(origin, "tag", "--force", "-a", "v1.2.3", "-m", "moved");
+  assert.throws(() => validateReleaseRef("v1.2.3", runner), /检出的提交不一致/);
+});
+test("CI rejects tags with no containing remote branch", (t) => {
+  const { runner } = checkoutFixture(t);
+  git(runner, "update-ref", "-d", "refs/remotes/origin/main");
+  assert.throws(
+    () => validateReleaseRef("v1.2.3", runner),
+    /尚未推送到远端分支/,
+  );
+});
 test("strict versions and ordered prereleases", () => {
   for (const invalid of [
     "01.0.0",
