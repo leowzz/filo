@@ -33,8 +33,25 @@ export const api = {
       volumeId,
       input,
     }),
-  testS3: (volumeId: string | null, input: S3Input) =>
-    invoke<void>("test_s3_connection", { volumeId, input }),
+  testS3: async (volumeId: string | null, input: S3Input) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        invoke<void>("test_s3_connection", { volumeId, input }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error("连接测试超时（2 秒），请检查网络和服务地址后重试"),
+              ),
+            2000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  },
   transferLocalFile: (
     remote: Locator,
     upload: boolean,

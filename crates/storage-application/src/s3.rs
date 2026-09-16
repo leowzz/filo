@@ -162,7 +162,7 @@ impl StorageService {
         input: S3StorageInput,
     ) -> StorageResult<()> {
         let (volume, credentials) = self.prepare_s3(id, &input).await?;
-        OpenDalS3Backend::new(&volume, &input.config, &credentials)?
+        provider_opendal::S3Admin::new(&volume, &input.config, &credentials)?
             .test_connection()
             .await
     }
@@ -181,7 +181,7 @@ impl StorageService {
             None
         };
         let (volume, credentials) = self.prepare_s3(id, &input).await?;
-        OpenDalS3Backend::new(&volume, &input.config, &credentials)?
+        provider_opendal::S3Admin::new(&volume, &input.config, &credentials)?
             .test_connection()
             .await?;
         let old_reference = if id.is_some() {

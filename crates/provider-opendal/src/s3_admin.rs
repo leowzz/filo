@@ -91,6 +91,35 @@ impl S3Admin {
             tos_stats: crate::tos_stats::TosStats::new(config, credentials, bucket),
         })
     }
+    pub async fn test_connection(&self) -> StorageResult<()> {
+        // Test LIST access without mapping returned object keys to filesystem paths.
+        // Keys such as "/" are valid in S3 but can panic OpenDAL's relative-path parser.
+        let prefix = if self.prefix.is_empty() {
+            String::new()
+        } else {
+            format!("{}/", self.prefix)
+        };
+        tokio::time::timeout(Duration::from_secs(2), async {
+            self.client
+                .list_objects_v2()
+                .bucket(&self.bucket)
+                .prefix(prefix)
+                .max_keys(1)
+                .send()
+                .await
+                .map_err(failure)?;
+            Ok(())
+        })
+        .await
+        .map_err(|_| {
+            let mut error = StorageError::new(
+                StorageErrorCode::Timeout,
+                "连接测试超时（2 秒），请检查网络和服务地址后重试",
+            );
+            error.retryable = true;
+            error
+        })?
+    }
     fn key(&self, path: &str) -> StorageResult<String> {
         let normal = normalize_path(path)?;
         if normal != path && (normal.is_empty() || format!("{normal}/") != path) {
@@ -746,6 +775,136 @@ impl S3Admin {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn connection_test_accepts_root_keys_and_preserves_list_scope() {
+        for (prefix, status, body) in [
+            (
+                "",
+                "200 OK",
+                "<Contents><Key>/</Key><Size>0</Size></Contents>",
+            ),
+            (
+                "limited",
+                "200 OK",
+                "<CommonPrefixes><Prefix>/limited/</Prefix></CommonPrefixes>",
+            ),
+            ("limited", "403 Forbidden", "<Code>AccessDenied</Code>"),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buf = [0u8; 4096];
+                while !request.windows(4).any(|b| b == b"\r\n\r\n") {
+                    let n = socket.read(&mut buf).await.unwrap();
+                    assert!(n > 0);
+                    request.extend_from_slice(&buf[..n]);
+                }
+                let headers = String::from_utf8_lossy(&request);
+                let target = headers
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap();
+                let url = url::Url::parse(&format!("http://localhost{target}")).unwrap();
+                let query: BTreeMap<_, _> = url.query_pairs().into_owned().collect();
+                assert!(headers.starts_with("GET "));
+                assert_eq!(url.path().trim_end_matches('/'), "/test-bucket");
+                assert_eq!(query.get("list-type").map(String::as_str), Some("2"));
+                assert_eq!(query.get("max-keys").map(String::as_str), Some("1"));
+                assert_eq!(
+                    query.get("prefix").map(String::as_str).unwrap_or(""),
+                    if prefix.is_empty() { "" } else { "limited/" }
+                );
+                assert!(!query.contains_key("continuation-token"));
+                let body = if status.starts_with("403") {
+                    format!("<Error>{body}</Error>")
+                } else {
+                    format!(
+                        r#"<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>true</IsTruncated><NextContinuationToken>next</NextContinuationToken>{body}</ListBucketResult>"#
+                    )
+                };
+                socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: application/xml\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            });
+            let admin = S3Admin::new(
+                &StorageVolume {
+                    id: uuid::Uuid::new_v4(),
+                    connection_id: uuid::Uuid::new_v4(),
+                    name: "test".into(),
+                    root: VolumeRoot::S3 {
+                        bucket: "test-bucket".into(),
+                        prefix: prefix.into(),
+                    },
+                    read_only: true,
+                },
+                &S3ConnectionConfig {
+                    provider: None,
+                    endpoint: Some(endpoint),
+                    region: "us-east-1".into(),
+                    force_path_style: true,
+                },
+                &S3Credentials {
+                    access_key_id: "test".into(),
+                    secret_access_key: "test".into(),
+                    session_token: None,
+                },
+            )
+            .unwrap();
+            let result = admin.test_connection().await;
+            if status.starts_with("403") {
+                assert_eq!(result.unwrap_err().code, StorageErrorCode::AccessDenied);
+            } else {
+                result.unwrap();
+            }
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn connection_test_times_out_when_server_does_not_respond() {
+        use std::time::{Duration, Instant};
+
+        // Keep the TCP listener alive without responding to HTTP requests.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let volume = StorageVolume {
+            id: uuid::Uuid::new_v4(),
+            connection_id: uuid::Uuid::new_v4(),
+            name: "timeout test".into(),
+            root: VolumeRoot::S3 {
+                bucket: "bucket".into(),
+                prefix: String::new(),
+            },
+            read_only: true,
+        };
+        let backend = S3Admin::new(
+            &volume,
+            &S3ConnectionConfig {
+                provider: None,
+                endpoint: Some(format!("http://{}", listener.local_addr().unwrap())),
+                region: "us-east-1".into(),
+                force_path_style: true,
+            },
+            &S3Credentials {
+                access_key_id: "test".into(),
+                secret_access_key: "test".into(),
+                session_token: None,
+            },
+        )
+        .unwrap();
+
+        let started = Instant::now();
+        let error = tokio::time::timeout(Duration::from_secs(3), backend.test_connection())
+            .await
+            .expect("connection test must stop before the general request timeout")
+            .unwrap_err();
+        assert_eq!(error.code, StorageErrorCode::Timeout);
+        assert!(error.retryable);
+        assert!(started.elapsed() >= Duration::from_secs(2));
+    }
 
     #[tokio::test]
     async fn storage_overview_is_bounded_scoped_and_distinguishes_incomplete_results() {

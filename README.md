@@ -86,7 +86,7 @@ make release V=v0.1.1 # 同步版本、创建本地版本提交和 annotated tag
 
 正式构建启动后自动检查最新正式版；「设置 → 软件更新」可手动检查及安装。安装前须完成或取消传输，安装后重启。开发模式与浏览器预览不请求更新。首次正式 Release 尚未发布时，检查会提示暂时无法检查更新。
 
-更新包使用项目独立密钥签名；这不代表已配置 Apple Developer ID、公证或 Windows Authenticode。Apple 配置为空时 CI 使用 ad-hoc 签名，下载后可能被 macOS 拦截；Windows 未配置发布者签名。版本规则、Secrets、产物列表、发布重试与验证范围见 [发布指南](docs/releasing.md)。
+更新包使用项目独立密钥签名；这不代表已配置 Apple Developer ID、公证或 Windows Authenticode。macOS 发布必须配置证书签名，缺少配置直接失败；自签证书不代表获得 Apple 信任或完成公证。Windows 未配置发布者签名。版本规则、Secrets、产物列表、发布重试与验证范围见 [发布指南](docs/releasing.md)。
 
 ### macOS 文件夹授权
 

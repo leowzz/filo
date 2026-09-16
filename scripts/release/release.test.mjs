@@ -23,7 +23,7 @@ import {
   versionFiles,
 } from "./version.mjs";
 import { release } from "./release.mjs";
-import { validateSigning } from "./signing.mjs";
+import { releaseSigningEnvironment, validateSigning } from "./signing.mjs";
 import {
   assetNames,
   collectArtifacts,
@@ -224,31 +224,106 @@ test("ENV_FILE is honored on read, write and check", (t) => {
   assert.match(readFileSync(process.env.ENV_FILE, "utf8"), /OTHER=preserved/);
   assert.equal(checkVersions(dir).tag, "v9.0.0-rc.1");
 });
-test("updater signing required, Apple groups all-or-none, notarization requires Developer ID", () => {
+test("release requires certificates, rejects ad-hoc, notarization requires Developer ID", () => {
   assert.throws(() => validateSigning({}, "win32"), /TAURI_SIGNING/);
   const basic = { TAURI_SIGNING_PRIVATE_KEY: "test" };
-  validateSigning(basic, "darwin");
+  validateSigning(basic, "win32");
   assert.throws(
-    () => validateSigning({ ...basic, APPLE_ID: "test" }, "darwin"),
+    () => releaseSigningEnvironment(basic, "darwin"),
+    /APPLE_CERTIFICATE/,
+  );
+  const signed = {
+    ...basic,
+    APPLE_CERTIFICATE: "certificate",
+    APPLE_CERTIFICATE_PASSWORD: "password",
+    APPLE_SIGNING_IDENTITY: "Self Signed",
+  };
+  validateSigning(signed, "darwin");
+  for (const key of [
+    "APPLE_CERTIFICATE",
+    "APPLE_CERTIFICATE_PASSWORD",
+    "APPLE_SIGNING_IDENTITY",
+  ])
+    assert.throws(
+      () => releaseSigningEnvironment({ ...signed, [key]: "" }, "darwin"),
+      new RegExp(key),
+    );
+  assert.throws(
+    () =>
+      releaseSigningEnvironment(
+        { ...signed, APPLE_SIGNING_IDENTITY: "-" },
+        "darwin",
+      ),
+    /ad-hoc/,
+  );
+  assert.throws(
+    () => validateSigning({ ...signed, APPLE_ID: "test" }, "darwin"),
     /不完整/,
   );
   assert.throws(
     () =>
       validateSigning(
         {
-          ...basic,
+          ...signed,
           APPLE_ID: "test",
           APPLE_PASSWORD: "test",
           APPLE_TEAM_ID: "test",
         },
         "darwin",
       ),
-    /公证需要/,
+    /Developer ID/,
   );
   assert.throws(
     () => validateSigning({ ...basic, APPLE_CERTIFICATE: "test" }, "darwin"),
+    /APPLE_CERTIFICATE_PASSWORD/,
+  );
+});
+test("missing Actions notarization secrets are absent in the bundler subprocess", () => {
+  const input = {
+    TAURI_SIGNING_PRIVATE_KEY: "test",
+    TAURI_SIGNING_PRIVATE_KEY_PASSWORD: "",
+    APPLE_CERTIFICATE: "certificate",
+    APPLE_CERTIFICATE_PASSWORD: "password",
+    APPLE_SIGNING_IDENTITY: "Self Signed",
+    APPLE_ID: "",
+    APPLE_PASSWORD: "",
+    APPLE_TEAM_ID: " \t",
+  };
+  const env = releaseSigningEnvironment(input, "darwin");
+  const child = spawnSync(
+    process.execPath,
+    ["-e", "console.log(JSON.stringify(process.env))"],
+    { env, encoding: "utf8" },
+  );
+  assert.equal(child.status, 0, child.stderr);
+  const inherited = JSON.parse(child.stdout);
+  for (const key of ["APPLE_ID", "APPLE_PASSWORD", "APPLE_TEAM_ID"])
+    assert.equal(Object.hasOwn(inherited, key), false, key);
+  assert.equal(inherited.APPLE_SIGNING_IDENTITY, input.APPLE_SIGNING_IDENTITY);
+  assert.equal(inherited.APPLE_CERTIFICATE, input.APPLE_CERTIFICATE);
+  assert.equal(
+    inherited.APPLE_CERTIFICATE_PASSWORD,
+    input.APPLE_CERTIFICATE_PASSWORD,
+  );
+  assert.equal(inherited.TAURI_SIGNING_PRIVATE_KEY_PASSWORD, "");
+  assert.equal(input.APPLE_SIGNING_IDENTITY, "Self Signed");
+  assert.equal(input.APPLE_TEAM_ID, " \t");
+  assert.throws(
+    () => releaseSigningEnvironment({ ...input, APPLE_ID: "test" }, "darwin"),
     /不完整/,
   );
+});
+test("configured Apple credentials pass through unchanged", () => {
+  const env = {
+    TAURI_SIGNING_PRIVATE_KEY: "test",
+    APPLE_CERTIFICATE: "certificate",
+    APPLE_CERTIFICATE_PASSWORD: " password with spaces ",
+    APPLE_SIGNING_IDENTITY: "Developer ID Application: Test",
+    APPLE_ID: "test@example.invalid",
+    APPLE_PASSWORD: "password",
+    APPLE_TEAM_ID: "team",
+  };
+  assert.deepEqual(releaseSigningEnvironment(env, "darwin"), env);
 });
 function assets(t) {
   const dir = temporary(t);

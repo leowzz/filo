@@ -8,7 +8,7 @@ import {
   reportInstallers,
   targets,
 } from "./artifacts.mjs";
-import { validateSigning } from "./signing.mjs";
+import { releaseSigningEnvironment } from "./signing.mjs";
 
 try {
   if (existsSync(envPath())) process.loadEnvFile(envPath());
@@ -16,6 +16,7 @@ try {
   const release = process.argv.includes("--release");
   const target = process.env.RELEASE_TARGET;
   const args = ["--filter", "@filo/desktop", "tauri", "build"];
+  let buildEnv = process.env;
   if (release) {
     if (!targets.includes(target))
       throw new Error(
@@ -23,7 +24,7 @@ try {
       );
     if ((target === targets[0]) !== (process.platform === "darwin"))
       throw new Error("发布目标与构建主机不匹配。");
-    validateSigning(process.env, process.platform);
+    buildEnv = releaseSigningEnvironment(process.env, process.platform);
     const config = JSON.parse(
       readFileSync(
         join(root, "apps/desktop/src-tauri/tauri.conf.json"),
@@ -48,12 +49,6 @@ try {
       "--bundles",
       target === targets[0] ? "app,dmg" : "nsis",
     );
-    if (process.platform === "darwin" && !process.env.APPLE_SIGNING_IDENTITY) {
-      process.env.APPLE_SIGNING_IDENTITY = "-";
-      console.warn(
-        "使用 ad-hoc 签名；未配置 Developer ID / 公证，下载后可能被 Gatekeeper 拦截。",
-      );
-    }
   } else {
     rmSync(join(root, "target/release/bundle"), {
       recursive: true,
@@ -69,7 +64,7 @@ try {
     );
   }
   args.push("--", "--locked");
-  pnpm(args);
+  pnpm(args, { env: buildEnv });
   if (release) {
     const output = join(root, "target/release-assets", target);
     rmSync(output, { recursive: true, force: true });

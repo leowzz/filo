@@ -57,12 +57,12 @@ GitHub 仓库 Settings → Secrets and variables → Actions：
 | --- | --- |
 | `TAURI_SIGNING_PRIVATE_KEY` | 必需，Tauri updater 私钥文件内容 |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 私钥密码；无密码密钥可为空 |
-| `APPLE_CERTIFICATE` | 可选，应用签名 P12 的 base64 内容 |
+| `APPLE_CERTIFICATE` | macOS 发布必需，应用签名 P12 的 base64 内容 |
 | `APPLE_CERTIFICATE_PASSWORD` | P12 导出密码 |
 | `APPLE_SIGNING_IDENTITY` | 签名 identity；公证时使用 Developer ID Application |
 | `APPLE_ID`、`APPLE_PASSWORD`、`APPLE_TEAM_ID` | 可选公证组；密码为 app-specific password |
 
-Apple 证书组三项全有或全无，公证组三项全有或全无，公证要求证书组存在。由 Tauri 按官方流程导入证书并执行打包签名与公证。全部留空时仅 ad-hoc 签名；不承诺 Gatekeeper 信任。没有内嵌 PKG，因此不需要 Installer 证书。本机开发签名继续使用 `~/.config/filo/signing/`，不与 updater 密钥混用。
+macOS 发布必须提供 Apple 证书组三项，缺项或使用 ad-hoc 身份 `-` 时在编译前失败。公证组三项全有或全无，公证要求 Developer ID Application 证书。未配置的可选公证 Secrets 会从构建进程环境中移除，避免空字符串被 Tauri 误判为已配置。由 Tauri 按官方流程导入证书并执行打包签名与公证；自签证书不代表 Gatekeeper 信任。没有内嵌 PKG，因此不需要 Installer 证书。本机开发签名继续使用 `~/.config/filo/signing/`，不与 updater 密钥混用。
 
 项目 updater 公钥已固定在 `apps/desktop/src-tauri/tauri.conf.json`。初始私钥备份保存在 `~/.config/filo/updater/private.key`，密码位于同目录 `password.txt`，目录权限 700，私钥及密码权限 600。两者都不在仓库中，应另做安全备份；已有客户端发布后不能随意更换公钥。恢复 CI 时可使用：
 

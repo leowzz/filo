@@ -173,20 +173,6 @@ impl OpenDalS3Backend {
         Ok(result)
     }
 
-    pub async fn test_connection(&self) -> StorageResult<()> {
-        // List within the configured bucket/prefix, never ListBuckets or synthetic root stat.
-        use futures::TryStreamExt;
-        self.operator
-            .lister_with("")
-            .limit(1)
-            .await
-            .map_err(error)?
-            .try_next()
-            .await
-            .map_err(error)?;
-        Ok(())
-    }
-
     fn path(&self, locator: &StorageLocator, write: bool) -> StorageResult<String> {
         if locator.volume_id != self.volume_id || locator.version_id.is_some() {
             return Err(StorageError::new(

@@ -140,6 +140,7 @@ assert.equal(
   true,
 );
 await page.evaluate(() => (window.holdTest = true));
+const startedTest = Date.now();
 await page.click('button:text-is("测试连接")');
 await page.waitForFunction(() => !!window.releaseTest);
 assert.equal(
@@ -151,11 +152,44 @@ assert.equal(
   ),
   true,
 );
+await page.waitForFunction(
+  () =>
+    document
+      .querySelector('[role="alert"]')
+      ?.textContent.includes("连接测试超时（2 秒）"),
+  undefined,
+  { timeout: 3000 },
+);
+assert.ok(
+  Date.now() - startedTest < 3500,
+  "test must stop waiting after 2 seconds",
+);
+assert.equal(
+  await page.evaluate(
+    () =>
+      !document.querySelector('button[aria-label="关闭"]').disabled &&
+      [...document.querySelectorAll(".provider-choice")].every(
+        (e) => !e.disabled,
+      ) &&
+      [...document.querySelectorAll(".modal-footer button")].some(
+        (e) => e.textContent === "测试连接" && !e.disabled,
+      ),
+  ),
+  true,
+);
 await page.evaluate(() => {
   window.holdTest = false;
   window.releaseTest();
+  return new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve)),
+  );
 });
-await page.waitForSelector("[role=status]");
+assert.equal(
+  await page.evaluate(() => document.querySelector('[role="status"]') === null),
+  true,
+  "late success must not overwrite timeout",
+);
+await test();
 await page.click('button:text-is("返回选择")');
 assert.equal(
   await page.evaluate(
@@ -317,7 +351,7 @@ for (const [provider, label] of [
   await page.click('button[aria-label="切换详情面板"]');
 }
 console.log(
-  "PASS: local read-only, provider defaults, region/address changes, custom endpoints, validation, test failure, save/edit, retained credentials, animated expansion, provider switching, draft retention and busy state",
+  "PASS: local read-only, provider defaults, region/address changes, custom endpoints, validation, test failure, 2-second timeout, late response ignored, retry, save/edit, retained credentials, animated expansion, provider switching, draft retention and busy state",
 );
 // Verify the rendered dialog stays within both a regular and a narrow viewport.
 for (const [width, height] of [
