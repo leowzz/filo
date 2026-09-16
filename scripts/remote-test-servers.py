@@ -2,7 +2,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["pyftpdlib>=2,<3", "asyncssh>=2,<3", "impacket>=0.13,<1"]
 # ///
-"""Disposable loopback FTP, SFTP and SMB2 servers for provider acceptance.
+"""Disposable loopback FTP/FTPS, SFTP and SMB2 servers for provider acceptance.
 
 Run: uv run scripts/remote-test-servers.py /tmp/filo-remote-fixture.json
 The private manifest contains endpoints and generated credentials. Servers use

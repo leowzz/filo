@@ -20,6 +20,14 @@
 - 剪切项目可辨识，目标只读时禁止粘贴；失败和部分提交保留可重试信息。
 - 浏览偏好持久化，普通及窄窗口下主要操作与弹窗均可访问。
 
+## 协议边界
+
+- FTPS 使用显式 TLS（AUTH TLS），控制与数据连接都加密，服务端证书必须受系统信任；没有跳过证书检查的选项。
+- SFTP 必须填写可信的 known_hosts 主机公钥。使用未哈希的确切主机条目，非默认端口使用 `[主机]:端口`；暂不接受通配符或哈希主机名，公钥不匹配时拒绝连接。
+- FTP / FTPS 暂不提供上传和重命名，避免服务端 RNTO 静默覆盖已有文件；可浏览、读取、下载、创建目录及删除。只读模式进一步关闭写操作。
+- SFTP 和 SMB 上传先写远程临时文件，经内容校验后以不覆盖已有目标的方式提交；暂不提供覆盖替换，可使用自动改名。SMB 不支持 DFS 转发。
+- 远程协议没有回收站。删除前明确确认永久删除；不跟随符号链接或 SMB reparse point。
+
 ## 验证记录
 
 运行隔离的本机协议服务：
@@ -30,14 +38,34 @@ uv run scripts/remote-test-servers.py /tmp/filo-remote-fixture.json
 
 服务只监听回环地址，使用随机端口、生成的临时密码和临时目录。私有 manifest 保存端口、凭据、SSH 主机公钥与 FTPS 测试 CA 的路径；不要提交或公开该文件。FTPS 使用显式 AUTH TLS，控制和数据连接均要求 TLS。按 Ctrl+C 停止并删除测试数据与 manifest。
 
-已用独立客户端验证四种服务的实际认证和读取，FTPS 验证测试 CA，SFTP 校验生成的主机密钥。应用 Provider 的测试结果在实现完成后补充。
+真实服务验证已通过：
+
+- FTP / FTPS、SFTP、SMB 的连接测试、保存、编辑保留凭据和重启恢复。
+- FTP / FTPS 下载、创建及删除目录、禁止上传；FTPS 校验测试 CA。
+- SFTP / SMB 与本地之间复制、移动及内容校验；只读、错误认证、路径逃逸和活动传输期间禁止编辑。
+- SFTP / SMB Provider 的流式临时写入、同名目标保护和重命名；SFTP 另外验证取消清理、符号链接根目录与错误主机公钥。
+- SQLite / WAL 不保存密码，凭据保存失败回滚，移除连接清理凭据。
+
+应用层真实集成测试：
+
+```sh
+FILO_TEST_REMOTE_FIXTURE=/tmp/filo-remote-fixture.json \
+  cargo test -p storage-application --test remote_integration -- --ignored
+```
+
+结果为 2 个测试通过。Provider 的 `sftp_fixture_operations` 与 `smb_fixture_operations` 为显式运行的真实服务测试，普通 `cargo test` 不会启动或连接这些服务。
+
+Rust 工作区 `cargo fmt --all --check`、`cargo clippy --workspace --all-targets --locked -- -D warnings` 与 `cargo test --workspace --locked` 通过；常规测试 98 个通过。需要外部服务或系统交互的测试默认忽略，远程协议测试已按上述命令单独执行。
 
 前端已完成：
 
 - TypeScript、ESLint 与生产构建通过。
 - `node --test scripts/file-browser-interaction.test.mjs`：5 个边界测试通过。
 - `scripts/test-remote-providers.mjs`：四协议表单、测试超时和迟到响应、凭据保留/替换、SFTP 认证切换、FTP 上传能力限制，以及 1100px / 390px 弹窗边界、控件对齐和返回焦点通过。
+- `scripts/test-file-selection.mjs`：键盘导航、虚拟列表滚动、范围选择、拖选及菜单选择行为通过。
+- `scripts/test-external-upload.mjs`：原生拖放事件、HiDPI 定位、多文件上传、冲突、取消、部分失败及只读保护通过。
+- `scripts/test-batch-operations.mjs`：批量操作、逐项失败重试、递归删除确认与回收站失败后的二次确认通过。
 - `scripts/test-s3-providers.mjs`：原有 S3、本地只读、供应商配置和连接表单回归通过。
 - `scripts/test-file-browser-workflow.mjs`：复制/剪切/粘贴快捷键、输入框隔离、侧栏切换目标后粘贴、异步部分失败及冲突重试、剪切完成状态、自身目录保护、偏好重载、760px 布局与远程上传/下载能力检查通过。
 
-浏览器脚本通过模拟 Tauri IPC 验证界面行为，不代表真实协议传输已经验证。运行前先启动 Vite；这些脚本使用 `ego-browser nodejs` 执行。文件剪贴板仅在当前应用会话有效，隐藏文件、排序及详情面板偏好会保存到本机。
+浏览器脚本通过模拟 Tauri IPC 验证界面行为；真实协议传输由上面的 Provider 和应用层集成测试验证。运行前先启动 Vite；这些脚本使用 `ego-browser nodejs` 执行。文件剪贴板仅在当前应用会话有效，隐藏文件、排序及详情面板偏好会保存到本机。

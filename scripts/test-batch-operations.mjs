@@ -18,12 +18,15 @@ window.testItems = [{ name: 'Folder', kind: 'directory', size: null }, { name: '
 const volumes = ['source', 'target'].map(id => ({ id, connection_id: id, name: id, read_only: false,
   root: { type: 'local', root_path: '/' + id }, capabilities: { hierarchy: 'native_directory', rename: 'atomic', create_directory: true, write: true, delete: true, recursive_delete: true, trash: true, native_open: true } }));
 window.__TAURI_INTERNALS__ = {
+ metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
  transformCallback: () => 1, unregisterCallback: () => {},
  invoke: async (command, args) => {
       if (command === 'recent_backend_errors') return [];
       if (command === 'plugin:event|listen') return 1;
       if (command === 'plugin:event|unlisten') return;
    window.testCalls.push({command, args});
+   if (command === 'directory_stamp') return { value: 'fixture', complete: true };
+   if (command.startsWith('plugin:menu|')) return 1;
    if (command === 'list_volumes') return volumes;
    if (command === 'list_transfers') return window.testJobs;
    if (command === 'list_entries_page') { const entries = args.parent.volume_id === 'source' && !args.parent.logical_path ? window.testItems.filter(item => !args.options.folders_only || item.kind === 'directory').sort((a,b) => Number(b.kind === 'directory') - Number(a.kind === 'directory') || a.name.localeCompare(b.name)).map(item => ({ ...item, locator: { volume_id: 'source', logical_path: item.name, version_id: null } })) : []; return {entries, total: entries.length, next_cursor: null}; }
@@ -53,12 +56,12 @@ await page.waitForSelector('tr[data-entry-path="Folder"]');
 await page.click('tr[data-entry-path="Folder"] .file-name');
 assert.equal(
   await page.evaluate(
-    () => document.querySelector('button[aria-label="重命名"]').disabled,
+    () => [...document.querySelectorAll(".browser-actions-popover button")].find(button => button.textContent.trim() === "重命名…").disabled,
   ),
   false,
   "folder rename enabled",
 );
-await page.keyboard.press("Meta+a");
+await page.keyboard.press("ControlOrMeta+a");
 assert.equal(
   await page.evaluate(
     () => document.querySelectorAll('tr[aria-selected="true"]').length,
@@ -67,19 +70,19 @@ assert.equal(
 );
 assert.equal(
   await page.evaluate(
-    () => document.querySelector('button[aria-label="复制到"]').disabled,
+    () => [...document.querySelectorAll(".browser-actions-popover button")].find(button => button.textContent.trim() === "复制到…").disabled,
   ),
   false,
 );
 assert.equal(
   await page.evaluate(
-    () => document.querySelector('button[aria-label="移动到"]').disabled,
+    () => [...document.querySelectorAll(".browser-actions-popover button")].find(button => button.textContent.trim() === "移动到…").disabled,
   ),
   false,
 );
 assert.equal(
   await page.evaluate(
-    () => document.querySelector('button[aria-label="重命名"]').disabled,
+    () => [...document.querySelectorAll(".browser-actions-popover button")].find(button => button.textContent.trim() === "重命名…").disabled,
   ),
   true,
 );
@@ -157,7 +160,7 @@ assert.equal(
 await page.click('.volume-nav button[title="/source"]');
 await page.waitForSelector('tr[data-entry-path="Folder"]');
 await page.click('tr[data-entry-path="Folder"] .file-name');
-await page.keyboard.press("Meta+a");
+await page.keyboard.press("ControlOrMeta+a");
 await page.click('button[aria-label="移入回收站"]');
 await page.waitForSelector("dialog");
 assert.match(
