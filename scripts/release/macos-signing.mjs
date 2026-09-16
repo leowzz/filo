@@ -184,14 +184,22 @@ export function withMacSigning(env, build, command = signingCommand) {
         cleanupErrors.push(error);
       }
     };
-    if (trusted)
-      clean(() =>
+    if (trusted) {
+      try {
         command(
           "sudo",
           ["-n", "security", "remove-trusted-cert", "-d", pem],
           "移除 CI 证书信任",
-        ),
-      );
+        );
+      } catch {
+        // Trust was added only on a disposable GitHub-hosted runner. Its
+        // removal can time out after signing; still remove private
+        // key material below, without discarding successfully built artifacts.
+        console.warn(
+          "::warning::移除临时 runner 的证书信任失败或超时；继续清理钥匙串和证书文件，信任设置随 runner 销毁。",
+        );
+      }
+    }
     if (created) {
       clean(() =>
         command(

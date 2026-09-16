@@ -66,7 +66,7 @@ GitHub 仓库 Settings → Secrets and variables → Actions：
 
 macOS 发布必须提供 Apple 证书组三项，缺项或使用 ad-hoc 身份 `-` 时在发布编译前失败。公证组三项全有或全无，公证要求 Developer ID Application 证书。未配置的可选公证 Secrets 会从构建进程环境中移除，避免空字符串被 Tauri 误判为已配置。
 
-发布脚本将 P12 导入临时钥匙串，检查 identity 与证书匹配、有效期和私钥访问，并试签验证后才启动发布编译。Tauri 直接使用导入证书的指纹，避免其自动 P12 导入流程无法识别自签证书名称。仅在 GitHub 托管的临时 runner 上为自签证书添加 code-signing 信任；构建成功或失败都会移除该信任、恢复钥匙串搜索列表并删除临时文件。本机运行不修改证书信任设置。
+发布脚本将 P12 导入临时钥匙串，检查 identity 与证书匹配、有效期和私钥访问，并试签验证后才启动发布编译。Tauri 直接使用导入证书的指纹，避免其自动 P12 导入流程无法识别自签证书名称。仅在 GitHub 托管的临时 runner 上为自签证书添加 code-signing 信任；构建成功或失败都会尝试移除该信任、恢复钥匙串搜索列表并删除临时文件。临时 runner 的信任移除失败或超时仅告警，信任设置随 runner 销毁，不阻止已成功签名的产物进入收集流程；钥匙串和私钥文件清理失败仍阻止发布。本机运行不修改证书信任设置。
 
 自签证书不代表 Gatekeeper 信任。没有内嵌 PKG，因此不需要 Installer 证书。本机开发签名继续使用 `~/.config/filo/signing/`，不与 updater 密钥混用。
 

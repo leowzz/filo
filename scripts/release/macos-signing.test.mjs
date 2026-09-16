@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { X509Certificate } from "node:crypto";
 import { existsSync } from "node:fs";
+import { dirname } from "node:path";
 import { rootCertificates } from "node:tls";
 import { withMacSigning } from "./macos-signing.mjs";
 
@@ -117,5 +118,55 @@ test(
     assert.ok(calls.some((call) => call.includes("remove-trusted-cert")));
     assert.ok(calls.some((call) => call[1] === "delete-keychain"));
     assert.ok(env.APPLE_CERTIFICATE);
+  },
+);
+
+test(
+  "runner trust cleanup timeout preserves successful build and still removes key material",
+  { skip: process.platform === "win32" },
+  (t) => {
+    const warning = t.mock.method(console, "warn", () => {});
+    const { command, calls } = mock("remove-trusted-cert");
+    const result = withMacSigning(env, () => "built artifacts", command);
+    assert.equal(result, "built artifacts");
+    assert.equal(warning.mock.callCount(), 1);
+    assert.match(warning.mock.calls[0].arguments[0], /::warning::/);
+    const removed = calls.find((call) => call[1] === "delete-keychain");
+    assert.ok(removed);
+    assert.equal(existsSync(dirname(removed[2])), false);
+    assert.deepEqual(calls.at(-2), [
+      "security",
+      "list-keychains",
+      "-d",
+      "user",
+      "-s",
+      "/original.keychain-db",
+    ]);
+    // The same cleanup error must never hide a genuine build failure.
+    assert.throws(
+      () =>
+        withMacSigning(
+          env,
+          () => {
+            throw new Error("build failed");
+          },
+          command,
+        ),
+      /build failed/,
+    );
+  },
+);
+
+test(
+  "private key cleanup failure still fails a successful build",
+  { skip: process.platform === "win32" },
+  () => {
+    const { command, calls } = mock("delete-keychain");
+    assert.throws(
+      () => withMacSigning(env, () => "built artifacts", command),
+      /injected failure/,
+    );
+    const removed = calls.find((call) => call[1] === "delete-keychain");
+    assert.equal(existsSync(dirname(removed[2])), false);
   },
 );
