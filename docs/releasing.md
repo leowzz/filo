@@ -36,18 +36,22 @@ git push origin v0.2.0
 
 ## GitHub Actions
 
-`.github/workflows/release.yml` 只响应 `v*` tag push，不响应普通分支/PR，也没有手动发布入口。校验 job 先重新获取远端版本 tag，避免 checkout 的回退 fetch 将 runner 内的 annotated tag 替换为提交引用；随后核对 tag 指向本次检出提交、版本格式、annotated tag、远端分支归属及所有版本来源，并运行发布脚本测试。两个平台分别执行 TypeScript、ESLint、rustfmt、Clippy、Rust 测试，再构建：
+`.github/workflows/release.yml` 响应 `main` 分支和 `v*` tag push，不响应其他分支/PR，也没有手动发布入口。`main` 运行验证并预热编译缓存，不签名、上传安装包或发布 Release。tag 的 metadata job 先重新获取远端版本 tag，避免 checkout 的回退 fetch 将 runner 内的 annotated tag 替换为提交引用；随后核对 tag 指向本次检出提交、版本格式、annotated tag、远端分支归属及所有版本来源。两种触发都会运行发布脚本测试。
+
+每个平台的 validate job 执行 TypeScript、ESLint、rustfmt、Clippy 和 Rust 测试；独立的 build job 与它并行，tag 构建以下安装包：
 
 | 目标 | Runner | 产物 |
 | --- | --- | --- |
 | macOS Apple Silicon（aarch64） | macos-14 | `.dmg`、`.app.tar.gz`、归档 `.sig` |
 | Windows x64 | windows-2022 | NSIS `.exe`、`.exe.sig` |
 
-两个平台在 metadata 成功后并行运行，`fail-fast: false` 保证单个平台失败不会取消另一平台；publish 等待两者全部成功。macOS 只安装和编译 `aarch64-apple-darwin` 目标，不再构建 Intel 或 Universal，产物名称使用 `_aarch64` 后缀。
+两个平台的 validate 和 build 共四个 job 在 metadata 成功后并行运行，`fail-fast: false` 保证单个平台失败不会取消另一平台；publish 仅在 tag 触发且全部验证、构建成功后执行。macOS 只安装和编译 `aarch64-apple-darwin` 目标，不再构建 Intel 或 Universal，产物名称使用 `_aarch64` 后缀。
+
+Rust 缓存按 validate/release 和目标平台分开，只有 `main` 写入；tag 读取默认分支缓存，避免每个新 tag 都冷编译并重复上传大缓存。`main` 的 build 使用与发布相同的 target、release profile 和 updater 配置，通过 Tauri `--no-bundle` 只编译，不需要签名 Secrets。首次启用或依赖/工具链更新后，先等 `main` 的预热完成再推 tag，才能使用新缓存；同时推分支和 tag 不会等待预热，仍可能冷编译。并行执行缩短发布等待时间，但会增加并发 runner 数量，`main` 预热也会消耗构建时间。
 
 每个文件（含签名文件）都有 `.sha256`，共 10 个上传文件；正式版另加 `latest.json`。CI 中间产物保存 30 天，位于 `target/release-assets/<target>/`，本地普通构建位于 `target/release/bundle/`。普通构建不需要 updater 私钥；发布构建额外叠加 `tauri.updater.conf.json`，缺更新签名私钥直接失败。
 
-工作流只有 publish job 获得 `contents: write`。发布序列按仓库串行，防止较旧版本覆盖 Latest。GitHub concurrency 只保留一个等待中的 run；不要连续快速推多个发布 tag，需要时从 Actions 重跑被取消的版本。
+工作流只有 publish job 获得 `contents: write`。tag 发布序列按仓库串行，防止较旧版本覆盖 Latest；`main` 使用独立并发组，新提交取消旧的预热，不阻塞发布。GitHub concurrency 只保留一个等待中的 run；不要连续快速推多个发布 tag，需要时从 Actions 重跑被取消的版本。
 
 发布先校验完整产物与 SHA-256，再创建 draft、上传并核对 GitHub 返回的资产 digest，最后公开。重跑失败的 publish job 可续传 draft；保留原正文。已公开的版本只能在文件集合和字节完全一致时作为成功重试，拒绝不同字节覆盖同名资产；重新构建可能产生不同签名/时间戳，应发布新版本。已有 Release 若启用了 GitHub 资产不可变策略，仍按平台规则处理。
 
@@ -66,7 +70,7 @@ GitHub 仓库 Settings → Secrets and variables → Actions：
 
 macOS 发布必须提供 Apple 证书组三项，缺项或使用 ad-hoc 身份 `-` 时在发布编译前失败。公证组三项全有或全无，公证要求 Developer ID Application 证书。未配置的可选公证 Secrets 会从构建进程环境中移除，避免空字符串被 Tauri 误判为已配置。
 
-发布脚本将 P12 导入临时钥匙串，检查 identity 与证书匹配、有效期和私钥访问，并试签验证后才启动发布编译。Tauri 直接使用导入证书的指纹，避免其自动 P12 导入流程无法识别自签证书名称。仅在 GitHub 托管的临时 runner 上为自签证书添加 code-signing 信任；构建成功或失败都会尝试移除该信任、恢复钥匙串搜索列表并删除临时文件。临时 runner 的信任移除失败或超时仅告警，信任设置随 runner 销毁，不阻止已成功签名的产物进入收集流程；钥匙串和私钥文件清理失败仍阻止发布。本机运行不修改证书信任设置。
+发布脚本将 P12 导入临时钥匙串，检查 identity 与证书匹配、有效期和私钥访问，并试签验证后才启动发布编译。Tauri 直接使用导入证书的指纹，避免其自动 P12 导入流程无法识别自签证书名称。仅在 GitHub 托管的临时 runner 上为自签证书添加 code-signing 信任，该信任随 runner 销毁清理，不再调用可能等待超时的 `remove-trusted-cert`。构建成功或失败都会立即恢复钥匙串搜索列表、删除临时钥匙串和证书/私钥文件，清理失败仍阻止发布。本机与 self-hosted runner 不修改证书信任设置。
 
 自签证书不代表 Gatekeeper 信任。没有内嵌 PKG，因此不需要 Installer 证书。本机开发签名继续使用 `~/.config/filo/signing/`，不与 updater 密钥混用。
 

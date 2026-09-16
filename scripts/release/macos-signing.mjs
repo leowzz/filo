@@ -36,7 +36,6 @@ export function withMacSigning(env, build, command = signingCommand) {
   const pem = join(dir, "certificate.pem");
   const password = randomBytes(24).toString("hex");
   let created = false;
-  let trusted = false;
   let failure;
   try {
     writeFileSync(p12, Buffer.from(env.APPLE_CERTIFICATE, "base64"), {
@@ -119,6 +118,8 @@ export function withMacSigning(env, build, command = signingCommand) {
       env.RUNNER_ENVIRONMENT === "github-hosted"
     ) {
       // Scope trust to code signing on the disposable hosted runner only.
+      // Its trust settings are discarded with the VM. Explicit removal can
+      // stall after codesign; always delete our keychain/private files below.
       command(
         "sudo",
         [
@@ -136,7 +137,6 @@ export function withMacSigning(env, build, command = signingCommand) {
         ],
         "信任 CI 自签证书",
       );
-      trusted = true;
     }
     command(
       "security",
@@ -184,22 +184,6 @@ export function withMacSigning(env, build, command = signingCommand) {
         cleanupErrors.push(error);
       }
     };
-    if (trusted) {
-      try {
-        command(
-          "sudo",
-          ["-n", "security", "remove-trusted-cert", "-d", pem],
-          "移除 CI 证书信任",
-        );
-      } catch {
-        // Trust was added only on a disposable GitHub-hosted runner. Its
-        // removal can time out after signing; still remove private
-        // key material below, without discarding successfully built artifacts.
-        console.warn(
-          "::warning::移除临时 runner 的证书信任失败或超时；继续清理钥匙串和证书文件，信任设置随 runner 销毁。",
-        );
-      }
-    }
     if (created) {
       clean(() =>
         command(

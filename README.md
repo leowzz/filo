@@ -112,7 +112,7 @@ make release V=v0.1.7 # 示例：指定新版本，创建本地版本提交和 a
 
 `.env` 的 `version=vX.Y.Z` 是本机版本来源，允许保留其他配置且不提交；新检出与 CI 从 `.env.example` 重建。`make release` 默认递增 patch，`V` 可显式指定版本，也支持 `-alpha.N`、`-beta.N`、`-rc.N`。发布前要求工作区干净，构建只校验版本。pnpm 锁文件不存储 workspace 自身版本，Cargo 锁文件仅同步本项目 packages。
 
-推送版本提交和对应 tag 后，GitHub Actions 会校验、测试并行构建 macOS Apple Silicon（arm64）和 Windows x64 安装包，不构建 Intel Mac 版本。只有两端都成功且所有产物完整、SHA-256 匹配时才公开 Release。预发布不进入稳定更新通道。
+推送到 `main` 后，GitHub Actions 会验证并预热 Rust 编译缓存；首次预热完成后再推版本 tag 可避免冷编译。tag 发布时，macOS Apple Silicon（arm64）和 Windows x64 的验证与安装包构建并行执行，不构建 Intel Mac 版本。只有两端验证、构建都成功且所有产物完整、SHA-256 匹配时才公开 Release。预发布不进入稳定更新通道。
 
 正式构建启动后自动检查最新正式版；「设置 → 软件更新」可手动检查及安装。安装前须完成或取消传输，安装后重启。开发模式与浏览器预览不请求更新。首次正式 Release 尚未发布时，检查会提示暂时无法检查更新。
 

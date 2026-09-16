@@ -58,25 +58,30 @@ test("failed certificate import restores the search list and deletes temporary f
   ]);
 });
 
-test("certificate trust is restricted to disposable hosted runners", () => {
-  const { command, calls } = mock("find-identity");
-  assert.throws(
-    () =>
-      withMacSigning(
-        { ...env, RUNNER_ENVIRONMENT: "self-hosted" },
-        () => assert.fail("must not build"),
-        command,
-      ),
-    /injected failure/,
-  );
-  assert.equal(
-    calls.some((call) => call[0] === "sudo"),
-    false,
-  );
-});
+for (const runner of [
+  { GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "self-hosted" },
+  { GITHUB_ACTIONS: "false", RUNNER_ENVIRONMENT: "github-hosted" },
+  { GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: undefined },
+])
+  test(`certificate trust is disabled for ${JSON.stringify(runner)}`, () => {
+    const { command, calls } = mock("find-identity");
+    assert.throws(
+      () =>
+        withMacSigning(
+          { ...env, ...runner },
+          () => assert.fail("must not build"),
+          command,
+        ),
+      /injected failure/,
+    );
+    assert.equal(
+      calls.some((call) => call[0] === "sudo"),
+      false,
+    );
+  });
 
 test(
-  "failed signing preflight removes runner trust and keychain",
+  "failed signing preflight deletes keychain and certificate files",
   { skip: process.platform === "win32" },
   () => {
     const { command, calls } = mock("--sign");
@@ -85,10 +90,9 @@ test(
       /injected failure/,
     );
     assert.ok(calls.some((call) => call.includes("add-trusted-cert")));
-    const removed = calls.find((call) => call.includes("remove-trusted-cert"));
+    const removed = calls.find((call) => call[1] === "delete-keychain");
     assert.ok(removed);
-    assert.equal(existsSync(removed.at(-1)), false);
-    assert.ok(calls.some((call) => call[1] === "delete-keychain"));
+    assert.equal(existsSync(dirname(removed[2])), false);
   },
 );
 
@@ -115,22 +119,29 @@ test(
       /build failed/,
     );
     assert.ok(calls.some((call) => call.includes("--verify")));
-    assert.ok(calls.some((call) => call.includes("remove-trusted-cert")));
+    assert.equal(
+      calls.some((call) => call.includes("remove-trusted-cert")),
+      false,
+    );
     assert.ok(calls.some((call) => call[1] === "delete-keychain"));
     assert.ok(env.APPLE_CERTIFICATE);
   },
 );
 
 test(
-  "runner trust cleanup timeout preserves successful build and still removes key material",
+  "hosted runner teardown handles trust while private key material is deleted immediately",
   { skip: process.platform === "win32" },
   (t) => {
     const warning = t.mock.method(console, "warn", () => {});
     const { command, calls } = mock("remove-trusted-cert");
     const result = withMacSigning(env, () => "built artifacts", command);
     assert.equal(result, "built artifacts");
-    assert.equal(warning.mock.callCount(), 1);
-    assert.match(warning.mock.calls[0].arguments[0], /::warning::/);
+    assert.equal(warning.mock.callCount(), 0);
+    assert.ok(calls.some((call) => call.includes("add-trusted-cert")));
+    assert.equal(
+      calls.some((call) => call.includes("remove-trusted-cert")),
+      false,
+    );
     const removed = calls.find((call) => call[1] === "delete-keychain");
     assert.ok(removed);
     assert.equal(existsSync(dirname(removed[2])), false);
@@ -142,7 +153,7 @@ test(
       "-s",
       "/original.keychain-db",
     ]);
-    // The same cleanup error must never hide a genuine build failure.
+    // Deferring trust teardown must never hide a genuine build failure.
     assert.throws(
       () =>
         withMacSigning(
