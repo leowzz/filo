@@ -13,6 +13,7 @@ type State = {
   toggleHidden: () => void;
   toggleDetails: () => void;
   resetVolumeRoot: (volumeId: string) => void;
+  removeVolume: (volumeId: string) => void;
 };
 export const useBrowser = create<State>((set) => ({
   page: "overview",
@@ -43,4 +44,20 @@ export const useBrowser = create<State>((set) => ({
         location.volumeId === volumeId ? { ...location, path: "" } : location,
       ),
     })),
+  removeVolume: (volumeId) =>
+    set((state) => {
+      const currentRemoved = state.history[state.index]?.volumeId === volumeId;
+      const history = state.history.filter(
+        (location) => location.volumeId !== volumeId,
+      );
+      const before = state.history
+        .slice(0, state.index + 1)
+        .filter((location) => location.volumeId !== volumeId).length;
+      return {
+        history,
+        index: history.length ? Math.max(0, before - 1) : -1,
+        page:
+          currentRemoved && state.page === "browser" ? "overview" : state.page,
+      };
+    }),
 }));

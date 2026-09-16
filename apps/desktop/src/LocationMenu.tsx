@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Pencil } from "lucide-react";
+import { Pencil, Unplug } from "lucide-react";
 import type { Volume } from "./types";
 
 export type LocationMenuTarget = {
@@ -12,10 +12,12 @@ export type LocationMenuTarget = {
 export function LocationMenu({
   target,
   onEdit,
+  onRemove,
   onClose,
 }: {
   target: LocationMenuTarget;
   onEdit: (volume: Volume) => void;
+  onRemove: (volume: Volume) => void;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -50,7 +52,7 @@ export function LocationMenu({
       aria-label={`${target.volume.name} 连接菜单`}
       style={{
         left: Math.max(8, Math.min(target.x, window.innerWidth - 200)),
-        top: Math.max(8, Math.min(target.y, window.innerHeight - 88)),
+        top: Math.max(8, Math.min(target.y, window.innerHeight - 120)),
       }}
       onContextMenu={(event) => event.preventDefault()}
     >
@@ -58,6 +60,10 @@ export function LocationMenu({
       <button role="menuitem" onClick={() => onEdit(target.volume)}>
         <Pencil size={14} />
         编辑连接…
+      </button>
+      <button role="menuitem" onClick={() => onRemove(target.volume)}>
+        <Unplug size={14} />
+        移除位置…
       </button>
     </div>
   );

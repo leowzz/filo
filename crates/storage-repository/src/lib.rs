@@ -58,6 +58,54 @@ impl Repository {
             .collect()
     }
 
+    pub async fn save_transfer(&self, job: &TransferJob) -> StorageResult<()> {
+        sqlx::query("INSERT INTO transfer_jobs (id, kind, source_json, destination_json, state, bytes_total, bytes_transferred, error_code, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET state = excluded.state, bytes_total = excluded.bytes_total, bytes_transferred = excluded.bytes_transferred, error_code = excluded.error_code, error_message = excluded.error_message, updated_at = excluded.updated_at")
+            .bind(job.id.to_string())
+            .bind(serde_json::to_value(job.kind).map_err(database_error)?.as_str().unwrap_or_default())
+            .bind(serde_json::to_string(&job.source).map_err(database_error)?)
+            .bind(serde_json::to_string(&job.destination).map_err(database_error)?)
+            .bind(serde_json::to_value(job.state).map_err(database_error)?.as_str().unwrap_or_default())
+            .bind(job.bytes_total.map(|size| size as i64)).bind(job.bytes_transferred as i64)
+            .bind(job.error_code.as_ref().map(serde_json::to_string).transpose().map_err(database_error)?)
+            .bind(&job.error_message).bind(&job.created_at).bind(&job.updated_at)
+            .execute(&self.pool).await.map_err(database_error)?;
+        Ok(())
+    }
+
+    pub async fn list_transfers(&self) -> StorageResult<Vec<TransferJob>> {
+        let rows =
+            sqlx::query("SELECT * FROM transfer_jobs ORDER BY created_at DESC, id DESC LIMIT 200")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(database_error)?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(TransferJob {
+                    id: Uuid::parse_str(row.get("id")).map_err(database_error)?,
+                    kind: serde_json::from_value(serde_json::Value::String(row.get("kind")))
+                        .map_err(database_error)?,
+                    source: serde_json::from_str(row.get("source_json")).map_err(database_error)?,
+                    destination: serde_json::from_str(row.get("destination_json"))
+                        .map_err(database_error)?,
+                    state: serde_json::from_value(serde_json::Value::String(row.get("state")))
+                        .map_err(database_error)?,
+                    bytes_total: row
+                        .get::<Option<i64>, _>("bytes_total")
+                        .map(|size| size as u64),
+                    bytes_transferred: row.get::<i64, _>("bytes_transferred") as u64,
+                    error_code: row
+                        .get::<Option<String>, _>("error_code")
+                        .map(|value| serde_json::from_str(&value))
+                        .transpose()
+                        .map_err(database_error)?,
+                    error_message: row.get("error_message"),
+                    created_at: row.get("created_at"),
+                    updated_at: row.get("updated_at"),
+                })
+            })
+            .collect()
+    }
+
     pub async fn list_volumes(&self) -> StorageResult<Vec<StorageVolume>> {
         let rows = sqlx::query("SELECT * FROM volumes ORDER BY created_at, id")
             .fetch_all(&self.pool)
@@ -109,6 +157,22 @@ impl Repository {
         Ok(volume)
     }
 
+    /// Removes saved configuration only; never touches the local filesystem.
+    pub async fn remove_local(&self, volume_id: Uuid) -> StorageResult<()> {
+        let mut tx = self.pool.begin().await.map_err(database_error)?;
+        let connection_id: Option<String> = sqlx::query_scalar("DELETE FROM volumes WHERE id = ? AND connection_id IN (SELECT id FROM connections WHERE provider = 'local_fs') RETURNING connection_id")
+            .bind(volume_id.to_string()).fetch_optional(&mut *tx).await.map_err(database_error)?;
+        let Some(connection_id) = connection_id else {
+            return Err(StorageError::new(
+                StorageErrorCode::NotFound,
+                "未找到该本地位置",
+            ));
+        };
+        sqlx::query("DELETE FROM connections WHERE id = ? AND NOT EXISTS (SELECT 1 FROM volumes WHERE connection_id = ?)")
+            .bind(&connection_id).bind(&connection_id).execute(&mut *tx).await.map_err(database_error)?;
+        tx.commit().await.map_err(database_error)
+    }
+
     /// A local connection has one volume. Persist its display name, root and
     /// access mode together so a failed root change cannot partially save.
     pub async fn update_local(&self, volume: &StorageVolume) -> StorageResult<()> {
@@ -144,6 +208,61 @@ impl Repository {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn reopening_marks_unfinished_transfers_interrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("filo.db");
+        let repo = Repository::open(&db).await.unwrap();
+        for state in [
+            TransferState::Queued,
+            TransferState::Running,
+            TransferState::Verifying,
+            TransferState::Completed,
+        ] {
+            repo.save_transfer(&TransferJob {
+                id: Uuid::new_v4(),
+                kind: TransferKind::Copy,
+                source: StorageLocator {
+                    volume_id: Uuid::new_v4(),
+                    logical_path: "source".into(),
+                    version_id: None,
+                },
+                destination: StorageLocator {
+                    volume_id: Uuid::new_v4(),
+                    logical_path: "destination".into(),
+                    version_id: None,
+                },
+                state,
+                bytes_total: Some(100),
+                bytes_transferred: 50,
+                error_code: None,
+                error_message: None,
+                created_at: "2026-09-16T00:00:00Z".into(),
+                updated_at: "2026-09-16T00:00:00Z".into(),
+            })
+            .await
+            .unwrap();
+        }
+        repo.pool.close().await;
+        let reopened = Repository::open(&db).await.unwrap();
+        let jobs = reopened.list_transfers().await.unwrap();
+        assert_eq!(jobs.len(), 4);
+        assert_eq!(
+            jobs.iter()
+                .filter(|job| job.state == TransferState::Interrupted)
+                .count(),
+            3
+        );
+        assert_eq!(
+            jobs.iter()
+                .filter(|job| job.state == TransferState::Completed)
+                .count(),
+            1
+        );
+        assert!(jobs
+            .iter()
+            .all(|job| job.bytes_transferred == 50 && job.source.logical_path == "source"));
+    }
     #[tokio::test]
     async fn editing_local_storage_is_persistent_and_atomic() {
         let dir = tempfile::tempdir().unwrap();

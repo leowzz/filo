@@ -41,6 +41,46 @@ pub struct StorageLocator {
     pub version_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferKind {
+    Copy,
+    Move,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferState {
+    Queued,
+    Running,
+    Verifying,
+    Completed,
+    Failed,
+    Cancelled,
+    Interrupted,
+}
+
+impl TransferState {
+    pub fn active(self) -> bool {
+        matches!(self, Self::Queued | Self::Running | Self::Verifying)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferJob {
+    pub id: Uuid,
+    pub kind: TransferKind,
+    pub source: StorageLocator,
+    pub destination: StorageLocator,
+    pub state: TransferState,
+    pub bytes_total: Option<u64>,
+    pub bytes_transferred: u64,
+    pub error_code: Option<StorageErrorCode>,
+    pub error_message: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum StorageEntryKind {
@@ -82,6 +122,7 @@ pub struct StorageCapabilities {
     pub hierarchy: HierarchySemantics,
     pub rename: RenameSemantics,
     pub create_directory: bool,
+    pub write: bool,
     pub range_read: bool,
     pub multipart_write: bool,
     pub native_copy: bool,
@@ -105,6 +146,7 @@ impl StorageCapabilities {
                 RenameSemantics::Atomic
             },
             create_directory: !read_only,
+            write: !read_only,
             range_read: true,
             multipart_write: false,
             native_copy: false,
@@ -132,6 +174,7 @@ pub enum StorageErrorCode {
     Unsupported,
     Io,
     Internal,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Serialize, thiserror::Error)]

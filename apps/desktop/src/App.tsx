@@ -9,6 +9,8 @@ import {
   ChevronRight,
   CircleHelp,
   Cloud,
+  Copy,
+  FolderInput,
   Database,
   Eye,
   FolderOpen,
@@ -39,9 +41,19 @@ import {
   Modal,
   typeName,
 } from "./components";
-import { isDirectory, type Entry, type Locator, type Volume } from "./types";
+import {
+  activeTransfer,
+  isDirectory,
+  type Entry,
+  type Locator,
+  type Volume,
+  type TransferKind,
+} from "./types";
 import { LocationMenu, type LocationMenuTarget } from "./LocationMenu";
 import { EditLocationDialog } from "./EditLocationDialog";
+import { RemoveLocationDialog } from "./RemoveLocationDialog";
+import { TransferDialog } from "./TransferDialog";
+import { TransfersPage } from "./TransfersPage";
 
 type Dialog =
   | { type: "add" }
@@ -56,6 +68,14 @@ export default function App() {
     queryFn: api.volumes,
   });
   const volumes = volumesQuery.data ?? [];
+  const transfersQuery = useQuery({
+    queryKey: ["transfers"],
+    queryFn: api.transfers,
+    refetchInterval: (query) =>
+      query.state.data?.some(activeTransfer) ? 1000 : false,
+  });
+  const pendingTransfers =
+    transfersQuery.data?.filter(activeTransfer).length ?? 0;
   const location = state.history[state.index];
   const volume = volumes.find((item) => item.id === location?.volumeId);
   const path = location?.path ?? "";
@@ -81,6 +101,11 @@ export default function App() {
     null,
   );
   const [editingLocation, setEditingLocation] = useState<Volume | null>(null);
+  const [removingLocation, setRemovingLocation] = useState<Volume | null>(null);
+  const [transferDialog, setTransferDialog] = useState<{
+    entry: Entry;
+    kind: TransferKind;
+  } | null>(null);
   const closeLocationMenu = useCallback(() => setLocationMenu(null), []);
   const entries = (entriesQuery.data ?? [])
     .filter(
@@ -173,7 +198,10 @@ export default function App() {
             onClick={() => state.setPage("transfers")}
           >
             <ArrowDownUp size={17} />
-            传输任务<span className="soon">即将支持</span>
+            传输任务
+            {pendingTransfers > 0 && (
+              <span className="soon">{pendingTransfers}</span>
+            )}
           </button>
         </nav>
         <div className="section-label">
@@ -336,6 +364,30 @@ export default function App() {
                 }
               >
                 <Pencil size={18} />
+              </button>
+              <button
+                className="icon-button"
+                title="复制到…"
+                aria-label="复制到"
+                disabled={selected?.kind !== "file"}
+                onClick={() =>
+                  selected &&
+                  setTransferDialog({ entry: selected, kind: "copy" })
+                }
+              >
+                <Copy size={18} />
+              </button>
+              <button
+                className="icon-button"
+                title="移动到…"
+                aria-label="移动到"
+                disabled={selected?.kind !== "file" || volume.read_only}
+                onClick={() =>
+                  selected &&
+                  setTransferDialog({ entry: selected, kind: "move" })
+                }
+              >
+                <FolderInput size={18} />
               </button>
               <button
                 className="icon-button"
@@ -660,6 +712,36 @@ export default function App() {
                                       重命名
                                     </button>
                                   )}
+                                {entry.kind === "file" && (
+                                  <>
+                                    <button
+                                      role="menuitem"
+                                      onClick={() => {
+                                        setMenu(null);
+                                        setTransferDialog({
+                                          entry,
+                                          kind: "copy",
+                                        });
+                                      }}
+                                    >
+                                      复制到…
+                                    </button>
+                                    {!volume.read_only && (
+                                      <button
+                                        role="menuitem"
+                                        onClick={() => {
+                                          setMenu(null);
+                                          setTransferDialog({
+                                            entry,
+                                            kind: "move",
+                                          });
+                                        }}
+                                      >
+                                        移动到…
+                                      </button>
+                                    )}
+                                  </>
+                                )}
                                 {entry.kind !== "symlink" &&
                                   volume.capabilities.delete && (
                                     <button
@@ -803,21 +885,7 @@ export default function App() {
           </>
         )}
 
-        {state.page === "transfers" && (
-          <div className="page-scroll simple-page">
-            <h1>传输任务</h1>
-            <div className="feature-placeholder">
-              <ArrowDownUp size={40} strokeWidth={1.2} />
-              <h2>暂未启用文件传输</h2>
-              <p>
-                当前版本先完成本地目录管理。
-                <br />
-                文件复制、移动及跨存储传输将在后续版本接入。
-              </p>
-              <span className="pill">尚未启用</span>
-            </div>
-          </div>
-        )}
+        {state.page === "transfers" && <TransfersPage volumes={volumes} />}
         {state.page === "settings" && (
           <div className="page-scroll simple-page">
             <h1>设置</h1>
@@ -859,12 +927,27 @@ export default function App() {
                 存储连接保存在设备上的 SQLite
                 数据库。只能访问通过系统选择器添加的目录，不跟随符号链接；删除操作需要确认。
               </p>
-              <p>当前不提供文件预览、目录递归操作、S3 和文件传输。</p>
+              <p>
+                支持本地单文件复制与移动；当前不提供文件预览、目录递归操作和
+                S3。
+              </p>
             </section>
           </div>
         )}
       </main>
 
+      {transferDialog && (
+        <TransferDialog
+          {...transferDialog}
+          volumes={volumes}
+          onClose={() => setTransferDialog(null)}
+          onStarted={() => {
+            setTransferDialog(null);
+            setMenu(null);
+            state.setPage("transfers");
+          }}
+        />
+      )}
       {locationMenu && (
         <LocationMenu
           target={locationMenu}
@@ -872,6 +955,10 @@ export default function App() {
           onEdit={(item) => {
             setLocationMenu(null);
             setEditingLocation(item);
+          }}
+          onRemove={(item) => {
+            setLocationMenu(null);
+            setRemovingLocation(item);
           }}
         />
       )}
@@ -890,6 +977,21 @@ export default function App() {
               }
             }
             setEditingLocation(null);
+          }}
+        />
+      )}
+      {removingLocation && (
+        <RemoveLocationDialog
+          volume={removingLocation}
+          onClose={() => setRemovingLocation(null)}
+          onRemoved={() => {
+            if (volume?.id === removingLocation.id) {
+              setSelection(null);
+              setSearch("");
+              setMenu(null);
+              setNotice("");
+            }
+            setRemovingLocation(null);
           }}
         />
       )}

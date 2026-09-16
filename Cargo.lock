@@ -3742,13 +3742,16 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 name = "storage-application"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "provider-opendal",
  "serde",
+ "sha2",
  "storage-domain",
  "storage-provider-api",
  "storage-repository",
  "tempfile",
  "tokio",
+ "tokio-util",
  "uuid",
 ]
 
@@ -3768,6 +3771,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "storage-domain",
+ "tokio",
  "uuid",
 ]
 
@@ -4397,6 +4401,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

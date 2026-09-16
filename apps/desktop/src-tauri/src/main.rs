@@ -83,6 +83,44 @@ async fn update_local_storage(
         .map(Some)
 }
 #[tauri::command]
+async fn start_transfer(
+    service: State<'_, StorageService>,
+    kind: TransferKind,
+    source: StorageLocator,
+    destination: StorageLocator,
+    on_progress: tauri::ipc::Channel<TransferJob>,
+) -> StorageResult<TransferJob> {
+    service
+        .start_transfer(
+            kind,
+            source,
+            destination,
+            std::sync::Arc::new(move |job| {
+                let _ = on_progress.send(job);
+            }),
+        )
+        .await
+}
+#[tauri::command]
+async fn list_transfers(service: State<'_, StorageService>) -> StorageResult<Vec<TransferJob>> {
+    service.list_transfers().await
+}
+#[tauri::command]
+async fn cancel_transfer(
+    service: State<'_, StorageService>,
+    job_id: uuid::Uuid,
+) -> StorageResult<()> {
+    service.cancel_transfer(job_id).await
+}
+#[tauri::command]
+async fn remove_local_storage(
+    service: State<'_, StorageService>,
+    volume_id: uuid::Uuid,
+    confirmed: bool,
+) -> StorageResult<()> {
+    service.remove_local_storage(volume_id, confirmed).await
+}
+#[tauri::command]
 async fn stat_entry(
     service: State<'_, StorageService>,
     locator: StorageLocator,
@@ -136,6 +174,10 @@ fn main() {
             list_volumes,
             create_local_storage,
             update_local_storage,
+            remove_local_storage,
+            start_transfer,
+            list_transfers,
+            cancel_transfer,
             list_entries,
             stat_entry,
             create_directory,

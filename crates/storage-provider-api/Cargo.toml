@@ -7,3 +7,4 @@ edition.workspace = true
 storage-domain.workspace = true
 async-trait.workspace = true
 uuid.workspace = true
+tokio.workspace = true

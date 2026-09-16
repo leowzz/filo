@@ -5,6 +5,9 @@ use storage_provider_api::StorageBackend;
 use storage_repository::Repository;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+mod operation_planner;
+mod transfers;
+pub use transfers::TransferObserver;
 
 #[derive(serde::Serialize)]
 pub struct VolumeView {
@@ -13,16 +16,19 @@ pub struct VolumeView {
     pub capabilities: StorageCapabilities,
 }
 
+#[derive(Clone)]
 pub struct StorageService {
     repository: Repository,
-    mutation_lock: Mutex<()>,
+    mutation_lock: Arc<Mutex<()>>,
+    transfers: Arc<Mutex<std::collections::HashMap<Uuid, transfers::ActiveTransfer>>>,
 }
 
 impl StorageService {
     pub fn new(repository: Repository) -> Self {
         Self {
             repository,
-            mutation_lock: Mutex::new(()),
+            mutation_lock: Arc::new(Mutex::new(())),
+            transfers: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -92,7 +98,9 @@ impl StorageService {
         read_only: bool,
         selected_root: Option<PathBuf>,
     ) -> StorageResult<StorageVolume> {
+        drop(self.idle_volume(id).await?);
         let _guard = self.mutation_lock.lock().await;
+        let _transfers = self.idle_volume(id).await?;
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) {
             return Err(StorageError::new(
@@ -131,6 +139,23 @@ impl StorageService {
         }
         self.repository.update_local(&volume).await?;
         Ok(volume)
+    }
+
+    pub async fn remove_local_storage(
+        &self,
+        volume_id: Uuid,
+        confirmed: bool,
+    ) -> StorageResult<()> {
+        if !confirmed {
+            return Err(StorageError::new(
+                StorageErrorCode::Conflict,
+                "请先确认移除位置",
+            ));
+        }
+        drop(self.idle_volume(volume_id).await?);
+        let _guard = self.mutation_lock.lock().await;
+        let _transfers = self.idle_volume(volume_id).await?;
+        self.repository.remove_local(volume_id).await
     }
 
     pub async fn list_entries(&self, parent: StorageLocator) -> StorageResult<Vec<StorageEntry>> {
@@ -172,7 +197,7 @@ impl StorageService {
             logical_path: target_path,
             ..source.clone()
         };
-        // Local single-file rename is the only operation plan in this slice.
+        // Explicit rename stays within one local volume; transfers use operation_planner.
         self.backend(source.volume_id)
             .await?
             .rename(&source, &target)
@@ -200,6 +225,67 @@ impl StorageService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn removing_location_preserves_files_and_revokes_access() {
+        let directory = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let database = tempfile::tempdir().unwrap();
+        let database_path = database.path().join("test.sqlite");
+        let repo = Repository::open(&database_path).await.unwrap();
+        let service = StorageService::new(repo);
+        std::fs::write(directory.path().join("keep.txt"), b"keep").unwrap();
+        let volume = service
+            .add_selected_directory(directory.path().to_path_buf(), true)
+            .await
+            .unwrap();
+        let remaining = service
+            .add_selected_directory(other.path().to_path_buf(), false)
+            .await
+            .unwrap();
+        assert_eq!(
+            service
+                .remove_local_storage(volume.id, false)
+                .await
+                .unwrap_err()
+                .code,
+            StorageErrorCode::Conflict
+        );
+        assert_eq!(service.list_volumes().await.unwrap().len(), 2);
+        service.remove_local_storage(volume.id, true).await.unwrap();
+        assert_eq!(
+            std::fs::read(directory.path().join("keep.txt")).unwrap(),
+            b"keep"
+        );
+        assert_eq!(
+            service
+                .list_entries(StorageLocator {
+                    volume_id: volume.id,
+                    logical_path: String::new(),
+                    version_id: None
+                })
+                .await
+                .unwrap_err()
+                .code,
+            StorageErrorCode::NotFound
+        );
+        let reopened = Repository::open(&database_path).await.unwrap();
+        assert_eq!(reopened.list_volumes().await.unwrap()[0].id, remaining.id);
+        assert_eq!(reopened.list_connections().await.unwrap().len(), 1);
+        assert_eq!(
+            service
+                .remove_local_storage(volume.id, true)
+                .await
+                .unwrap_err()
+                .code,
+            StorageErrorCode::NotFound
+        );
+        let added = service
+            .add_selected_directory(directory.path().to_path_buf(), true)
+            .await
+            .unwrap();
+        assert_ne!(added.id, volume.id);
+    }
 
     #[tokio::test]
     async fn edited_read_only_is_enforced_by_subsequent_operations() {

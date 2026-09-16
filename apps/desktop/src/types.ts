@@ -29,3 +29,27 @@ export type Entry = {
 };
 export const isDirectory = (entry: Entry) =>
   entry.kind === "directory" || entry.kind === "virtual_prefix";
+
+export type TransferKind = "copy" | "move";
+export type TransferJob = {
+  id: string;
+  kind: TransferKind;
+  source: Locator;
+  destination: Locator;
+  state:
+    | "queued"
+    | "running"
+    | "verifying"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "interrupted";
+  bytes_total: number | null;
+  bytes_transferred: number;
+  error_code: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+export const activeTransfer = (job: TransferJob) =>
+  ["queued", "running", "verifying"].includes(job.state);

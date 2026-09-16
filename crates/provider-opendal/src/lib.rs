@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 
 use opendal::{services::Fs, ErrorKind, Operator};
 use storage_domain::*;
-use storage_provider_api::StorageBackend;
+use storage_provider_api::{StagedWrite, StorageBackend, StorageReader};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use uuid::Uuid;
 
 pub struct OpenDalLocalBackend {
@@ -10,6 +11,50 @@ pub struct OpenDalLocalBackend {
     root: PathBuf,
     read_only: bool,
     operator: Operator,
+}
+
+struct LocalStagedWrite {
+    temporary: tempfile::NamedTempFile,
+    writer: tokio::fs::File,
+    volume: StorageVolume,
+    target: StorageLocator,
+}
+
+#[async_trait::async_trait]
+impl StagedWrite for LocalStagedWrite {
+    async fn write(&mut self, bytes: &[u8]) -> StorageResult<()> {
+        self.writer.write_all(bytes).await.map_err(io_error)
+    }
+
+    async fn reader(&mut self) -> StorageResult<StorageReader> {
+        self.writer.flush().await.map_err(io_error)?;
+        self.writer.sync_all().await.map_err(io_error)?;
+        let mut reader = self.writer.try_clone().await.map_err(io_error)?;
+        reader
+            .seek(std::io::SeekFrom::Start(0))
+            .await
+            .map_err(io_error)?;
+        Ok(Box::pin(reader))
+    }
+
+    async fn commit(self: Box<Self>) -> StorageResult<()> {
+        let backend = OpenDalLocalBackend::new(&self.volume).await?;
+        let logical = backend.check_locator(&self.target)?;
+        backend.require_absent(&logical).await?;
+        let target = backend.checked_path(&logical, true).await?;
+        let Self {
+            temporary, writer, ..
+        } = *self;
+        drop(writer);
+        tokio::task::spawn_blocking(move || {
+            temporary
+                .persist_noclobber(target)
+                .map(|_| ())
+                .map_err(|error| io_error(error.error))
+        })
+        .await
+        .map_err(|_| StorageError::new(StorageErrorCode::Internal, "保存文件任务意外中断"))?
+    }
 }
 
 fn io_error(error: std::io::Error) -> StorageError {
@@ -247,6 +292,54 @@ impl StorageBackend for OpenDalLocalBackend {
         StorageCapabilities::local(self.read_only)
     }
 
+    async fn open_read(&self, locator: &StorageLocator) -> StorageResult<StorageReader> {
+        let logical = self.check_locator(locator)?;
+        let path = self.checked_path(&logical, false).await?;
+        if self.stat(locator).await?.kind != StorageEntryKind::File {
+            return Err(StorageError::new(
+                StorageErrorCode::Unsupported,
+                "当前只支持传输普通文件",
+            ));
+        }
+        Ok(Box::pin(
+            tokio::fs::File::open(path).await.map_err(io_error)?,
+        ))
+    }
+
+    async fn stage_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>> {
+        let logical = self.check_locator(locator)?;
+        self.writable(&logical)?;
+        self.require_absent(&logical).await?;
+        let path = self.checked_path(&logical, true).await?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| StorageError::new(StorageErrorCode::InvalidPath, "无效的目标目录"))?
+            .to_path_buf();
+        let temporary = tokio::task::spawn_blocking(move || {
+            tempfile::Builder::new()
+                .prefix(".filo-transfer-")
+                .tempfile_in(parent)
+        })
+        .await
+        .map_err(|_| StorageError::new(StorageErrorCode::Internal, "无法创建传输任务"))?
+        .map_err(io_error)?;
+        let writer = tokio::fs::File::from_std(temporary.reopen().map_err(io_error)?);
+        Ok(Box::new(LocalStagedWrite {
+            temporary,
+            writer,
+            target: locator.clone(),
+            volume: StorageVolume {
+                id: self.volume_id,
+                connection_id: Uuid::nil(),
+                name: String::new(),
+                root: VolumeRoot::Local {
+                    root_path: self.root.clone(),
+                },
+                read_only: self.read_only,
+            },
+        }))
+    }
+
     async fn list(&self, parent: &StorageLocator) -> StorageResult<Vec<StorageEntry>> {
         let logical = self.check_locator(parent)?;
         let path = self.checked_path(&logical, false).await?;
@@ -389,6 +482,36 @@ mod tests {
             version_id: None,
         }
     }
+    #[tokio::test]
+    async fn staged_write_never_replaces_a_late_target_and_cleans_up() {
+        let (directory, backend) = fixture(false).await;
+        let target = locator(&backend, "target");
+        let mut staged = backend.stage_write(&target).await.unwrap();
+        staged.write(b"new data").await.unwrap();
+        drop(staged.reader().await.unwrap());
+        std::fs::write(directory.path().join("target"), b"external data").unwrap();
+        assert_eq!(
+            staged.commit().await.unwrap_err().code,
+            StorageErrorCode::AlreadyExists
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("target")).unwrap(),
+            b"external data"
+        );
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        let (readonly_directory, readonly) = fixture(true).await;
+        assert!(readonly
+            .stage_write(&locator(&readonly, "blocked"))
+            .await
+            .is_err());
+        assert_eq!(
+            std::fs::read_dir(readonly_directory.path())
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+
     #[tokio::test]
     async fn existing_files_and_mutations() {
         let (dir, backend) = fixture(false).await;

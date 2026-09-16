@@ -1,5 +1,11 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { Entry, Locator, Volume } from "./types";
+import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
+import type {
+  Entry,
+  Locator,
+  Volume,
+  TransferJob,
+  TransferKind,
+} from "./types";
 
 export const desktop = isTauri();
 export const api = {
@@ -20,6 +26,26 @@ export const api = {
       changeDirectory,
     }),
   entries: (parent: Locator) => invoke<Entry[]>("list_entries", { parent }),
+  removeLocal: (volumeId: string) =>
+    invoke<void>("remove_local_storage", { volumeId, confirmed: true }),
+  transfers: () =>
+    desktop ? invoke<TransferJob[]>("list_transfers") : Promise.resolve([]),
+  cancelTransfer: (jobId: string) => invoke<void>("cancel_transfer", { jobId }),
+  startTransfer: (
+    kind: TransferKind,
+    source: Locator,
+    destination: Locator,
+    onProgress: (job: TransferJob) => void,
+  ) => {
+    const channel = new Channel<TransferJob>();
+    channel.onmessage = onProgress;
+    return invoke<TransferJob>("start_transfer", {
+      kind,
+      source,
+      destination,
+      onProgress: channel,
+    });
+  },
   createDirectory: (parent: Locator, name: string) =>
     invoke<void>("create_directory", { parent, name }),
   rename: (source: Locator, name: string) =>
