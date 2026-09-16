@@ -17,6 +17,8 @@ pub struct OpenDalS3Backend {
     volume_id: Uuid,
     read_only: bool,
     operator: Operator,
+    pub(crate) s3_client: aws_sdk_s3::Client,
+    bucket: String,
     namespace: String,
     prefix: String,
     limits: Arc<TransferLimits>,
@@ -130,47 +132,9 @@ impl OpenDalS3Backend {
             volume_id: volume.id,
             read_only: volume.read_only,
             operator,
+            s3_client: listing::client(config, credentials),
+            bucket: bucket.clone(),
         })
-    }
-
-    async fn list_checked(
-        &self,
-        parent: &StorageLocator,
-        strict: bool,
-    ) -> StorageResult<Vec<StorageEntry>> {
-        let path = self.path(parent, false)?;
-        let prefix = if path.is_empty() {
-            path
-        } else {
-            format!("{path}/")
-        };
-        let entries = self.operator.list(&prefix).await.map_err(error)?;
-        let mut result = Vec::new();
-        let mut paths = std::collections::HashSet::new();
-        for entry in entries {
-            let key = entry.path().strip_suffix('/').unwrap_or(entry.path());
-            if key == prefix.trim_end_matches('/') {
-                continue;
-            }
-            // Never alias a non-portable S3 key to another object through normalization.
-            if !normalize_path(key).is_ok_and(|normalized| normalized == key) {
-                if strict {
-                    return Err(StorageError::new(
-                        StorageErrorCode::Unsupported,
-                        "文件夹包含不支持的 S3 对象名称，操作已停止",
-                    ));
-                }
-                continue;
-            }
-            if !paths.insert(key.to_owned()) {
-                return Err(StorageError::new(
-                    StorageErrorCode::Unsupported,
-                    "此 Prefix 包含同名文件和目录，需在 S3 控制台整理后浏览",
-                ));
-            }
-            result.push(self.entry(entry.path(), entry.metadata()));
-        }
-        Ok(result)
     }
 
     fn path(&self, locator: &StorageLocator, write: bool) -> StorageResult<String> {

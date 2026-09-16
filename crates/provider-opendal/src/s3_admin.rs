@@ -1,10 +1,4 @@
-use aws_sdk_s3::{
-    config::{BehaviorVersion, Credentials, Region},
-    error::ProvideErrorMetadata,
-    presigning::PresigningConfig,
-    types::*,
-    Client,
-};
+use aws_sdk_s3::{error::ProvideErrorMetadata, presigning::PresigningConfig, types::*, Client};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, time::Duration};
 use storage_domain::ObjectVersion;
@@ -21,7 +15,9 @@ pub struct S3Admin {
 fn invalid(message: &str) -> StorageError {
     StorageError::new(StorageErrorCode::InvalidConfiguration, message)
 }
-fn failure<E: ProvideErrorMetadata>(error: aws_sdk_s3::error::SdkError<E>) -> StorageError {
+pub(crate) fn failure<E: ProvideErrorMetadata>(
+    error: aws_sdk_s3::error::SdkError<E>,
+) -> StorageError {
     let code = error
         .as_service_error()
         .and_then(|e| e.code())
@@ -59,31 +55,12 @@ impl S3Admin {
         credentials: &S3Credentials,
     ) -> StorageResult<Self> {
         // Reuse the ordinary provider's validation and credential/endpoint boundaries.
-        crate::OpenDalS3Backend::new(volume, config, credentials)?;
+        let backend = crate::OpenDalS3Backend::new(volume, config, credentials)?;
         let VolumeRoot::S3 { bucket, prefix } = &volume.root else {
             return Err(invalid("需要 S3 连接"));
         };
-        let mut builder = aws_sdk_s3::config::Builder::new()
-            .behavior_version(BehaviorVersion::latest())
-            .region(Region::new(config.region.clone()))
-            .credentials_provider(Credentials::new(
-                &credentials.access_key_id,
-                &credentials.secret_access_key,
-                credentials.session_token.clone(),
-                None,
-                "filo",
-            ))
-            .force_path_style(config.force_path_style)
-            .timeout_config(
-                aws_sdk_s3::config::timeout::TimeoutConfig::builder()
-                    .operation_timeout(Duration::from_secs(60))
-                    .build(),
-            );
-        if let Some(endpoint) = config.endpoint.as_ref().filter(|v| !v.is_empty()) {
-            builder = builder.endpoint_url(endpoint);
-        }
         Ok(Self {
-            client: Client::from_conf(builder.build()),
+            client: backend.s3_client,
             bucket: bucket.clone(),
             prefix: normalize_path(prefix)?,
             read_only: volume.read_only,
