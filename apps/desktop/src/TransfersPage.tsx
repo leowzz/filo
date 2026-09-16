@@ -38,11 +38,11 @@ export function TransfersPage({ volumes }: { volumes: Volume[] }) {
     onSuccess: () => client.invalidateQueries({ queryKey: ["transfers"] }),
   });
   const locationName = (locator: Locator) =>
-    `${volumes.find((volume) => volume.id === locator.volume_id)?.name ?? "已移除的位置"} / ${locator.logical_path}`;
+    `${volumes.find((volume) => volume.id === locator.volume_id)?.name ?? "所选文件或已移除的位置"} / ${locator.logical_path}`;
   return (
     <div className="page-scroll simple-page transfers-page">
       <h1>传输任务</h1>
-      <p className="muted">本地文件复制与移动 · 最近 200 项任务</p>
+      <p className="muted">文件上传、下载、复制与移动 · 最近 200 项任务</p>
       {(query.isError || cancel.isError) && (
         <p className="error-text" role="alert">
           {errorMessage(query.error ?? cancel.error)}

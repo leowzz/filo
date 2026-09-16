@@ -1,6 +1,6 @@
 # Filo · 菲洛
 
-本地优先的桌面存储管理器。当前为 **LocalFS 初版 Demo**，可以选择已有、带文件的目录；没有模拟文件数据，也不需要后端服务器。
+本地优先的桌面存储管理器。当前为 **LocalFS + S3 Demo**，可以选择已有、带文件的目录；没有模拟文件数据，也不需要后端服务器。
 
 ## 启动
 
@@ -30,7 +30,7 @@ make dev
 
 普通删除按后端能力优先移入回收站；回收站失败时提示「继续删除将永久删除，无法找回」，可取消或另行确认「仍然永久删除」；不会自动永久删除。不支持回收站的后端会在确认弹窗中明确提示永久删除。「强制删除」跳过回收站，需要单独确认。本地文件夹可整体移入回收站，永久删除仍仅支持空文件夹。重命名不会覆盖同名目标；暂不支持目录重命名和递归永久删除。双击普通文件用系统默认应用打开，详情通过右键「显示简介」查看。
 
-S3、Keychain 和跨云上传/下载属于下一阶段，本轮没有实现。参见 [本轮实施记录](docs/10-local-demo.md) 与 [完整指导文档](docs/README.md)。
+S3 兼容存储现已支持连接测试、系统钥匙串凭据保存、Bucket/Prefix 浏览、单文件上传下载、复制、移动、重命名和删除。点击「添加存储空间」→「S3 兼容存储」；S3 工具栏提供原生文件选择器上传/下载，复制和移动可在已连接的本地/S3 位置间执行。参见 [S3 与本机 RustFS](docs/11-s3.md)、[LocalFS 实施记录](docs/10-local-demo.md) 与 [完整指导文档](docs/README.md)。
 
 ## 工程结构
 
@@ -38,16 +38,16 @@ S3、Keychain 和跨云上传/下载属于下一阶段，本轮没有实现。�
 apps/desktop/                 React + TypeScript + Tauri 2
 crates/storage-domain/        领域类型、能力与错误、逻辑路径
 crates/storage-provider-api/  自有 StorageBackend
-crates/provider-opendal/      LocalFS 适配、安全检查
+crates/provider-opendal/      LocalFS / S3 适配、安全检查
 crates/storage-repository/    SQLx + SQLite
 crates/storage-application/   应用服务，串行写操作
-migrations/                  连接、存储空间、预留传输任务表
+migrations/                  连接、存储空间、传输任务表及 S3 迁移
 docs/                        从 init.md 整理的开发指导
 ```
 
 OpenDAL 类型只出现在 `provider-opendal` 中。为了防止并发目标覆盖，macOS/Linux 的单文件重命名使用 Provider 内封装的 `renameat_with(NOREPLACE)`；浏览、创建目录与删除使用 OpenDAL；流式传输使用 Provider 内部的文件句柄和独占临时文件，校验后以 no-clobber 方式发布。系统打开和回收站也封装在 Provider 内，前端只提交受约束的 StorageLocator，不安装或调用 FS Plugin。
 
-复制和移动入口在文件工具栏及操作菜单中。目标位置须可写；移动的源位置也须可写。文件按 256 KiB 分块传输，大小与 SHA-256 校验通过后发布目标，同名文件不会被覆盖。本地写任务依次执行，支持取消排队、复制及校验中的任务；文件提交开始后会完成操作。连接有传输任务时，需先取消或等待任务完成再编辑、移除。
+复制和移动入口在文件工具栏及操作菜单中。目标位置须可写；移动的源位置也须可写。文件按 256 KiB 分块传输，大小与 SHA-256 校验通过后发布目标，同名文件不会被覆盖。本地与 S3 写任务依次执行，支持取消排队、复制及校验中的任务；文件提交开始后会完成操作。连接有传输任务时，需先取消或等待任务完成再编辑、移除。
 
 macOS 配置数据库位于 `~/Library/Application Support/dev.filo.desktop/filo.sqlite`。不会复制或导入所选目录中的文件。当前浏览偏好只在本次会话保留。
 

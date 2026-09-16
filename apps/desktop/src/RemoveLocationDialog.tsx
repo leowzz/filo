@@ -32,7 +32,7 @@ export function RemoveLocationDialog({
     <Modal title="移除位置" onClose={onClose} busy={mutation.isPending}>
       <p className="modal-description">
         将「{volume.name}」从 Filo
-        的位置列表中移除？磁盘上的目录和文件会保留，你可以随时重新添加。
+        的位置列表中移除？存储中的目录和文件会保留，你可以随时重新添加。
       </p>
       {mutation.isError && (
         <p className="error-text" role="alert">

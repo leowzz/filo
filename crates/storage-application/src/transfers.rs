@@ -167,6 +167,10 @@ impl StorageService {
             }
         }
         self.transfers.lock().await.remove(&job.id);
+        let mut temporary = self.temporary_backends.lock().await;
+        temporary.remove(&job.source.volume_id);
+        temporary.remove(&job.destination.volume_id);
+        drop(temporary);
         // Always deliver the terminal event, even when persisting it fails.
         if let Err(error) = self.report(&mut job, &observer).await {
             job.error_message = Some(format!("{}；任务最终状态未能保存", error.message));
@@ -191,7 +195,7 @@ impl StorageService {
         job.state = TransferState::Running;
         self.report(job, observer).await?;
         match plan(job.kind, &job.source, &job.destination)? {
-            OperationPlan::NativeRename => {
+            OperationPlan::ProviderRename => {
                 if token.is_cancelled() {
                     return Err(cancelled());
                 }
@@ -289,6 +293,7 @@ fn unchanged(before: &StorageEntry, after: &StorageEntry) -> StorageResult<()> {
     if before.kind != after.kind
         || before.size != after.size
         || before.modified_at != after.modified_at
+        || before.etag != after.etag
     {
         return Err(StorageError::new(
             StorageErrorCode::Conflict,

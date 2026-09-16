@@ -5,6 +5,8 @@ use storage_domain::*;
 use storage_provider_api::{StagedWrite, StorageBackend, StorageReader};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use uuid::Uuid;
+mod s3;
+pub use s3::OpenDalS3Backend;
 
 pub struct OpenDalLocalBackend {
     volume_id: Uuid,

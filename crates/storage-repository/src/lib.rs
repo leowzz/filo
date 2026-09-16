@@ -157,15 +157,36 @@ impl Repository {
         Ok(volume)
     }
 
+    pub async fn save_s3(
+        &self,
+        connection: &StorageConnection,
+        volume: &StorageVolume,
+    ) -> StorageResult<()> {
+        let mut tx = self.pool.begin().await.map_err(database_error)?;
+        sqlx::query("INSERT INTO connections (id, name, provider, config_json, credential_ref) VALUES (?, ?, 's3', ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, config_json=excluded.config_json, credential_ref=excluded.credential_ref, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')")
+            .bind(connection.id.to_string()).bind(&connection.name)
+            .bind(serde_json::to_string(&connection.config).map_err(database_error)?)
+            .bind(&connection.credential_ref).execute(&mut *tx).await.map_err(database_error)?;
+        sqlx::query("INSERT INTO volumes (id, connection_id, name, root_json, read_only) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, root_json=excluded.root_json, read_only=excluded.read_only, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')")
+            .bind(volume.id.to_string()).bind(volume.connection_id.to_string()).bind(&volume.name)
+            .bind(serde_json::to_string(&volume.root).map_err(database_error)?).bind(volume.read_only)
+            .execute(&mut *tx).await.map_err(database_error)?;
+        tx.commit().await.map_err(database_error)
+    }
+
     /// Removes saved configuration only; never touches the local filesystem.
     pub async fn remove_local(&self, volume_id: Uuid) -> StorageResult<()> {
         let mut tx = self.pool.begin().await.map_err(database_error)?;
-        let connection_id: Option<String> = sqlx::query_scalar("DELETE FROM volumes WHERE id = ? AND connection_id IN (SELECT id FROM connections WHERE provider = 'local_fs') RETURNING connection_id")
-            .bind(volume_id.to_string()).fetch_optional(&mut *tx).await.map_err(database_error)?;
+        let connection_id: Option<String> =
+            sqlx::query_scalar("DELETE FROM volumes WHERE id = ? RETURNING connection_id")
+                .bind(volume_id.to_string())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(database_error)?;
         let Some(connection_id) = connection_id else {
             return Err(StorageError::new(
                 StorageErrorCode::NotFound,
-                "未找到该本地位置",
+                "未找到该位置",
             ));
         };
         sqlx::query("DELETE FROM connections WHERE id = ? AND NOT EXISTS (SELECT 1 FROM volumes WHERE connection_id = ?)")

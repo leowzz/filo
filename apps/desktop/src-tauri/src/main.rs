@@ -7,6 +7,68 @@ use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
+async fn save_s3_storage(
+    service: State<'_, StorageService>,
+    volume_id: Option<uuid::Uuid>,
+    input: S3StorageInput,
+) -> StorageResult<StorageVolume> {
+    service.save_s3_storage(volume_id, input).await
+}
+#[tauri::command]
+async fn test_s3_connection(
+    service: State<'_, StorageService>,
+    volume_id: Option<uuid::Uuid>,
+    input: S3StorageInput,
+) -> StorageResult<()> {
+    service.test_s3_connection(volume_id, input).await
+}
+#[tauri::command]
+async fn transfer_local_file(
+    app: tauri::AppHandle,
+    service: State<'_, StorageService>,
+    remote: StorageLocator,
+    upload: bool,
+    on_progress: tauri::ipc::Channel<TransferJob>,
+) -> StorageResult<Option<TransferJob>> {
+    // Authorize the remote locator before opening any native picker.
+    let entry = service.stat_entry(remote.clone()).await?;
+    let name = entry.name;
+    let selected = tauri::async_runtime::spawn_blocking(move || {
+        if upload {
+            app.dialog()
+                .file()
+                .set_title("选择上传文件")
+                .blocking_pick_file()
+        } else {
+            app.dialog()
+                .file()
+                .set_title("保存下载文件")
+                .set_file_name(name)
+                .blocking_save_file()
+        }
+    })
+    .await
+    .map_err(|_| StorageError::new(StorageErrorCode::Internal, "无法打开文件选择器"))?;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let path = selected
+        .into_path()
+        .map_err(|_| StorageError::new(StorageErrorCode::InvalidPath, "请选择本地文件"))?;
+    service
+        .transfer_selected_file(
+            path,
+            remote,
+            upload,
+            std::sync::Arc::new(move |job| {
+                let _ = on_progress.send(job);
+            }),
+        )
+        .await
+        .map(Some)
+}
+
+#[tauri::command]
 async fn list_connections(
     service: State<'_, StorageService>,
 ) -> StorageResult<Vec<StorageConnection>> {
@@ -174,10 +236,13 @@ fn main() {
             let repository =
                 tauri::async_runtime::block_on(Repository::open(&data.join("filo.sqlite")))?;
             app.manage(StorageService::new(repository));
-            tracing::info!("Filo LocalFS is ready");
+            tracing::info!("Filo storage is ready");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            save_s3_storage,
+            test_s3_connection,
+            transfer_local_file,
             list_connections,
             list_volumes,
             create_local_storage,

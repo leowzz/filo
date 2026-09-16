@@ -7,10 +7,34 @@ import type {
   TransferKind,
   DeleteMode,
   DeleteOutcome,
+  Connection,
+  S3Input,
 } from "./types";
 
 export const desktop = isTauri();
 export const api = {
+  connections: () =>
+    desktop ? invoke<Connection[]>("list_connections") : Promise.resolve([]),
+  saveS3: (volumeId: string | null, input: S3Input) =>
+    invoke<Omit<Volume, "capabilities">>("save_s3_storage", {
+      volumeId,
+      input,
+    }),
+  testS3: (volumeId: string | null, input: S3Input) =>
+    invoke<void>("test_s3_connection", { volumeId, input }),
+  transferLocalFile: (
+    remote: Locator,
+    upload: boolean,
+    onProgress: (job: TransferJob) => void,
+  ) => {
+    const channel = new Channel<TransferJob>();
+    channel.onmessage = onProgress;
+    return invoke<TransferJob | null>("transfer_local_file", {
+      remote,
+      upload,
+      onProgress: channel,
+    });
+  },
   volumes: () =>
     desktop ? invoke<Volume[]>("list_volumes") : Promise.resolve([]),
   addLocal: (readOnly: boolean) =>

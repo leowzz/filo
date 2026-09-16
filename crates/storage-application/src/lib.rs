@@ -1,11 +1,14 @@
-use provider_opendal::OpenDalLocalBackend;
+use provider_opendal::{OpenDalLocalBackend, OpenDalS3Backend};
 use std::{path::PathBuf, sync::Arc};
 use storage_domain::*;
 use storage_provider_api::StorageBackend;
 use storage_repository::Repository;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+mod credentials;
 mod file_operations;
+mod s3;
+pub use credentials::{CredentialStore, SystemCredentialStore};
 mod operation_planner;
 mod transfers;
 pub use transfers::TransferObserver;
@@ -21,12 +24,20 @@ pub struct VolumeView {
 pub struct StorageService {
     repository: Repository,
     mutation_lock: Arc<Mutex<()>>,
+    credentials: Arc<dyn CredentialStore>,
+    temporary_backends: Arc<Mutex<std::collections::HashMap<Uuid, Arc<dyn StorageBackend>>>>,
     transfers: Arc<Mutex<std::collections::HashMap<Uuid, transfers::ActiveTransfer>>>,
 }
 
 impl StorageService {
     pub fn new(repository: Repository) -> Self {
+        Self::with_credentials(repository, Arc::new(SystemCredentialStore))
+    }
+
+    pub fn with_credentials(repository: Repository, credentials: Arc<dyn CredentialStore>) -> Self {
         Self {
+            credentials,
+            temporary_backends: Arc::new(Mutex::new(std::collections::HashMap::new())),
             repository,
             mutation_lock: Arc::new(Mutex::new(())),
             transfers: Arc::new(Mutex::new(std::collections::HashMap::new())),
@@ -44,7 +55,10 @@ impl StorageService {
             .await?
             .into_iter()
             .map(|volume| VolumeView {
-                capabilities: StorageCapabilities::local(volume.read_only),
+                capabilities: match volume.root {
+                    VolumeRoot::Local { .. } => StorageCapabilities::local(volume.read_only),
+                    VolumeRoot::S3 { .. } => StorageCapabilities::s3(volume.read_only),
+                },
                 volume,
             })
             .collect())
@@ -81,6 +95,9 @@ impl StorageService {
     }
 
     async fn backend(&self, id: Uuid) -> StorageResult<Arc<dyn StorageBackend>> {
+        if let Some(backend) = self.temporary_backends.lock().await.get(&id).cloned() {
+            return Ok(backend);
+        }
         let volume = self
             .repository
             .list_volumes()
@@ -88,7 +105,23 @@ impl StorageService {
             .into_iter()
             .find(|v| v.id == id)
             .ok_or_else(|| StorageError::new(StorageErrorCode::NotFound, "未找到该存储空间"))?;
-        Ok(Arc::new(OpenDalLocalBackend::new(&volume).await?))
+        match &volume.root {
+            VolumeRoot::Local { .. } => Ok(Arc::new(OpenDalLocalBackend::new(&volume).await?)),
+            VolumeRoot::S3 { .. } => {
+                let connection = self.connection(volume.connection_id).await?;
+                let credentials = self
+                    .load_credentials(connection.credential_ref.clone())
+                    .await?;
+                let config = serde_json::from_value(connection.config).map_err(|_| {
+                    StorageError::new(StorageErrorCode::InvalidConfiguration, "S3 配置损坏")
+                })?;
+                Ok(Arc::new(OpenDalS3Backend::new(
+                    &volume,
+                    &config,
+                    &credentials,
+                )?))
+            }
+        }
     }
 
     /// selected_root, when present, comes only from a Rust native dialog.
@@ -156,7 +189,7 @@ impl StorageService {
         drop(self.idle_volume(volume_id).await?);
         let _guard = self.mutation_lock.lock().await;
         let _transfers = self.idle_volume(volume_id).await?;
-        self.repository.remove_local(volume_id).await
+        self.remove_storage_configuration(volume_id).await
     }
 
     pub async fn list_entries(&self, parent: StorageLocator) -> StorageResult<Vec<StorageEntry>> {
@@ -198,7 +231,7 @@ impl StorageService {
             logical_path: target_path,
             ..source.clone()
         };
-        // Explicit rename stays within one local volume; transfers use operation_planner.
+        // Each provider preserves its advertised rename semantics and verifies remote copies.
         self.backend(source.volume_id)
             .await?
             .rename(&source, &target)

@@ -2,8 +2,12 @@ use storage_domain::*;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum OperationPlan {
-    NativeRename,
-    StreamCopy { delete_source: bool },
+    /// Same-volume move uses the provider's advertised rename semantics:
+    /// local atomic rename, or S3 copy/verify/delete.
+    ProviderRename,
+    StreamCopy {
+        delete_source: bool,
+    },
 }
 
 pub fn plan(
@@ -20,7 +24,7 @@ pub fn plan(
     }
     Ok(
         if kind == TransferKind::Move && source.volume_id == destination.volume_id {
-            OperationPlan::NativeRename
+            OperationPlan::ProviderRename
         } else {
             OperationPlan::StreamCopy {
                 delete_source: kind == TransferKind::Move,
@@ -45,7 +49,7 @@ mod tests {
         };
         assert_eq!(
             plan(TransferKind::Move, &source, &target).unwrap(),
-            OperationPlan::NativeRename
+            OperationPlan::ProviderRename
         );
         assert_eq!(
             plan(TransferKind::Copy, &source, &target).unwrap(),

@@ -10,7 +10,11 @@ async-trait.workspace = true
 uuid.workspace = true
 tokio.workspace = true
 serde_json.workspace = true
-opendal = { version = "0.54", default-features = false, features = ["services-fs", "executors-tokio"] }
+opendal = { version = "0.57", default-features = false, features = ["services-fs", "services-s3", "executors-tokio", "reqwest-rustls-tls", "layers-timeout"] }
+tokio-util = { workspace = true, features = ["compat"] }
+url = "2"
+sha2.workspace = true
+futures = "0.3"
 chrono = "0.4"
 tempfile.workspace = true
 open = "5"

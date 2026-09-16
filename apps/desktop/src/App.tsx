@@ -2,6 +2,8 @@ import { useCallback, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownUp,
+  Upload,
+  Download,
   ChevronLeft,
   ArrowRight,
   ArrowUp,
@@ -50,10 +52,12 @@ import {
   type Volume,
   type TransferKind,
   type DeleteMode,
+  type TransferJob,
 } from "./types";
 import { LocationMenu, type LocationMenuTarget } from "./LocationMenu";
 import { EditLocationDialog } from "./EditLocationDialog";
 import { RemoveLocationDialog } from "./RemoveLocationDialog";
+import { S3StorageDialog } from "./S3StorageDialog";
 import { TransferDialog } from "./TransferDialog";
 import { TransfersPage } from "./TransfersPage";
 import { DeleteEntryDialog } from "./DeleteEntryDialog";
@@ -96,6 +100,7 @@ export default function App() {
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [name, setName] = useState("");
   const [readOnly, setReadOnly] = useState(false);
+  const [addingS3, setAddingS3] = useState(false);
   const [notice, setNotice] = useState("");
   const [menu, setMenu] = useState<string | null>(null);
   const [menuPosition, setMenuPosition] = useState<{
@@ -192,6 +197,24 @@ export default function App() {
     setSelection(entry.locator.logical_path);
     if (!state.showDetails) state.toggleDetails();
   }
+  const fileTransfer = useMutation({
+    mutationFn: ({ remote, upload }: { remote: Locator; upload: boolean }) =>
+      api.transferLocalFile(remote, upload, (job) => {
+        client.setQueryData<TransferJob[]>(["transfers"], (current) => [
+          job,
+          ...(current ?? []).filter((item) => item.id !== job.id),
+        ]);
+        if (!activeTransfer(job))
+          void client.invalidateQueries({ queryKey: ["entries"] });
+      }),
+    onSuccess: (job) => {
+      if (job) {
+        void client.invalidateQueries({ queryKey: ["transfers"] });
+        state.setPage("transfers");
+      }
+    },
+    onError: (error) => setNotice(errorMessage(error)),
+  });
   function openEntry(entry: Entry) {
     if (isDirectory(entry) && volume)
       navigate(volume.id, entry.locator.logical_path);
@@ -201,7 +224,8 @@ export default function App() {
       !opening.isPending
     )
       opening.mutate(entry.locator);
-    else if (entry.kind === "symlink") showDetails(entry);
+    else if (entry.kind === "symlink" || entry.kind === "file")
+      showDetails(entry);
   }
   function showEntryMenu(
     entry: Entry,
@@ -400,6 +424,38 @@ export default function App() {
               >
                 <ExternalLink size={18} />
               </button>
+              {volume.root.type === "s3" && (
+                <>
+                  <button
+                    className="icon-button"
+                    title="上传文件"
+                    aria-label="上传文件"
+                    disabled={volume.read_only || fileTransfer.isPending}
+                    onClick={() =>
+                      fileTransfer.mutate({ remote: parent, upload: true })
+                    }
+                  >
+                    <Upload size={18} />
+                  </button>
+                  <button
+                    className="icon-button"
+                    title="下载文件"
+                    aria-label="下载文件"
+                    disabled={
+                      selected?.kind !== "file" || fileTransfer.isPending
+                    }
+                    onClick={() =>
+                      selected &&
+                      fileTransfer.mutate({
+                        remote: selected.locator,
+                        upload: false,
+                      })
+                    }
+                  >
+                    <Download size={18} />
+                  </button>
+                </>
+              )}
               <button
                 className="icon-button"
                 title="新建文件夹"
@@ -539,8 +595,8 @@ export default function App() {
           <div className="overview page-scroll">
             <div className="page-heading">
               <div>
-                <h2>这台 Mac 上的存储空间</h2>
-                <p>连接已有目录，浏览和管理你的文件。</p>
+                <h2>你的存储空间</h2>
+                <p>连接本地目录或 S3 存储，浏览和管理你的文件。</p>
               </div>
               <button
                 className="primary"
@@ -558,7 +614,7 @@ export default function App() {
                 </span>
                 <strong>
                   {volumes.length.toString().padStart(2, "0")}
-                  <small>个目录</small>
+                  <small>个位置</small>
                 </strong>
               </div>
               <div>
@@ -570,7 +626,7 @@ export default function App() {
                   {new Set(volumes.map((item) => item.connection_id)).size
                     .toString()
                     .padStart(2, "0")}
-                  <small>个本地连接</small>
+                  <small>个连接</small>
                 </strong>
               </div>
               <div>
@@ -579,7 +635,7 @@ export default function App() {
                   数据访问
                 </span>
                 <strong className="text-stat">
-                  仅限所选目录<small>无需上传，无需云端</small>
+                  仅限授权位置<small>本地目录与 S3 Bucket / Prefix</small>
                 </strong>
               </div>
             </div>
@@ -602,25 +658,31 @@ export default function App() {
                     key={item.id}
                     onClick={() => openVolume(item)}
                   >
-                    <div className="card-top">
-                      <span className="drive-tile">
-                        <HardDrive size={25} />
-                      </span>
-                      <span className="pill">
-                        {item.read_only ? "只读" : "本地目录"}
-                      </span>
+                    <span className="drive-tile">
+                      <HardDrive size={22} />
+                    </span>
+                    <div className="volume-info">
+                      <h3>{item.name}</h3>
+                      <p
+                        title={
+                          item.root.type === "local"
+                            ? item.root.root_path
+                            : `s3://${item.root.bucket}/${item.root.prefix}`
+                        }
+                      >
+                        {item.root.type === "local"
+                          ? item.root.root_path
+                          : `s3://${item.root.bucket}/${item.root.prefix}`}
+                      </p>
                     </div>
-                    <h3>{item.name}</h3>
-                    <p
-                      title={
-                        item.root.type === "local" ? item.root.root_path : ""
-                      }
-                    >
-                      {item.root.type === "local"
-                        ? item.root.root_path
-                        : item.name}
-                    </p>
                     <div className="card-bottom">
+                      <span className="pill">
+                        {item.read_only
+                          ? "只读"
+                          : item.root.type === "s3"
+                            ? "S3"
+                            : "本地目录"}
+                      </span>
                       <span>打开文件浏览器</span>
                       <ArrowRight size={17} />
                     </div>
@@ -633,10 +695,14 @@ export default function App() {
                   <span>
                     <Plus size={25} />
                   </span>
-                  <h3>
-                    {volumes.length ? "连接另一个目录" : "从一个本地目录开始"}
-                  </h3>
-                  <p>选择已有目录，直接浏览其中的文件</p>
+                  <div className="volume-info">
+                    <h3>
+                      {volumes.length
+                        ? "连接另一个存储空间"
+                        : "连接本地目录或 S3"}
+                    </h3>
+                    <p>选择已有目录，直接浏览其中的文件</p>
+                  </div>
                 </button>
               </div>
             )}
@@ -853,7 +919,9 @@ export default function App() {
                       ? "多个项目"
                       : selected
                         ? typeName(selected)
-                        : "本地文件系统"}
+                        : volume.root.type === "s3"
+                          ? "S3 兼容存储"
+                          : "本地文件系统"}
                   </span>
                   <dl>
                     <dt>位置</dt>
@@ -890,7 +958,9 @@ export default function App() {
                     <p>
                       {selected?.kind === "symlink"
                         ? "符号链接仅展示，不允许通过链接访问或修改文件。"
-                        : "文件保留在原始目录，所有更改直接应用到本地文件系统。"}
+                        : volume.root.type === "s3"
+                          ? "更改直接应用到 S3 对象。删除为永久删除，重命名会先复制并校验目标。"
+                          : "文件保留在原始目录，所有更改直接应用到本地文件系统。"}
                     </p>
                   </div>
                 </aside>
@@ -939,7 +1009,11 @@ export default function App() {
               </span>
               <span>
                 <span className="status-dot" />
-                {volume.read_only ? "只读访问" : "本地文件系统"}
+                {volume.read_only
+                  ? "只读访问"
+                  : volume.root.type === "s3"
+                    ? "S3 兼容存储"
+                    : "本地文件系统"}
                 <span className="status-separator">/</span>双击打开文件或文件夹
               </span>
             </footer>
@@ -983,14 +1057,14 @@ export default function App() {
                 <ShieldCheck size={19} />
                 关于这个版本
               </h2>
-              <p>Filo 0.1.0 · LocalFS Demo</p>
+              <p>Filo 0.1.0 · LocalFS + S3</p>
               <p>
                 存储连接保存在设备上的 SQLite
                 数据库。只能访问通过系统选择器添加的目录，不跟随符号链接；删除操作需要确认。
               </p>
               <p>
-                支持本地单文件复制与移动；当前不提供文件预览、目录递归操作和
-                S3。
+                支持本地与 S3
+                之间的单文件上传、下载、复制和移动；暂不提供文件预览和目录递归传输。
               </p>
             </section>
           </div>
@@ -1050,7 +1124,26 @@ export default function App() {
           }}
         />
       )}
-      {editingLocation && (
+      {addingS3 && (
+        <S3StorageDialog
+          onClose={() => setAddingS3(false)}
+          onSaved={(saved) => {
+            setAddingS3(false);
+            navigate(saved.id, "");
+          }}
+        />
+      )}
+      {editingLocation?.root.type === "s3" && (
+        <S3StorageDialog
+          volume={editingLocation}
+          onClose={() => setEditingLocation(null)}
+          onSaved={(saved) => {
+            setEditingLocation(null);
+            navigate(saved.id, "");
+          }}
+        />
+      )}
+      {editingLocation?.root.type === "local" && (
         <EditLocationDialog
           key={editingLocation.id}
           volume={editingLocation}
@@ -1111,11 +1204,22 @@ export default function App() {
                   </div>
                   <Check size={19} />
                 </div>
-                <div className="provider-soon">
-                  <Cloud size={19} />
-                  <span>S3 兼容存储</span>
-                  <span className="pill">后续版本</span>
-                </div>
+                <button
+                  type="button"
+                  className="provider-choice s3-choice"
+                  disabled={!desktop}
+                  onClick={() => {
+                    setDialog(null);
+                    setAddingS3(true);
+                  }}
+                >
+                  <Cloud size={23} />
+                  <div>
+                    <strong>S3 兼容存储</strong>
+                    <p>RustFS、MinIO、AWS S3 等</p>
+                  </div>
+                  <ChevronRight size={19} />
+                </button>
                 <label className="checkbox-label">
                   <input
                     type="checkbox"

@@ -1,5 +1,7 @@
 # 本轮 LocalFS Demo
 
+> 本文保留 LocalFS 阶段的实施历史；后续 S3 / Keychain / 跨存储传输已实现，见 [S3 与本机 RustFS](11-s3.md)。
+
 ## 本轮目标
 
 按用户补充要求，先实现能够连接已有目录的 LocalFS 桌面演示。`init.md` 中 LocalFS + S3 + 传输引擎是完整 Demo 的目标，不能将本轮完成等同于全部验收完成。

@@ -3,6 +3,29 @@ export type Locator = {
   logical_path: string;
   version_id: string | null;
 };
+export type S3Config = {
+  endpoint: string | null;
+  region: string;
+  force_path_style: boolean;
+};
+export type Connection = {
+  id: string;
+  name: string;
+  provider: "local_fs" | "s3";
+  config: S3Config;
+};
+export type S3Input = {
+  name: string;
+  config: S3Config;
+  bucket: string;
+  prefix: string;
+  read_only: boolean;
+  credentials: {
+    access_key_id: string;
+    secret_access_key: string;
+    session_token: string | null;
+  } | null;
+};
 export type Capabilities = {
   hierarchy: "native_directory" | "virtual_prefix";
   rename: "atomic" | "copy_then_delete" | "unsupported";

@@ -9,6 +9,32 @@ pub enum ProviderKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct S3ConnectionConfig {
+    pub endpoint: Option<String>,
+    pub region: String,
+    pub force_path_style: bool,
+}
+
+// Never derive Debug: credentials must not enter logs or error messages.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct S3Credentials {
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    pub session_token: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct S3StorageInput {
+    pub name: String,
+    pub config: S3ConnectionConfig,
+    pub bucket: String,
+    pub prefix: String,
+    pub read_only: bool,
+    /// Omit when editing to retain the saved credentials.
+    pub credentials: Option<S3Credentials>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConnection {
     pub id: Uuid,
     pub name: String,
@@ -153,6 +179,21 @@ pub struct StorageCapabilities {
 }
 
 impl StorageCapabilities {
+    pub fn s3(read_only: bool) -> Self {
+        Self {
+            hierarchy: HierarchySemantics::VirtualPrefix,
+            rename: if read_only {
+                RenameSemantics::Unsupported
+            } else {
+                RenameSemantics::CopyThenDelete
+            },
+            multipart_write: !read_only,
+            server_side_copy: !read_only,
+            trash: false,
+            native_open: false,
+            ..Self::local(read_only)
+        }
+    }
     pub fn local(read_only: bool) -> Self {
         Self {
             hierarchy: HierarchySemantics::NativeDirectory,
@@ -188,6 +229,9 @@ impl StorageCapabilities {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum StorageErrorCode {
+    AuthenticationFailed,
+    Network,
+    Timeout,
     TrashUnavailable,
     InvalidConfiguration,
     InvalidPath,
