@@ -19,12 +19,11 @@ fn check_reference(reference: &str) -> StorageResult<()> {
     Ok(())
 }
 
-// Missing items must be distinguished from locked/denied/corrupt items. Only a
+// Missing data must be distinguished from locked/denied/corrupt data. Only a
 // missing vault can be initialized; treating other failures as empty loses data.
-trait Items: Send + Sync {
-    fn read(&self, account: &str) -> StorageResult<Option<String>>;
-    fn write(&self, account: &str, value: &str) -> StorageResult<()>;
-    fn delete(&self, account: &str) -> StorageResult<()>;
+trait VaultStorage: Send + Sync {
+    fn read(&self) -> StorageResult<Option<String>>;
+    fn write(&self, value: &str) -> StorageResult<()>;
 }
 
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -38,15 +37,15 @@ struct Snapshot {
 }
 
 struct CredentialVault<B> {
-    items: B,
+    storage: B,
     lock_path: Option<PathBuf>,
     snapshot: Mutex<Option<Snapshot>>,
 }
 
-impl<B: Items> CredentialVault<B> {
-    fn new(items: B, lock_path: Option<PathBuf>) -> Self {
+impl<B: VaultStorage> CredentialVault<B> {
+    fn new(storage: B, lock_path: Option<PathBuf>) -> Self {
         Self {
-            items,
+            storage,
             lock_path,
             snapshot: Mutex::new(None),
         }
@@ -75,7 +74,7 @@ impl<B: Items> CredentialVault<B> {
         let mut revision = String::new();
         file.read_to_string(&mut revision).map_err(|_| error())?;
         if cached.as_ref().is_none_or(|s| s.revision != revision) {
-            let vault = match self.items.read(ACCOUNT)? {
+            let vault = match self.storage.read()? {
                 Some(value) => serde_json::from_str(&value).map_err(|_| error())?,
                 None => Vault::default(),
             };
@@ -93,34 +92,24 @@ impl<B: Items> CredentialVault<B> {
         file.set_len(0).map_err(|_| error())?;
         file.write_all(revision.as_bytes()).map_err(|_| error())?;
         file.sync_all().map_err(|_| error())?;
-        self.items.write(ACCOUNT, &value)?;
+        self.storage.write(&value)?;
         *snapshot = Snapshot { revision, vault };
         Ok(())
     }
 }
 
-impl<B: Items> CredentialStore for CredentialVault<B> {
+impl<B: VaultStorage> CredentialStore for CredentialVault<B> {
     fn get(&self, reference: &str) -> StorageResult<S3Credentials> {
         check_reference(reference)?;
         let mut cached = self.snapshot.lock().map_err(|_| error())?;
         let mut file = self.lock()?;
         let snapshot = self.load(&mut file, &mut cached)?;
-        if let Some(credentials) = snapshot.vault.credentials.get(reference) {
-            return Ok(credentials.clone());
-        }
-        // Old per-connection ACLs still require the user's authorization once.
-        // Never remove the source until the merged vault is safely persisted.
-        let value = self.items.read(reference)?.ok_or_else(error)?;
-        let credentials: S3Credentials = serde_json::from_str(&value).map_err(|_| error())?;
-        let mut vault = snapshot.vault.clone();
-        vault
+        snapshot
+            .vault
             .credentials
-            .insert(reference.into(), credentials.clone());
-        self.save(&mut file, snapshot, vault)?;
-        // A cleanup failure must not make an already migrated connection fail.
-        // Explicit deletion retries cleanup before removing the vault entry.
-        let _ = self.items.delete(reference);
-        Ok(credentials)
+            .get(reference)
+            .cloned()
+            .ok_or_else(error)
     }
 
     fn set(&self, reference: &str, credentials: &S3Credentials) -> StorageResult<()> {
@@ -140,9 +129,6 @@ impl<B: Items> CredentialStore for CredentialVault<B> {
         let mut cached = self.snapshot.lock().map_err(|_| error())?;
         let mut file = self.lock()?;
         let snapshot = self.load(&mut file, &mut cached)?;
-        // Also remove any surviving legacy copy, otherwise a later lookup could
-        // resurrect deleted credentials through the migration fallback.
-        self.items.delete(reference)?;
         let mut vault = snapshot.vault.clone();
         if vault.credentials.remove(reference).is_none() {
             return Ok(());
@@ -153,14 +139,14 @@ impl<B: Items> CredentialStore for CredentialVault<B> {
 }
 
 #[cfg(target_os = "macos")]
-struct KeychainItems {
+struct KeychainVault {
     service: String,
 }
 
 #[cfg(target_os = "macos")]
-impl Items for KeychainItems {
-    fn read(&self, account: &str) -> StorageResult<Option<String>> {
-        match keyring::Entry::new(&self.service, account)
+impl VaultStorage for KeychainVault {
+    fn read(&self) -> StorageResult<Option<String>> {
+        match keyring::Entry::new(&self.service, ACCOUNT)
             .map_err(|_| error())?
             .get_password()
         {
@@ -169,29 +155,20 @@ impl Items for KeychainItems {
             Err(_) => Err(error()),
         }
     }
-    fn write(&self, account: &str, value: &str) -> StorageResult<()> {
-        keyring::Entry::new(&self.service, account)
+    fn write(&self, value: &str) -> StorageResult<()> {
+        keyring::Entry::new(&self.service, ACCOUNT)
             .map_err(|_| error())?
             .set_password(value)
             .map_err(|_| error())
-    }
-    fn delete(&self, account: &str) -> StorageResult<()> {
-        match keyring::Entry::new(&self.service, account)
-            .map_err(|_| error())?
-            .delete_credential()
-        {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(_) => Err(error()),
-        }
     }
 }
 
 #[cfg(target_os = "macos")]
 pub(super) fn system() -> &'static impl CredentialStore {
-    static STORE: std::sync::OnceLock<CredentialVault<KeychainItems>> = std::sync::OnceLock::new();
+    static STORE: std::sync::OnceLock<CredentialVault<KeychainVault>> = std::sync::OnceLock::new();
     STORE.get_or_init(|| {
         CredentialVault::new(
-            KeychainItems {
+            KeychainVault {
                 service: "dev.filo.desktop.s3".into(),
             },
             std::env::var_os("HOME").map(|home| {
@@ -209,39 +186,30 @@ mod tests {
 
     #[derive(Default)]
     struct State {
-        values: BTreeMap<String, String>,
-        reads: Vec<String>,
+        value: Option<String>,
+        reads: usize,
         writes: usize,
         deny_reads: bool,
         fail_writes: bool,
-        fail_deletes: bool,
     }
     #[derive(Clone, Default)]
-    struct MemoryItems(Arc<Mutex<State>>);
-    impl Items for MemoryItems {
-        fn read(&self, account: &str) -> StorageResult<Option<String>> {
+    struct MemoryVault(Arc<Mutex<State>>);
+    impl VaultStorage for MemoryVault {
+        fn read(&self) -> StorageResult<Option<String>> {
             let mut state = self.0.lock().unwrap();
-            state.reads.push(account.into());
+            state.reads += 1;
             if state.deny_reads {
                 return Err(error());
             }
-            Ok(state.values.get(account).cloned())
+            Ok(state.value.clone())
         }
-        fn write(&self, account: &str, value: &str) -> StorageResult<()> {
+        fn write(&self, value: &str) -> StorageResult<()> {
             let mut state = self.0.lock().unwrap();
             state.writes += 1;
             if state.fail_writes {
                 return Err(error());
             }
-            state.values.insert(account.into(), value.into());
-            Ok(())
-        }
-        fn delete(&self, account: &str) -> StorageResult<()> {
-            let mut state = self.0.lock().unwrap();
-            if state.fail_deletes {
-                return Err(error());
-            }
-            state.values.remove(account);
+            state.value = Some(value.into());
             Ok(())
         }
     }
@@ -252,36 +220,19 @@ mod tests {
             session_token: Some(format!("token-{key}")),
         }
     }
-    fn store(items: &MemoryItems, dir: &tempfile::TempDir) -> CredentialVault<MemoryItems> {
-        CredentialVault::new(items.clone(), Some(dir.path().join("credentials.lock")))
+    fn store(storage: &MemoryVault, dir: &tempfile::TempDir) -> CredentialVault<MemoryVault> {
+        CredentialVault::new(storage.clone(), Some(dir.path().join("credentials.lock")))
     }
-    fn legacy(items: &MemoryItems, reference: &str) {
-        items.0.lock().unwrap().values.insert(
-            reference.into(),
-            serde_json::to_string(&credential(reference)).unwrap(),
-        );
-    }
-    fn vault_read_count(items: &MemoryItems) -> usize {
-        items
-            .0
-            .lock()
-            .unwrap()
-            .reads
-            .iter()
-            .filter(|r| *r == ACCOUNT)
-            .count()
-    }
-
     #[test]
     fn different_connections_and_parallel_reads_share_one_unlock_after_restart() {
         let dir = tempfile::tempdir().unwrap();
-        let items = MemoryItems::default();
-        let initial = store(&items, &dir);
+        let storage = MemoryVault::default();
+        let initial = store(&storage, &dir);
         for reference in ["a", "b", "c"] {
             initial.set(reference, &credential(reference)).unwrap();
         }
-        items.0.lock().unwrap().reads.clear();
-        let reopened = Arc::new(store(&items, &dir));
+        storage.0.lock().unwrap().reads = 0;
+        let reopened = Arc::new(store(&storage, &dir));
         let threads: Vec<_> = (0..12)
             .map(|index| {
                 let reopened = reopened.clone();
@@ -297,144 +248,95 @@ mod tests {
         for thread in threads {
             thread.join().unwrap();
         }
-        assert_eq!(items.0.lock().unwrap().reads, [ACCOUNT]);
-        assert_eq!(items.0.lock().unwrap().values.len(), 1);
+        assert_eq!(storage.0.lock().unwrap().reads, 1);
+        assert!(storage.0.lock().unwrap().value.is_some());
+        let writes = storage.0.lock().unwrap().writes;
+        assert!(reopened.get("missing").is_err());
+        assert_eq!(storage.0.lock().unwrap().reads, 1);
+        assert_eq!(storage.0.lock().unwrap().writes, writes);
         // No credentials, references or tokens are written to the coordination file.
         let revision = std::fs::read_to_string(dir.path().join("credentials.lock")).unwrap();
         assert!(uuid::Uuid::parse_str(&revision).is_ok());
     }
 
     #[test]
-    fn legacy_items_migrate_once_and_then_share_the_vault() {
+    fn denied_or_corrupt_vault_is_never_replaced() {
         let dir = tempfile::tempdir().unwrap();
-        let items = MemoryItems::default();
-        legacy(&items, "a");
-        legacy(&items, "b");
-        let current = store(&items, &dir);
-        assert_eq!(current.get("a").unwrap().access_key_id, "a");
-        assert_eq!(current.get("b").unwrap().access_key_id, "b");
-        assert_eq!(items.0.lock().unwrap().reads, [ACCOUNT, "a", "b"]);
-        assert_eq!(items.0.lock().unwrap().values.len(), 1);
-        items.0.lock().unwrap().reads.clear();
-        let reopened = store(&items, &dir);
-        reopened.get("a").unwrap();
-        reopened.get("b").unwrap();
-        assert_eq!(items.0.lock().unwrap().reads, [ACCOUNT]);
-    }
-
-    #[test]
-    fn failed_migration_preserves_source_and_does_not_cache_unpersisted_value() {
-        let dir = tempfile::tempdir().unwrap();
-        let items = MemoryItems::default();
-        legacy(&items, "a");
-        items.0.lock().unwrap().fail_writes = true;
-        let current = store(&items, &dir);
-        assert!(current.get("a").is_err());
-        assert!(items.0.lock().unwrap().values.contains_key("a"));
-        assert!(!items.0.lock().unwrap().values.contains_key(ACCOUNT));
-        items.0.lock().unwrap().fail_writes = false;
-        assert_eq!(current.get("a").unwrap().access_key_id, "a");
-        assert!(!items.0.lock().unwrap().values.contains_key("a"));
-    }
-
-    #[test]
-    fn denied_or_corrupt_vault_is_never_replaced_or_bypassed_by_legacy_read() {
-        let dir = tempfile::tempdir().unwrap();
-        let items = MemoryItems::default();
-        store(&items, &dir).set("a", &credential("a")).unwrap();
-        let original = items.0.lock().unwrap().values[ACCOUNT].clone();
-        items.0.lock().unwrap().deny_reads = true;
-        items.0.lock().unwrap().reads.clear();
-        let current = store(&items, &dir);
+        let storage = MemoryVault::default();
+        store(&storage, &dir).set("a", &credential("a")).unwrap();
+        let original = storage.0.lock().unwrap().value.clone();
+        storage.0.lock().unwrap().deny_reads = true;
+        storage.0.lock().unwrap().reads = 0;
+        let current = store(&storage, &dir);
         assert!(current.get("a").is_err());
         assert!(current.set("b", &credential("b")).is_err());
         assert!(current.delete("a").is_err());
-        assert!(items.0.lock().unwrap().reads.iter().all(|r| r == ACCOUNT));
-        assert_eq!(items.0.lock().unwrap().values[ACCOUNT], original);
-        items.0.lock().unwrap().deny_reads = false;
+        assert_eq!(storage.0.lock().unwrap().reads, 3);
+        assert_eq!(storage.0.lock().unwrap().value, original);
+        storage.0.lock().unwrap().deny_reads = false;
         assert_eq!(current.get("a").unwrap().access_key_id, "a");
         for corrupt in ["invalid json", "{}", r#"{"credentials":null}"#] {
-            items
-                .0
-                .lock()
-                .unwrap()
-                .values
-                .insert(ACCOUNT.into(), corrupt.into());
-            let reopened = store(&items, &dir);
+            storage.0.lock().unwrap().value = Some(corrupt.into());
+            let reopened = store(&storage, &dir);
             assert!(reopened.get("a").is_err());
             assert!(reopened.set("b", &credential("b")).is_err());
-            assert_eq!(items.0.lock().unwrap().values[ACCOUNT], corrupt);
+            assert_eq!(storage.0.lock().unwrap().value.as_deref(), Some(corrupt));
         }
     }
 
     #[test]
     fn mutations_preserve_other_connections_and_failures_keep_old_values() {
         let dir = tempfile::tempdir().unwrap();
-        let items = MemoryItems::default();
-        let current = store(&items, &dir);
+        let storage = MemoryVault::default();
+        let current = store(&storage, &dir);
         current.set("a", &credential("a")).unwrap();
         current.set("b", &credential("b")).unwrap();
-        items.0.lock().unwrap().fail_writes = true;
+        storage.0.lock().unwrap().fail_writes = true;
         assert!(current.set("a", &credential("changed")).is_err());
         assert_eq!(current.get("a").unwrap().access_key_id, "a");
         assert!(current.delete("b").is_err());
         assert_eq!(current.get("b").unwrap().access_key_id, "b");
-        items.0.lock().unwrap().fail_writes = false;
+        storage.0.lock().unwrap().fail_writes = false;
         current.set("a", &credential("changed")).unwrap();
         current.delete("b").unwrap();
-        let reopened = store(&items, &dir);
+        let reopened = store(&storage, &dir);
         assert_eq!(reopened.get("a").unwrap().access_key_id, "changed");
         assert!(reopened.get("b").is_err());
         reopened.delete("a").unwrap();
-        let vault: Vault = serde_json::from_str(&items.0.lock().unwrap().values[ACCOUNT]).unwrap();
+        let vault: Vault =
+            serde_json::from_str(storage.0.lock().unwrap().value.as_deref().unwrap()).unwrap();
         assert!(vault.credentials.is_empty());
-    }
-
-    #[test]
-    fn cleanup_failure_preserves_migrated_value_and_delete_cannot_resurrect_it() {
-        let dir = tempfile::tempdir().unwrap();
-        let items = MemoryItems::default();
-        legacy(&items, "a");
-        items.0.lock().unwrap().fail_deletes = true;
-        let current = store(&items, &dir);
-        assert_eq!(current.get("a").unwrap().access_key_id, "a");
-        assert!(current.delete("a").is_err());
-        assert_eq!(current.get("a").unwrap().access_key_id, "a");
-        items.0.lock().unwrap().fail_deletes = false;
-        current.delete("a").unwrap();
-        assert!(store(&items, &dir).get("a").is_err());
-        assert!(!items.0.lock().unwrap().values.contains_key("a"));
     }
 
     #[test]
     fn independent_instances_merge_changes_instead_of_overwriting_stale_snapshots() {
         let dir = tempfile::tempdir().unwrap();
-        let items = MemoryItems::default();
-        let first = store(&items, &dir);
-        let second = store(&items, &dir);
+        let storage = MemoryVault::default();
+        let first = store(&storage, &dir);
+        let second = store(&storage, &dir);
         first.set("a", &credential("a")).unwrap();
         second.get("a").unwrap(); // Cache the old revision in another instance.
         first.set("b", &credential("b")).unwrap();
         second.set("c", &credential("c")).unwrap();
         first.delete("a").unwrap();
         second.set("d", &credential("d")).unwrap();
-        let reopened = store(&items, &dir);
+        let reopened = store(&storage, &dir);
         assert!(reopened.get("a").is_err());
         for reference in ["b", "c", "d"] {
             assert_eq!(reopened.get(reference).unwrap().access_key_id, reference);
         }
-        let reads = vault_read_count(&items);
+        let reads = storage.0.lock().unwrap().reads;
         reopened.get("c").unwrap();
-        assert_eq!(vault_read_count(&items), reads);
+        assert_eq!(storage.0.lock().unwrap().reads, reads);
     }
 
     #[test]
     fn parallel_writers_with_separate_locks_preserve_all_credentials() {
         let dir = tempfile::tempdir().unwrap();
-        let items = MemoryItems::default();
+        let storage = MemoryVault::default();
         let threads: Vec<_> = (0..8)
             .map(|index| {
-                let writer = store(&items, &dir);
+                let writer = store(&storage, &dir);
                 std::thread::spawn(move || {
                     writer
                         .set(&index.to_string(), &credential(&index.to_string()))
@@ -445,7 +347,7 @@ mod tests {
         for thread in threads {
             thread.join().unwrap();
         }
-        let reopened = store(&items, &dir);
+        let reopened = store(&storage, &dir);
         for index in 0..8 {
             assert_eq!(
                 reopened.get(&index.to_string()).unwrap().access_key_id,
@@ -457,8 +359,8 @@ mod tests {
     #[test]
     fn reserved_reference_cannot_delete_the_shared_vault() {
         let dir = tempfile::tempdir().unwrap();
-        let items = MemoryItems::default();
-        let current = store(&items, &dir);
+        let storage = MemoryVault::default();
+        let current = store(&storage, &dir);
         current.set("a", &credential("a")).unwrap();
         for reference in [ACCOUNT, ""] {
             assert!(current.get(reference).is_err());
@@ -485,11 +387,8 @@ mod tests {
         }
         impl Drop for Cleanup {
             fn drop(&mut self) {
-                let items = KeychainItems {
-                    service: self.service.clone(),
-                };
-                for account in [ACCOUNT, "legacy", "a", "b"] {
-                    let _ = items.delete(account);
+                if let Ok(entry) = keyring::Entry::new(&self.service, ACCOUNT) {
+                    let _ = entry.delete_credential();
                 }
                 // SAFETY: Security.framework accepts a Boolean (unsigned byte).
                 unsafe {
@@ -510,28 +409,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let open = || {
             CredentialVault::new(
-                KeychainItems {
+                KeychainVault {
                     service: cleanup.service.clone(),
                 },
                 Some(dir.path().join("credentials.lock")),
             )
         };
         let original = open();
-        original
-            .items
-            .write(
-                "legacy",
-                &serde_json::to_string(&credential("legacy")).unwrap(),
-            )
-            .unwrap();
-        original.get("legacy").unwrap();
         original.set("a", &credential("a")).unwrap();
         original.set("b", &credential("b")).unwrap();
-        assert!(original.items.read("legacy").unwrap().is_none());
-        assert!(original.items.read("a").unwrap().is_none());
-        assert!(original.items.read("b").unwrap().is_none());
+        let saved: Vault =
+            serde_json::from_str(&original.storage.read().unwrap().unwrap()).unwrap();
+        assert_eq!(saved.credentials.len(), 2);
         let reopened = open();
-        for reference in ["legacy", "a", "b"] {
+        for reference in ["a", "b"] {
             let value = reopened.get(reference).unwrap();
             assert_eq!(value.secret_access_key, format!("secret-{reference}"));
             assert_eq!(value.session_token, Some(format!("token-{reference}")));
@@ -539,7 +430,10 @@ mod tests {
         reopened.delete("a").unwrap();
         assert!(open().get("a").is_err());
         assert_eq!(open().get("b").unwrap().access_key_id, "b");
-        reopened.items.delete(ACCOUNT).unwrap();
-        assert!(reopened.items.read(ACCOUNT).unwrap().is_none());
+        keyring::Entry::new(&cleanup.service, ACCOUNT)
+            .unwrap()
+            .delete_credential()
+            .unwrap();
+        assert!(reopened.storage.read().unwrap().is_none());
     }
 }
