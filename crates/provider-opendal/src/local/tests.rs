@@ -1,5 +1,5 @@
 use super::*;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 #[test]
 fn atomic_rename_cannot_replace_a_target_created_after_preflight() {
     let directory = tempfile::tempdir().unwrap();
@@ -20,6 +20,31 @@ fn atomic_rename_cannot_replace_a_target_created_after_preflight() {
         std::fs::read(directory.path().join("source")).unwrap(),
         b"source"
     );
+}
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+#[test]
+fn atomic_rename_supports_nested_unicode_paths_and_protects_existing_directories() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(directory.path()).unwrap();
+    std::fs::create_dir(root.join("父目录")).unwrap();
+    std::fs::create_dir(root.join("父目录/源文件夹")).unwrap();
+    std::fs::write(root.join("父目录/源文件夹/内容.txt"), b"keep").unwrap();
+    rename_no_replace(&root, "父目录/源文件夹", "父目录/新文件夹").unwrap();
+    assert_eq!(
+        std::fs::read(root.join("父目录/新文件夹/内容.txt")).unwrap(),
+        b"keep"
+    );
+    assert!(!root.join("父目录/源文件夹").exists());
+    std::fs::create_dir(root.join("父目录/已存在")).unwrap();
+    assert!(rename_no_replace(&root, "父目录/新文件夹", "父目录/已存在").is_err());
+    assert_eq!(
+        std::fs::read(root.join("父目录/新文件夹/内容.txt")).unwrap(),
+        b"keep"
+    );
+    assert!(std::fs::read_dir(root.join("父目录/已存在"))
+        .unwrap()
+        .next()
+        .is_none());
 }
 async fn fixture(read_only: bool) -> (tempfile::TempDir, OpenDalLocalBackend) {
     let dir = tempfile::tempdir().unwrap();

@@ -280,13 +280,13 @@ export function S3Form({
               aria-invalid={!endpointValid}
             />
           </span>
-          <span className="field-help s3-input-help">
-            {provider === "rustfs"
-              ? "填写 S3 API 地址，默认端口 9000；不是控制台的 9001 端口。"
-              : cloud && addressMode !== "custom"
-                ? "已根据地域生成 S3 接入地址。"
+          {(!cloud || addressMode === "custom") && (
+            <span className="field-help s3-input-help">
+              {provider === "rustfs"
+                ? "填写 S3 API 地址，默认端口 9000；不是控制台的 9001 端口。"
                 : "填写完整 HTTP(S) 服务地址，不含 Bucket、路径或访问密钥。"}
-          </span>
+            </span>
+          )}
         </label>
         {effectiveEndpoint && !endpointValid && (
           <p className="error-text">
@@ -312,15 +312,6 @@ export function S3Form({
             onChange={(e) => setBucket(e.target.value)}
             placeholder="已有存储桶的名称"
             required
-          />
-        </label>
-        <label className="field-label">
-          目录前缀（Prefix，可选）
-          <input
-            className="text-input"
-            value={prefix}
-            onChange={(e) => setPrefix(e.target.value)}
-            placeholder="例如 backups/photos"
           />
         </label>
         {volume && (
@@ -356,19 +347,30 @@ export function S3Form({
                 required
               />
             </label>
-            <label className="field-label">
-              {provider === "oss"
-                ? "Security Token（STS，可选）"
-                : "Session Token（临时凭据，可选）"}
-              <input
-                type="password"
-                className="text-input"
-                autoComplete="off"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-              />
-            </label>
           </>
+        )}
+        <label className="field-label">
+          目录前缀（Prefix，可选）
+          <input
+            className="text-input"
+            value={prefix}
+            onChange={(e) => setPrefix(e.target.value)}
+            placeholder="例如 backups/photos"
+          />
+        </label>
+        {replaceCredentials && (
+          <label className="field-label">
+            {provider === "oss"
+              ? "Security Token（STS，可选）"
+              : "Session Token（临时凭据，可选）"}
+            <input
+              type="password"
+              className="text-input"
+              autoComplete="off"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+            />
+          </label>
         )}
         {(provider === "generic" || provider === "rustfs") && (
           <details
