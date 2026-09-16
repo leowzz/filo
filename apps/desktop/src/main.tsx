@@ -7,6 +7,12 @@ import "./styles.css";
 const client = new QueryClient({
   defaultOptions: { queries: { retry: false, refetchOnWindowFocus: true } },
 });
+// Reading a protected directory can trigger an OS permission prompt. Only
+// navigation, explicit refresh, and file mutations should reload its contents.
+client.setQueryDefaults(["entries"], {
+  refetchOnWindowFocus: false,
+  refetchOnReconnect: false,
+});
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={client}>

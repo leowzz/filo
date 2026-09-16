@@ -109,3 +109,15 @@
 桌面实测：文件右键完整菜单、普通删除回收站确认、强制删除永久删除确认和取消；双击隔离测试文件后，TextEdit 打开同一路径并显示预期内容。测试文件与文件夹在取消后保持完整，临时连接及文件已清理。macOS 应用打包、fmt、Clippy 与 diff 检查通过。
 
 普通删除补充：后端以 `trash_unavailable` 区分系统回收站不可用与权限/路径校验失败。无法移入时弹窗显示「继续删除将永久删除，无法找回」，用户可取消或点击「仍然永久删除」发起独立的 Permanent 请求。权限或路径错误不显示此选项。无回收站能力的后端在第一次确认时使用相同的无法找回提示。新增策略测试验证回收站失败后不会删除，只有新的永久删除请求才执行删除。
+
+## macOS 文件夹授权重复提示
+
+用户反馈访问下载目录频繁出现系统授权弹窗。检查此前演示包发现只有 linker ad-hoc 签名，签名标识为 Rust 可执行文件名称，designated requirement 直接绑定 `cdhash`。这意味着代码重建会改变 macOS 用于识别该版本的签名要求，与连续重新打包后再次授权的现象一致；未读取或改写系统 TCC 授权数据库。
+
+- 新增 `make demo`，从本机 `.env` 或显式环境变量读取 `APPLE_SIGNING_IDENTITY`，调用 Tauri 生成固定证书签名的 macOS 演示包。拒绝空身份或 `-` 临时签名；`.env` 已忽略，仓库仅提供 `.env.example`。不自动创建、导入或调整证书信任。发行构建与公证仍是独立工作。
+- 本机复用已有签名证书，包身份变为 `dev.filo.desktop`，designated requirement 绑定应用标识与证书，避免每次构建绑定新的代码哈希。切换签名后第一次访问仍可能需要用户授权。
+- 所有 `entries` 查询（文件列表和传输目标浏览）关闭窗口重新获得焦点、网络重连时的自动读取；保留导航、手动刷新、文件操作后的失效刷新。外部文件变动需要点击刷新。传输任务轮询不受影响。
+
+验证：TypeScript、ESLint、前端生产构建与签名演示包构建通过；`codesign --verify --deep --strict` 通过。在临时副本修改 Info.plist 并重新签名后，代码哈希发生变化，designated requirement 保持一致，严格签名验证通过；副本已清理。系统实际授权是否跨后续构建保留仍需用户授权后的使用验证，没有替用户点击系统授权按钮。
+
+依据：[Apple TN3127](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements)、[Tauri macOS 签名](https://v2.tauri.app/distribute/sign/macos/)。
