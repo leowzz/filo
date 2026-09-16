@@ -12,13 +12,14 @@ type State = {
   setPage: (page: State["page"]) => void;
   toggleHidden: () => void;
   toggleDetails: () => void;
+  resetVolumeRoot: (volumeId: string) => void;
 };
 export const useBrowser = create<State>((set) => ({
   page: "overview",
   history: [],
   index: -1,
   showHidden: false,
-  showDetails: true,
+  showDetails: false,
   navigate: (location) =>
     set((state) => ({
       page: "browser",
@@ -36,4 +37,10 @@ export const useBrowser = create<State>((set) => ({
   setPage: (page) => set({ page }),
   toggleHidden: () => set((state) => ({ showHidden: !state.showHidden })),
   toggleDetails: () => set((state) => ({ showDetails: !state.showDetails })),
+  resetVolumeRoot: (volumeId) =>
+    set((state) => ({
+      history: state.history.map((location) =>
+        location.volumeId === volumeId ? { ...location, path: "" } : location,
+      ),
+    })),
 }));

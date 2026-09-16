@@ -1,8 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useCallback, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownUp,
-  ArrowLeft,
+  ChevronLeft,
   ArrowRight,
   ArrowUp,
   Check,
@@ -11,14 +11,11 @@ import {
   Cloud,
   Database,
   Eye,
-  File,
-  Folder,
   FolderOpen,
   FolderPlus,
   HardDrive,
   Info,
   LayoutGrid,
-  List,
   LoaderCircle,
   LockKeyhole,
   MoreHorizontal,
@@ -43,6 +40,8 @@ import {
   typeName,
 } from "./components";
 import { isDirectory, type Entry, type Locator, type Volume } from "./types";
+import { LocationMenu, type LocationMenuTarget } from "./LocationMenu";
+import { EditLocationDialog } from "./EditLocationDialog";
 
 type Dialog =
   | { type: "add" }
@@ -78,6 +77,11 @@ export default function App() {
   const [notice, setNotice] = useState("");
   const [menu, setMenu] = useState<string | null>(null);
   const [sort, setSort] = useState<"name" | "size" | "modified">("name");
+  const [locationMenu, setLocationMenu] = useState<LocationMenuTarget | null>(
+    null,
+  );
+  const [editingLocation, setEditingLocation] = useState<Volume | null>(null);
+  const closeLocationMenu = useCallback(() => setLocationMenu(null), []);
   const entries = (entriesQuery.data ?? [])
     .filter(
       (entry) =>
@@ -148,18 +152,10 @@ export default function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark">
-            <Folder size={23} strokeWidth={2.3} />
-          </span>
-          <strong>
-            filo<span>.</span>
-          </strong>
-          <span className="version">LOCAL DEMO</span>
+        <div className="sidebar-titlebar" data-tauri-drag-region>
+          <span data-tauri-drag-region>Filo</span>
         </div>
-        <div className="workspace-label">
-          个人工作空间 <span>⌘ 1</span>
-        </div>
+        <div className="section-label">个人收藏</div>
         <nav className="main-nav" aria-label="主导航">
           <button
             className={
@@ -181,7 +177,7 @@ export default function App() {
           </button>
         </nav>
         <div className="section-label">
-          存储空间{" "}
+          位置{" "}
           <button
             title="添加存储空间"
             aria-label="添加存储空间"
@@ -199,6 +195,31 @@ export default function App() {
               }
               className={`nav-item ${state.page === "browser" && volume?.id === item.id ? "active" : ""}`}
               onClick={() => openVolume(item)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setLocationMenu({
+                  volume: item,
+                  x: event.clientX,
+                  y: event.clientY,
+                  trigger: event.currentTarget,
+                });
+              }}
+              onKeyDown={(event) => {
+                if (
+                  (event.shiftKey && event.key === "F10") ||
+                  event.key === "ContextMenu"
+                ) {
+                  event.preventDefault();
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  setLocationMenu({
+                    volume: item,
+                    x: rect.right,
+                    y: rect.top,
+                    trigger: event.currentTarget,
+                  });
+                }
+              }}
+              aria-haspopup="menu"
             >
               <HardDrive size={17} />
               <span className="truncate">{item.name}</span>
@@ -218,13 +239,6 @@ export default function App() {
           </button>
         </nav>
         <div className="sidebar-bottom">
-          <div className="local-note">
-            <ShieldCheck size={19} />
-            <div>
-              <strong>文件在本地，安心在手</strong>
-              <p>直接连接你的文件系统</p>
-            </div>
-          </div>
           <button
             className={`nav-item ${state.page === "settings" ? "active" : ""}`}
             onClick={() => state.setPage("settings")}
@@ -236,25 +250,163 @@ export default function App() {
       </aside>
 
       <main className="main-content">
-        <header className="topbar">
-          <div className="topbar-title">
-            <span className="muted">工作空间</span>
-            <ChevronRight size={14} />
-            <strong>
+        <header className="topbar" data-tauri-drag-region>
+          <div className="topbar-title" data-tauri-drag-region>
+            {state.page === "browser" && volume && (
+              <div className="navigation-buttons">
+                <button
+                  className="icon-button"
+                  aria-label="后退"
+                  title="后退"
+                  disabled={state.index <= 0}
+                  onClick={() => {
+                    state.step(-1);
+                    setSelection(null);
+                    setSearch("");
+                    setMenu(null);
+                  }}
+                >
+                  <ChevronLeft size={23} />
+                </button>
+                <button
+                  className="icon-button"
+                  aria-label="前进"
+                  title="前进"
+                  disabled={state.index >= state.history.length - 1}
+                  onClick={() => {
+                    state.step(1);
+                    setSelection(null);
+                    setSearch("");
+                    setMenu(null);
+                  }}
+                >
+                  <ChevronRight size={23} />
+                </button>
+              </div>
+            )}
+            <h1 data-tauri-drag-region>
               {state.page === "browser"
-                ? (volume?.name ?? "存储浏览器")
+                ? (path.split("/").filter(Boolean).at(-1) ??
+                  volume?.name ??
+                  "存储浏览器")
                 : { overview: "概览", transfers: "传输任务", settings: "设置" }[
                     state.page
                   ]}
-            </strong>
+            </h1>
+            {state.page === "browser" && volume?.read_only && (
+              <span className="readonly-label">
+                <LockKeyhole size={12} />
+                只读
+              </span>
+            )}
           </div>
-          <div className="topbar-right">
-            <span className="local-badge">
-              <span className="status-dot" />
-              本地优先
-            </span>
-            <span className="avatar">L</span>
-          </div>
+          {state.page === "browser" && volume ? (
+            <div className="toolbar-actions">
+              <button
+                className="icon-button"
+                title="上级目录"
+                aria-label="上级目录"
+                disabled={!path}
+                onClick={() =>
+                  navigate(volume.id, path.split("/").slice(0, -1).join("/"))
+                }
+              >
+                <ArrowUp size={18} />
+              </button>
+              <button
+                className="icon-button"
+                title="新建文件夹"
+                aria-label="新建文件夹"
+                disabled={!volume.capabilities.create_directory}
+                onClick={() => openDialog({ type: "folder" })}
+              >
+                <FolderPlus size={20} />
+              </button>
+              <button
+                className="icon-button"
+                title="重命名"
+                aria-label="重命名"
+                disabled={
+                  !selected ||
+                  selected.kind !== "file" ||
+                  volume.capabilities.rename === "unsupported"
+                }
+                onClick={() =>
+                  selected && openDialog({ type: "rename", entry: selected })
+                }
+              >
+                <Pencil size={18} />
+              </button>
+              <button
+                className="icon-button"
+                title="删除"
+                aria-label="删除"
+                disabled={
+                  !selected ||
+                  selected.kind === "symlink" ||
+                  !volume.capabilities.delete
+                }
+                onClick={() =>
+                  selected && openDialog({ type: "delete", entry: selected })
+                }
+              >
+                <Trash2 size={18} />
+              </button>
+              <span className="toolbar-separator" />
+              <button
+                className={`icon-button ${state.showHidden ? "on" : ""}`}
+                title="显示 / 隐藏隐藏文件"
+                aria-label="显示或隐藏隐藏文件"
+                aria-pressed={state.showHidden}
+                onClick={state.toggleHidden}
+              >
+                <Eye size={19} />
+              </button>
+              <button
+                className={`icon-button ${state.showDetails ? "on" : ""}`}
+                title="切换详情面板"
+                aria-label="切换详情面板"
+                aria-pressed={state.showDetails}
+                onClick={state.toggleDetails}
+              >
+                <PanelRight size={19} />
+              </button>
+              <button
+                className="icon-button"
+                title="刷新"
+                aria-label="刷新"
+                onClick={() => void entriesQuery.refetch()}
+              >
+                <RefreshCw
+                  size={18}
+                  className={entriesQuery.isFetching ? "spin" : ""}
+                />
+              </button>
+              <label className="search-input">
+                <Search size={15} />
+                <input
+                  aria-label="筛选当前目录"
+                  placeholder="搜索当前目录"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+                {search && (
+                  <button aria-label="清除筛选" onClick={() => setSearch("")}>
+                    <X size={12} />
+                  </button>
+                )}
+              </label>
+            </div>
+          ) : (
+            <button
+              className="icon-button"
+              title="添加存储空间"
+              aria-label="添加存储空间"
+              onClick={() => openDialog({ type: "add" })}
+            >
+              <Plus size={21} />
+            </button>
+          )}
         </header>
 
         {volumesQuery.isError && (
@@ -275,9 +427,8 @@ export default function App() {
           <div className="overview page-scroll">
             <div className="page-heading">
               <div>
-                <div className="eyebrow">YOUR FILES, ONE PLACE</div>
-                <h1>每一份文件，都有归处。</h1>
-                <p>连接本地目录，从一个清晰的工作空间开始。</p>
+                <h2>这台 Mac 上的存储空间</h2>
+                <p>连接已有目录，浏览和管理你的文件。</p>
               </div>
               <button
                 className="primary"
@@ -324,7 +475,7 @@ export default function App() {
               <h2>
                 你的存储空间 <span>{volumes.length}</span>
               </h2>
-              <span className="muted">本地文件，随手可达</span>
+              <span className="muted">所有已添加的位置</span>
             </div>
             {volumesQuery.isPending ? (
               <div className="empty-state">
@@ -377,193 +528,15 @@ export default function App() {
                 </button>
               </div>
             )}
-            <div className="intro-note">
-              <div className="intro-art">
-                <FolderOpen size={46} strokeWidth={1.2} />
-                <span className="small-file">
-                  <File size={25} strokeWidth={1.4} />
-                </span>
-              </div>
-              <div>
-                <span className="eyebrow">A LITTLE MORE ORGANIZED</span>
-                <h2>熟悉的文件，清爽的新视角。</h2>
-                <p>
-                  支持已有目录、层级浏览和基础文件管理。
-                  <br />
-                  连接信息会留在这台设备，下次打开即可继续。
-                </p>
-              </div>
-              <span className="outline-label">LOCAL FIRST</span>
-            </div>
             <div className="overview-footer">
-              <span>Filo · 菲洛</span>
-              <span>File + I/O · 让文件管理回归简单</span>
+              <ShieldCheck size={14} />
+              <span>连接信息仅保存在此设备，文件保留在原始位置。</span>
             </div>
           </div>
         )}
 
         {state.page === "browser" && volume && (
           <>
-            <div className="browser-heading">
-              <div>
-                <span className="drive-tile small">
-                  <HardDrive size={22} />
-                </span>
-                <div>
-                  <h1>{volume.name}</h1>
-                  <p>
-                    {volume.root.type === "local"
-                      ? volume.root.root_path
-                      : volume.name}
-                  </p>
-                </div>
-                <span className="pill">
-                  {volume.read_only ? "只读" : "本地目录"}
-                </span>
-              </div>
-              <button
-                className={`icon-button ${state.showDetails ? "on" : ""}`}
-                title="切换详情面板"
-                aria-label="切换详情面板"
-                onClick={state.toggleDetails}
-              >
-                <PanelRight size={19} />
-              </button>
-            </div>
-            <div className="browser-toolbar">
-              <div className="navigation-buttons">
-                <button
-                  className="icon-button"
-                  aria-label="后退"
-                  disabled={state.index <= 0}
-                  onClick={() => {
-                    state.step(-1);
-                    setSelection(null);
-                    setSearch("");
-                  }}
-                >
-                  <ArrowLeft size={17} />
-                </button>
-                <button
-                  className="icon-button"
-                  aria-label="前进"
-                  disabled={state.index >= state.history.length - 1}
-                  onClick={() => {
-                    state.step(1);
-                    setSelection(null);
-                    setSearch("");
-                  }}
-                >
-                  <ArrowRight size={17} />
-                </button>
-                <button
-                  className="icon-button"
-                  aria-label="上级目录"
-                  disabled={!path}
-                  onClick={() =>
-                    navigate(volume.id, path.split("/").slice(0, -1).join("/"))
-                  }
-                >
-                  <ArrowUp size={17} />
-                </button>
-              </div>
-              <div className="breadcrumbs">
-                <button onClick={() => navigate(volume.id, "")}>
-                  <HardDrive size={14} />
-                  {volume.name}
-                </button>
-                {path
-                  .split("/")
-                  .filter(Boolean)
-                  .map((part, i, parts) => (
-                    <span key={i}>
-                      <ChevronRight size={13} />
-                      <button
-                        onClick={() =>
-                          navigate(volume.id, parts.slice(0, i + 1).join("/"))
-                        }
-                      >
-                        {part}
-                      </button>
-                    </span>
-                  ))}
-              </div>
-              <button
-                className="icon-button"
-                aria-label="刷新"
-                onClick={() => void entriesQuery.refetch()}
-              >
-                <RefreshCw
-                  size={16}
-                  className={entriesQuery.isFetching ? "spin" : ""}
-                />
-              </button>
-            </div>
-            <div className="action-toolbar">
-              <div className="action-group">
-                <button
-                  disabled={!volume.capabilities.create_directory}
-                  onClick={() => openDialog({ type: "folder" })}
-                >
-                  <FolderPlus size={16} />
-                  新建文件夹
-                </button>
-                <span className="separator" />
-                <button
-                  disabled={
-                    !selected ||
-                    selected.kind !== "file" ||
-                    volume.capabilities.rename === "unsupported"
-                  }
-                  onClick={() =>
-                    selected && openDialog({ type: "rename", entry: selected })
-                  }
-                >
-                  <Pencil size={15} />
-                  重命名
-                </button>
-                <button
-                  disabled={
-                    !selected ||
-                    selected.kind === "symlink" ||
-                    !volume.capabilities.delete
-                  }
-                  onClick={() =>
-                    selected && openDialog({ type: "delete", entry: selected })
-                  }
-                >
-                  <Trash2 size={15} />
-                  删除
-                </button>
-              </div>
-              <div className="action-group">
-                <label className="search-input">
-                  <Search size={15} />
-                  <input
-                    aria-label="筛选当前目录"
-                    placeholder="筛选当前目录…"
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                  />
-                  {search && (
-                    <button aria-label="清除筛选" onClick={() => setSearch("")}>
-                      <X size={12} />
-                    </button>
-                  )}
-                </label>
-                <button
-                  className={`icon-button ${state.showHidden ? "on" : ""}`}
-                  aria-label="显示或隐藏隐藏文件"
-                  title="显示 / 隐藏隐藏文件"
-                  onClick={state.toggleHidden}
-                >
-                  <Eye size={17} />
-                </button>
-                <span className="view-indicator">
-                  <List size={18} />
-                </span>
-              </div>
-            </div>
             {notice && (
               <div className="notice" role="status">
                 <Check size={15} />
@@ -604,12 +577,12 @@ export default function App() {
                         <th>
                           <button onClick={() => setSort("size")}>大小</button>
                         </th>
+                        <th>种类</th>
                         <th>
                           <button onClick={() => setSort("modified")}>
                             修改时间
                           </button>
                         </th>
-                        <th>类型</th>
                         <th aria-label="操作" />
                       </tr>
                     </thead>
@@ -640,8 +613,8 @@ export default function App() {
                             </span>
                           </td>
                           <td className="mono">{formatSize(entry.size)}</td>
-                          <td>{formatDate(entry.modified_at)}</td>
                           <td>{typeName(entry)}</td>
+                          <td>{formatDate(entry.modified_at)}</td>
                           <td className="row-actions">
                             <button
                               className="icon-button"
@@ -783,6 +756,34 @@ export default function App() {
                 </aside>
               )}
             </div>
+            <nav className="pathbar" aria-label="当前路径">
+              <button
+                onClick={() => navigate(volume.id, "")}
+                title={
+                  volume.root.type === "local"
+                    ? volume.root.root_path
+                    : volume.name
+                }
+              >
+                <HardDrive size={14} />
+                {volume.name}
+              </button>
+              {path
+                .split("/")
+                .filter(Boolean)
+                .map((part, i, parts) => (
+                  <span key={i}>
+                    <ChevronRight size={12} />
+                    <button
+                      onClick={() =>
+                        navigate(volume.id, parts.slice(0, i + 1).join("/"))
+                      }
+                    >
+                      {part}
+                    </button>
+                  </span>
+                ))}
+            </nav>
             <footer className="statusbar">
               <span>
                 {entries.length} 个项目{selected ? " · 已选择 1 项" : ""}
@@ -804,11 +805,10 @@ export default function App() {
 
         {state.page === "transfers" && (
           <div className="page-scroll simple-page">
-            <div className="eyebrow">TRANSFERS</div>
             <h1>传输任务</h1>
             <div className="feature-placeholder">
               <ArrowDownUp size={40} strokeWidth={1.2} />
-              <h2>下一个目的地，即将连通。</h2>
+              <h2>暂未启用文件传输</h2>
               <p>
                 当前版本先完成本地目录管理。
                 <br />
@@ -820,7 +820,6 @@ export default function App() {
         )}
         {state.page === "settings" && (
           <div className="page-scroll simple-page">
-            <div className="eyebrow">PREFERENCES</div>
             <h1>设置</h1>
             <section className="settings-card">
               <h2>
@@ -866,6 +865,34 @@ export default function App() {
         )}
       </main>
 
+      {locationMenu && (
+        <LocationMenu
+          target={locationMenu}
+          onClose={closeLocationMenu}
+          onEdit={(item) => {
+            setLocationMenu(null);
+            setEditingLocation(item);
+          }}
+        />
+      )}
+      {editingLocation && (
+        <EditLocationDialog
+          key={editingLocation.id}
+          volume={editingLocation}
+          onClose={() => setEditingLocation(null)}
+          onSaved={(rootChanged) => {
+            if (volume?.id === editingLocation.id) {
+              setNotice("连接信息已保存");
+              if (rootChanged) {
+                setSelection(null);
+                setSearch("");
+                setMenu(null);
+              }
+            }
+            setEditingLocation(null);
+          }}
+        />
+      )}
       {dialog && (
         <Modal
           title={

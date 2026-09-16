@@ -49,6 +49,40 @@ async fn list_entries(
     service.list_entries(parent).await
 }
 #[tauri::command]
+async fn update_local_storage(
+    app: tauri::AppHandle,
+    service: State<'_, StorageService>,
+    volume_id: uuid::Uuid,
+    name: String,
+    read_only: bool,
+    change_directory: bool,
+) -> StorageResult<Option<StorageVolume>> {
+    let selected_root = if change_directory {
+        let selected = tauri::async_runtime::spawn_blocking(move || {
+            app.dialog()
+                .file()
+                .set_title("选择新的本地目录")
+                .blocking_pick_folder()
+        })
+        .await
+        .map_err(|_| StorageError::new(StorageErrorCode::Internal, "无法打开目录选择器"))?;
+        let Some(selected) = selected else {
+            return Ok(None);
+        };
+        Some(
+            selected
+                .into_path()
+                .map_err(|_| StorageError::new(StorageErrorCode::InvalidPath, "请选择本地目录"))?,
+        )
+    } else {
+        None
+    };
+    service
+        .update_local_storage(volume_id, name, read_only, selected_root)
+        .await
+        .map(Some)
+}
+#[tauri::command]
 async fn stat_entry(
     service: State<'_, StorageService>,
     locator: StorageLocator,
@@ -101,6 +135,7 @@ fn main() {
             list_connections,
             list_volumes,
             create_local_storage,
+            update_local_storage,
             list_entries,
             stat_entry,
             create_directory,

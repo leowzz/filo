@@ -10,10 +10,29 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "Filo · 菲洛", "width": 1280, "height": 820, "minWidth": 960, "minHeight": 640, "backgroundColor": "#101113" }],
+    "windows": [
+      {
+        "title": "Filo · 菲洛",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 640,
+        "backgroundColor": "#ffffff",
+        "theme": "Light",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 20,
+          "y": 24
+        }
+      }
+    ],
     "security": {
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data:; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'"
     }
   },
-  "bundle": { "active": true, "targets": ["app"] }
+  "bundle": {
+    "active": true,
+    "targets": ["app"]
+  }
 }

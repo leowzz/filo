@@ -14,7 +14,7 @@ import { isDirectory } from "./types";
 
 export function EntryIcon({
   entry,
-  size = 20,
+  size = 18,
 }: {
   entry: Entry;
   size?: number;
@@ -25,7 +25,7 @@ export function EntryIcon({
         size={size}
         className="folder-icon"
         fill="currentColor"
-        fillOpacity="0.17"
+        fillOpacity="0.8"
       />
     );
   if (entry.kind === "symlink") return <Link2 size={size} className="muted" />;

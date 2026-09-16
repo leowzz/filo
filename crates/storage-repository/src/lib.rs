@@ -108,11 +108,100 @@ impl Repository {
         tx.commit().await.map_err(database_error)?;
         Ok(volume)
     }
+
+    /// A local connection has one volume. Persist its display name, root and
+    /// access mode together so a failed root change cannot partially save.
+    pub async fn update_local(&self, volume: &StorageVolume) -> StorageResult<()> {
+        let mut tx = self.pool.begin().await.map_err(database_error)?;
+        let connection = sqlx::query("UPDATE connections SET name = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ? AND provider = 'local_fs'")
+            .bind(&volume.name).bind(volume.connection_id.to_string())
+            .execute(&mut *tx).await.map_err(database_error)?;
+        if connection.rows_affected() != 1 {
+            return Err(StorageError::new(
+                StorageErrorCode::NotFound,
+                "未找到本地连接",
+            ));
+        }
+        let result = sqlx::query("UPDATE volumes SET name = ?, root_json = ?, read_only = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ? AND connection_id = ?")
+            .bind(&volume.name)
+            .bind(serde_json::to_string(&volume.root).map_err(database_error)?)
+            .bind(volume.read_only).bind(volume.id.to_string()).bind(volume.connection_id.to_string())
+            .execute(&mut *tx).await.map_err(|error| {
+                if error.as_database_error().is_some_and(|error| error.is_unique_violation()) {
+                    StorageError::new(StorageErrorCode::AlreadyExists, "该目录已添加为其他位置，请选择另一个目录")
+                } else { database_error(error) }
+            })?;
+        if result.rows_affected() != 1 {
+            return Err(StorageError::new(
+                StorageErrorCode::NotFound,
+                "未找到该存储空间",
+            ));
+        }
+        tx.commit().await.map_err(database_error)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn editing_local_storage_is_persistent_and_atomic() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("filo.db");
+        let repo = Repository::open(&db).await.unwrap();
+        let mut first = repo
+            .add_local(&dir.path().join("first"), true)
+            .await
+            .unwrap();
+        let second = repo
+            .add_local(&dir.path().join("second"), true)
+            .await
+            .unwrap();
+        first.name = "工作文件".into();
+        first.read_only = false;
+        first.root = VolumeRoot::Local {
+            root_path: dir.path().join("changed"),
+        };
+        repo.update_local(&first).await.unwrap();
+        repo.pool.close().await;
+        let repo = Repository::open(&db).await.unwrap();
+        let saved = repo
+            .list_volumes()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|v| v.id == first.id)
+            .unwrap();
+        assert_eq!(saved.name, "工作文件");
+        assert!(!saved.read_only);
+        assert!(
+            matches!(saved.root, VolumeRoot::Local { root_path } if root_path == dir.path().join("changed"))
+        );
+        first.name = "不能部分保存".into();
+        first.read_only = true;
+        first.root = second.root;
+        assert_eq!(
+            repo.update_local(&first).await.unwrap_err().code,
+            StorageErrorCode::AlreadyExists
+        );
+        let saved = repo
+            .list_volumes()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|v| v.id == first.id)
+            .unwrap();
+        assert_eq!(saved.name, "工作文件");
+        assert!(!saved.read_only);
+        let connection = repo
+            .list_connections()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.id == first.connection_id)
+            .unwrap();
+        assert_eq!(connection.name, "工作文件");
+    }
     #[tokio::test]
     async fn retains_connections_and_volumes_on_reopen() {
         let dir = tempfile::tempdir().unwrap();

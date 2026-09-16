@@ -7,6 +7,18 @@ export const api = {
     desktop ? invoke<Volume[]>("list_volumes") : Promise.resolve([]),
   addLocal: (readOnly: boolean) =>
     invoke<Volume | null>("create_local_storage", { readOnly }),
+  updateLocal: (
+    volumeId: string,
+    name: string,
+    readOnly: boolean,
+    changeDirectory: boolean,
+  ) =>
+    invoke<Omit<Volume, "capabilities"> | null>("update_local_storage", {
+      volumeId,
+      name,
+      readOnly,
+      changeDirectory,
+    }),
   entries: (parent: Locator) => invoke<Entry[]>("list_entries", { parent }),
   createDirectory: (parent: Locator, name: string) =>
     invoke<void>("create_directory", { parent, name }),
