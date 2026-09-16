@@ -53,7 +53,10 @@ mod tests {
         async fn trash(&self, _: &StorageLocator) -> StorageResult<()> {
             self.calls.lock().unwrap().push("trash");
             if self.trash_fails {
-                Err(StorageError::new(StorageErrorCode::Io, "trash failed"))
+                Err(StorageError::new(
+                    StorageErrorCode::TrashUnavailable,
+                    "trash failed",
+                ))
             } else {
                 Ok(())
             }
@@ -114,7 +117,7 @@ mod tests {
                 true,
                 true,
                 true,
-                Err(StorageErrorCode::Io),
+                Err(StorageErrorCode::TrashUnavailable),
                 vec!["trash"],
             ),
             (
@@ -148,5 +151,35 @@ mod tests {
             );
             assert_eq!(*backend.calls.lock().unwrap(), calls);
         }
+    }
+
+    #[tokio::test]
+    async fn unavailable_trash_requires_a_separate_permanent_request() {
+        let backend = Backend {
+            supports_trash: true,
+            writable: true,
+            trash_fails: true,
+            calls: Mutex::new(vec![]),
+        };
+        let locator = StorageLocator {
+            volume_id: Uuid::nil(),
+            logical_path: "file".into(),
+            version_id: None,
+        };
+        assert_eq!(
+            delete(&backend, &locator, DeleteMode::Default)
+                .await
+                .unwrap_err()
+                .code,
+            StorageErrorCode::TrashUnavailable
+        );
+        assert_eq!(*backend.calls.lock().unwrap(), vec!["trash"]);
+        assert_eq!(
+            delete(&backend, &locator, DeleteMode::Permanent)
+                .await
+                .unwrap(),
+            DeleteOutcome::PermanentlyDeleted
+        );
+        assert_eq!(*backend.calls.lock().unwrap(), vec!["trash", "delete"]);
     }
 }

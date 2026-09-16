@@ -353,8 +353,8 @@ impl StorageBackend for OpenDalLocalBackend {
                 let context = trash::TrashContext::new();
                 context.delete(path).map_err(|_| {
                     StorageError::new(
-                        StorageErrorCode::Io,
-                        "无法移入系统回收站，请检查磁盘和权限；未执行永久删除",
+                        StorageErrorCode::TrashUnavailable,
+                        "无法移入系统回收站。继续删除将永久删除，无法找回；当前尚未执行永久删除",
                     )
                 })
             })

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, Trash2 } from "lucide-react";
 import { api, errorMessage } from "./api";
@@ -18,9 +19,23 @@ export function DeleteEntryDialog({
   onDeleted: (outcome: DeleteOutcome) => void;
 }) {
   const client = useQueryClient();
-  const toTrash = mode === "default" && volume.capabilities.trash;
+  const [trashUnavailable, setTrashUnavailable] = useState(false);
+  const toTrash =
+    mode === "default" && volume.capabilities.trash && !trashUnavailable;
   const mutation = useMutation({
-    mutationFn: () => api.delete(entry.locator, mode),
+    mutationFn: (requestedMode: DeleteMode) =>
+      api.delete(entry.locator, requestedMode),
+    onError: (error, requestedMode) => {
+      if (
+        requestedMode === "default" &&
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "trash_unavailable"
+      ) {
+        setTrashUnavailable(true);
+      }
+    },
     onSuccess: async (outcome) => {
       await client.invalidateQueries({ queryKey: ["entries", volume.id] });
       onDeleted(outcome);
@@ -28,7 +43,13 @@ export function DeleteEntryDialog({
   });
   return (
     <Modal
-      title={toTrash ? "移入回收站" : "永久删除"}
+      title={
+        trashUnavailable
+          ? "无法移入回收站"
+          : toTrash
+            ? "移入回收站"
+            : "永久删除"
+      }
       onClose={onClose}
       busy={mutation.isPending}
     >
@@ -42,13 +63,14 @@ export function DeleteEntryDialog({
       <p className="delete-warning">
         {toTrash
           ? "可以在系统回收站中找回。文件夹会连同其中的内容一起移入回收站。"
-          : `${mode === "default" ? "此存储不支持回收站。" : "此操作会跳过回收站。"}删除后无法通过回收站恢复。${entry.kind === "directory" ? "当前仅允许永久删除空文件夹。" : ""}`}
+          : `${trashUnavailable ? "此项目无法放入回收站。" : mode === "default" ? "此存储不支持回收站。" : "此操作会跳过回收站。"}继续删除将永久删除，无法找回。${entry.kind === "directory" ? "当前仅允许永久删除空文件夹。" : ""}`}
       </p>
-      {mutation.isError && (
-        <p className="error-text" role="alert">
-          {errorMessage(mutation.error)}
-        </p>
-      )}
+      {mutation.isError &&
+        !(trashUnavailable && mutation.variables === "default") && (
+          <p className="error-text" role="alert">
+            {errorMessage(mutation.error)}
+          </p>
+        )}
       <div className="modal-footer">
         <button
           className="secondary"
@@ -60,14 +82,16 @@ export function DeleteEntryDialog({
         <button
           className={toTrash ? "primary" : "danger"}
           disabled={mutation.isPending}
-          onClick={() => mutation.mutate()}
+          onClick={() => mutation.mutate(trashUnavailable ? "permanent" : mode)}
         >
           {mutation.isPending && <LoaderCircle size={16} className="spin" />}
           {mutation.isPending
             ? "正在处理…"
             : toTrash
               ? "移入回收站"
-              : "确认永久删除"}
+              : trashUnavailable
+                ? "仍然永久删除"
+                : "确认永久删除"}
         </button>
       </div>
     </Modal>
