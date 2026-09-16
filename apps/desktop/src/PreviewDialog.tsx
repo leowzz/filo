@@ -69,10 +69,18 @@ function SelectionPreview({ entries }: { entries: Entry[] }) {
 
 function FilePreview({ entry }: { entry: Entry }) {
   const query = useQuery({
-    queryKey: ["preview", entry.locator, entry.modified_at, entry.etag],
+    queryKey: [
+      "preview",
+      entry.locator,
+      entry.modified_at,
+      entry.etag,
+      entry.size,
+    ],
     queryFn: () => browsingApi.preview(entry.locator),
     retry: false,
-    gcTime: 0,
+    staleTime: 30_000,
+    gcTime: 30_000,
+    refetchOnWindowFocus: false,
   });
   return (
     <div className="preview-content">

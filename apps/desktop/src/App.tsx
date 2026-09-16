@@ -353,7 +353,10 @@ export default function App() {
           onPreview={() => setPreview(selectedEntries)}
           onContentSearch={() => setContentSearch(true)}
           onManage={(object) => setS3Manager({ locator: object && selected ? selected.locator : parent, object })}
-          onRefresh={() => void entriesQuery.refetch()}
+          onRefresh={() => {
+            void entriesQuery.refetch();
+            void client.invalidateQueries({ queryKey: ["preview"] });
+          }}
           isFetching={entriesQuery.isFetching}
           transfers={transfersQuery.data ?? []}
           uploadIds={uploadIds}

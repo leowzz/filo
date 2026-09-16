@@ -29,6 +29,7 @@ export function useDirectoryRefresh(
               queryKey: ["entries", parent.volume_id, parent.logical_path],
             });
             void client.invalidateQueries({ queryKey: ["thumbnail"] });
+            void client.invalidateQueries({ queryKey: ["preview"] });
           }
           stamp.current = value;
           setError("");

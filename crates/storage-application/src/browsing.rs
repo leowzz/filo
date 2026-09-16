@@ -13,28 +13,126 @@ pub(super) struct SearchTask {
 fn error(message: &str) -> StorageError {
     StorageError::new(StorageErrorCode::Unsupported, message)
 }
+
+const UNSUPPORTED_PREVIEW: &str = "此文件暂不支持预览，请下载或使用系统应用打开";
+
+fn known_binary(name: &str) -> bool {
+    let extension = name
+        .rsplit_once('.')
+        .map(|(_, ext)| ext)
+        .unwrap_or_default();
+    matches!(
+        extension,
+        "dmg"
+            | "iso"
+            | "img"
+            | "pkg"
+            | "exe"
+            | "msi"
+            | "dll"
+            | "so"
+            | "dylib"
+            | "zip"
+            | "rar"
+            | "7z"
+            | "tar"
+            | "gz"
+            | "bz2"
+            | "xz"
+            | "zst"
+            | "doc"
+            | "docx"
+            | "xls"
+            | "xlsx"
+            | "ppt"
+            | "pptx"
+            | "odt"
+            | "ods"
+            | "odp"
+            | "mp3"
+            | "mp4"
+            | "m4a"
+            | "mov"
+            | "avi"
+            | "mkv"
+            | "wav"
+            | "flac"
+            | "sqlite"
+            | "db"
+            | "bin"
+            | "woff"
+            | "woff2"
+            | "ttf"
+            | "otf"
+    )
+}
+
+async fn read_preview_bytes(
+    reader: storage_provider_api::StorageReader,
+    limit: u64,
+    text: bool,
+) -> StorageResult<Vec<u8>> {
+    let mut reader = reader.take(limit + 1);
+    let mut bytes = Vec::new();
+    if !text {
+        reader
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|_| error("无法读取预览内容"))?;
+        return Ok(bytes);
+    }
+    let mut chunk = [0u8; 8192];
+    loop {
+        let count = reader
+            .read(&mut chunk)
+            .await
+            .map_err(|_| error("无法读取预览内容"))?;
+        if count == 0 {
+            return Ok(bytes);
+        }
+        // Stop unknown binary files at the first binary chunk, not after 1 MiB.
+        if chunk[..count].contains(&0) {
+            return Err(error(UNSUPPORTED_PREVIEW));
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+    }
+}
+
 impl StorageService {
     pub async fn preview_entry(
         &self,
         locator: StorageLocator,
         thumbnail: bool,
     ) -> StorageResult<Preview> {
-        let _slot = self
-            .preview_slots
-            .acquire()
-            .await
-            .map_err(|_| error("预览任务已停止"))?;
+        let name = locator
+            .logical_path
+            .rsplit('/')
+            .next()
+            .unwrap_or_default()
+            .to_lowercase();
+        let is_image = [".png", ".jpg", ".jpeg", ".gif", ".webp"]
+            .iter()
+            .any(|ext| name.ends_with(ext));
+        let is_pdf = name.ends_with(".pdf");
+        // Reject known unsupported formats before queuing or making remote requests.
+        if known_binary(&name) {
+            return Err(error(UNSUPPORTED_PREVIEW));
+        }
+        if thumbnail && !is_image {
+            return Err(error("此文件没有缩略图"));
+        }
+        let slots = if thumbnail {
+            &self.thumbnail_slots
+        } else {
+            &self.preview_slots
+        };
+        let _slot = slots.acquire().await.map_err(|_| error("预览任务已停止"))?;
         let _guard = self.mutation_lock.read().await;
         let backend = self.backend(locator.volume_id).await?;
         let entry = backend.stat(&locator).await?;
         if entry.kind != StorageEntryKind::File {
             return Err(error("请选择普通文件进行预览"));
         }
-        let name = entry.name.to_lowercase();
-        let is_image = [".png", ".jpg", ".jpeg", ".gif", ".webp"]
-            .iter()
-            .any(|ext| name.ends_with(ext));
-        let is_pdf = name.ends_with(".pdf");
         let limit = if is_image || is_pdf {
             20 * 1024 * 1024
         } else {
@@ -43,15 +141,16 @@ impl StorageService {
         if (is_image || is_pdf) && entry.size.unwrap_or(u64::MAX) > limit {
             return Err(error("图片或 PDF 超过 20 MiB，请下载或使用系统应用打开"));
         }
-        let mut bytes = Vec::new();
-        backend
-            .open_read(&locator)
-            .await?
-            .take(limit + 1)
-            .read_to_end(&mut bytes)
-            .await
-            .map_err(|_| error("无法读取预览内容"))?;
+        let mut bytes = read_preview_bytes(
+            backend.open_read(&locator).await?,
+            limit,
+            !is_image && !is_pdf,
+        )
+        .await?;
         let truncated = bytes.len() > limit as usize;
+        if truncated && (is_image || is_pdf) {
+            return Err(error("图片或 PDF 超过 20 MiB，请下载或使用系统应用打开"));
+        }
         bytes.truncate(limit as usize);
         if is_image {
             let content = tokio::task::spawn_blocking(move || -> StorageResult<String> {
@@ -86,9 +185,6 @@ impl StorageService {
                 truncated: false,
             });
         }
-        if thumbnail {
-            return Err(error("此文件没有缩略图"));
-        }
         if is_pdf {
             if !bytes.starts_with(b"%PDF-") {
                 return Err(error("PDF 文件格式无效"));
@@ -99,9 +195,6 @@ impl StorageService {
                 content: STANDARD.encode(bytes),
                 truncated: false,
             });
-        }
-        if bytes.contains(&0) {
-            return Err(error("此文件暂不支持预览，请下载或使用系统应用打开"));
         }
         let content = String::from_utf8_lossy(&bytes).into_owned();
         Ok(Preview {
@@ -324,6 +417,62 @@ async fn search_file(
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn unsupported_preview_skips_queue_and_backend_access() {
+        let db = tempfile::tempdir().unwrap();
+        let service = StorageService::new(
+            Repository::open(&db.path().join("test.sqlite"))
+                .await
+                .unwrap(),
+        );
+        let _busy = service.preview_slots.acquire_many(2).await.unwrap();
+        // No such volume exists: any stat/read would fail instead of classifying the file.
+        for path in ["installer.DMG", "archive.zip", "slides.pptx", "movie.mp4"] {
+            let result = tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                service.preview_entry(
+                    StorageLocator {
+                        volume_id: Uuid::new_v4(),
+                        logical_path: path.into(),
+                        version_id: None,
+                    },
+                    false,
+                ),
+            )
+            .await
+            .unwrap()
+            .err()
+            .unwrap();
+            assert_eq!(result.code, StorageErrorCode::Unsupported);
+            assert_eq!(result.message, UNSUPPORTED_PREVIEW);
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_binary_stops_without_waiting_for_the_rest() {
+        use tokio::io::AsyncWriteExt;
+        let (reader, mut writer) = tokio::io::duplex(8192);
+        writer.write_all(&[0, 1, 2, 3]).await.unwrap();
+        // Keep the stream open but send no more bytes, as with a slow remote file.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            read_preview_bytes(Box::pin(reader), 1024 * 1024, true),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert_eq!(result.message, UNSUPPORTED_PREVIEW);
+        drop(writer);
+        let bytes = read_preview_bytes(Box::pin(Cursor::new(vec![b'x'; 100])), 10, true)
+            .await
+            .unwrap();
+        assert_eq!(
+            bytes.len(),
+            11,
+            "Reads only the text limit plus a truncation marker"
+        );
+    }
+
+    #[tokio::test]
     async fn preview_search_and_change_detection_are_scoped_and_bounded() {
         let dir = tempfile::tempdir().unwrap();
         let db = tempfile::tempdir().unwrap();
@@ -350,10 +499,15 @@ mod tests {
             logical_path: path.into(),
             version_id: None,
         };
-        let preview = service
-            .preview_entry(loc("nested/hello.txt"), false)
-            .await
-            .unwrap();
+        let thumbnails_busy = service.thumbnail_slots.acquire().await.unwrap();
+        let preview = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            service.preview_entry(loc("nested/hello.txt"), false),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        drop(thumbnails_busy);
         assert_eq!(preview.kind, "text");
         assert!(preview.content.contains("中文"));
         let thumb = service.preview_entry(loc("photo.png"), true).await.unwrap();
