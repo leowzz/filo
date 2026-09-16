@@ -1,0 +1,20 @@
+[package]
+name = "provider-opendal"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+storage-domain.workspace = true
+storage-provider-api.workspace = true
+async-trait.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+opendal = { version = "0.54", default-features = false, features = ["services-fs", "executors-tokio"] }
+chrono = "0.4"
+
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+rustix = { version = "1", features = ["fs"] }
+
+[dev-dependencies]
+tempfile.workspace = true

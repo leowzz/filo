@@ -1,0 +1,9 @@
+[package]
+name = "storage-provider-api"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+storage-domain.workspace = true
+async-trait.workspace = true
+uuid.workspace = true

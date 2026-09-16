@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Filo",
+  "version": "0.1.0",
+  "identifier": "dev.filo.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "title": "Filo · 菲洛", "width": 1280, "height": 820, "minWidth": 960, "minHeight": 640, "backgroundColor": "#101113" }],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data:; connect-src ipc: http://ipc.localhost; object-src 'none'; frame-src 'none'"
+    }
+  },
+  "bundle": { "active": true, "targets": ["app"] }
+}

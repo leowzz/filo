@@ -1,0 +1,14 @@
+[package]
+name = "storage-repository"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+storage-domain.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true
