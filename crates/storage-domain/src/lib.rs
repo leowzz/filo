@@ -1,3 +1,5 @@
+mod advanced;
+pub use advanced::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -237,6 +239,10 @@ impl StorageCapabilities {
             multipart_write: !read_only,
             server_side_copy: !read_only,
             trash: false,
+            presigned_url: true,
+            versioning: true,
+            custom_metadata: !read_only,
+            tags: !read_only,
             native_open: false,
             ..Self::local(read_only)
         }
@@ -260,7 +266,7 @@ impl StorageCapabilities {
             versioning: false,
             custom_metadata: false,
             tags: false,
-            watch_changes: false,
+            watch_changes: true,
             delete: !read_only,
             trash: !read_only
                 && cfg!(any(

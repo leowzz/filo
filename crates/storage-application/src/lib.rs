@@ -5,11 +5,13 @@ use storage_provider_api::{StorageBackend, TransferLimits};
 use storage_repository::Repository;
 use tokio::sync::{Mutex, OnceCell, RwLock};
 use uuid::Uuid;
+mod browsing;
 mod credentials;
 mod entries;
 mod file_operations;
 mod listing;
 mod s3;
+mod s3_admin;
 mod volumes;
 pub use credentials::{CredentialStore, SystemCredentialStore};
 mod operation_planner;
@@ -28,6 +30,8 @@ pub struct VolumeView {
 pub struct StorageService {
     repository: Repository,
     listings: Arc<listing::Listings>,
+    preview_slots: Arc<tokio::sync::Semaphore>,
+    searches: Arc<Mutex<std::collections::HashMap<Uuid, browsing::SearchTask>>>,
     mutation_lock: Arc<RwLock<()>>,
     transfer_scheduler: Arc<transfers::scheduler::TransferScheduler>,
     transfer_limits: Arc<OnceCell<Arc<TransferLimits>>>,
@@ -46,6 +50,8 @@ impl StorageService {
         Self {
             credentials: Arc::new(credentials::CachedCredentialStore::new(credentials)),
             listings: Arc::new(listing::Listings::default()),
+            preview_slots: Arc::new(tokio::sync::Semaphore::new(3)),
+            searches: Arc::new(Mutex::new(std::collections::HashMap::new())),
             temporary_backends: Arc::new(Mutex::new(std::collections::HashMap::new())),
             repository,
             mutation_lock: Arc::new(RwLock::new(())),

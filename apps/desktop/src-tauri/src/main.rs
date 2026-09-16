@@ -286,6 +286,49 @@ async fn delete_entry(
         .await
 }
 
+#[tauri::command]
+async fn preview_entry(
+    service: State<'_, StorageService>,
+    locator: StorageLocator,
+    thumbnail: bool,
+) -> StorageResult<Preview> {
+    service.preview_entry(locator, thumbnail).await
+}
+#[tauri::command]
+async fn directory_stamp(
+    service: State<'_, StorageService>,
+    parent: StorageLocator,
+) -> StorageResult<String> {
+    service.directory_stamp(parent).await
+}
+#[tauri::command]
+async fn start_content_search(
+    service: State<'_, StorageService>,
+    parent: StorageLocator,
+    query: String,
+    show_hidden: bool,
+) -> StorageResult<uuid::Uuid> {
+    service
+        .start_content_search(parent, query, show_hidden)
+        .await
+}
+#[tauri::command]
+async fn content_search_status(
+    service: State<'_, StorageService>,
+    id: uuid::Uuid,
+    cancel: bool,
+) -> StorageResult<ContentSearch> {
+    service.content_search_status(id, cancel).await
+}
+#[tauri::command]
+async fn manage_s3(
+    service: State<'_, StorageService>,
+    locator: StorageLocator,
+    action: S3Action,
+) -> StorageResult<serde_json::Value> {
+    service.manage_s3(locator, action).await
+}
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -304,6 +347,11 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            preview_entry,
+            directory_stamp,
+            start_content_search,
+            content_search_status,
+            manage_s3,
             get_transfer_settings,
             save_transfer_settings,
             save_s3_storage,

@@ -235,12 +235,19 @@ async fn rustfs_roundtrip_and_safety() {
     let mut stale = backend.stage_replace(&expected).await.unwrap();
     stale.write(b"stale replacement").await.unwrap();
     let mut winner = backend.stage_replace(&expected).await.unwrap();
-    for chunk in bytes.chunks(256 * 1024) { winner.write(chunk).await.unwrap(); }
+    for chunk in bytes.chunks(256 * 1024) {
+        winner.write(chunk).await.unwrap();
+    }
     winner.commit().await.unwrap();
-    assert!(stale.commit().await.is_err(), "stale conditional replacement must fail");
+    assert!(
+        stale.commit().await.is_err(),
+        "stale conditional replacement must fail"
+    );
     let mut replaced = backend.open_read(&replace_target).await.unwrap();
     let mut content = Vec::new();
-    tokio::io::AsyncReadExt::read_to_end(&mut replaced, &mut content).await.unwrap();
+    tokio::io::AsyncReadExt::read_to_end(&mut replaced, &mut content)
+        .await
+        .unwrap();
     assert_eq!(content, bytes);
     backend.delete(&replace_target).await.unwrap();
 
@@ -555,4 +562,299 @@ async fn rustfs_roundtrip_and_safety() {
     service.remove_local_storage(remote.id, true).await.unwrap();
     service.remove_local_storage(other.id, true).await.unwrap();
     assert!(store.0.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+#[ignore = "creates and removes a unique test bucket on configured S3 endpoint"]
+async fn rustfs_advanced_management() {
+    use std::collections::BTreeMap;
+    let raw: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(std::env::var("FILO_S3_TEST_CONFIG").unwrap()).unwrap(),
+    )
+    .unwrap();
+    let credentials = S3Credentials {
+        access_key_id: raw["access_key_id"].as_str().unwrap().into(),
+        secret_access_key: raw["secret_access_key"].as_str().unwrap().into(),
+        session_token: None,
+    };
+    let config = S3ConnectionConfig {
+        provider: None,
+        endpoint: Some(raw["endpoint"].as_str().unwrap().into()),
+        region: raw["region"].as_str().unwrap().into(),
+        force_path_style: true,
+    };
+    let name = format!("filo-advanced-{}", Uuid::new_v4());
+    let volume = StorageVolume {
+        id: Uuid::new_v4(),
+        connection_id: Uuid::new_v4(),
+        name: name.clone(),
+        root: VolumeRoot::S3 {
+            bucket: name.clone(),
+            prefix: String::new(),
+        },
+        read_only: false,
+    };
+    let admin = provider_opendal::S3Admin::new(&volume, &config, &credentials).unwrap();
+    admin
+        .run("", S3Action::CreateBucket { name: name.clone() })
+        .await
+        .unwrap();
+    // Cleanup is attempted even if an assertion fails inside the test body.
+    let body = async {
+        admin
+            .run(
+                "",
+                S3Action::SetVersioning {
+                    enabled: true,
+                    confirmation: name.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        let backend = OpenDalS3Backend::new(&volume, &config, &credentials).unwrap();
+        let object = locator(&volume, "中文 file.txt");
+        let mut writer = backend.stage_write(&object).await.unwrap();
+        writer.write(b"first version").await.unwrap();
+        writer.commit().await.unwrap();
+        let first = backend.stat(&object).await.unwrap();
+        let mut writer = backend.stage_replace(&first).await.unwrap();
+        writer.write(b"second version").await.unwrap();
+        writer.commit().await.unwrap();
+        let r = admin
+            .run(
+                &object.logical_path,
+                S3Action::Versions {
+                    exact: true,
+                    key_marker: None,
+                    version_marker: None,
+                },
+            )
+            .await
+            .unwrap();
+        let versions: VersionPage = serde_json::from_value(r).unwrap();
+        assert!(versions.versions.len() >= 2);
+        let old = versions
+            .versions
+            .iter()
+            .find(|v| !v.latest)
+            .unwrap()
+            .version_id
+            .clone();
+        admin
+            .run(
+                &object.logical_path,
+                S3Action::RestoreVersion {
+                    version: old.clone(),
+                    confirmation: object.logical_path.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        let mut bytes = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(
+            &mut backend.open_read(&object).await.unwrap(),
+            &mut bytes,
+        )
+        .await
+        .unwrap();
+        assert_eq!(bytes, b"first version");
+        let public_supported = match admin
+            .run(
+                &object.logical_path,
+                S3Action::SetAcl {
+                    acl: "public-read".into(),
+                    confirmation: object.logical_path.clone(),
+                },
+            )
+            .await
+        {
+            Ok(_) => true,
+            Err(error) if error.code == StorageErrorCode::Unsupported => {
+                println!(
+                    "Server does not apply public-read ACL; verified refusal is reported to the UI"
+                );
+                false
+            }
+            Err(error) => panic!("unexpected ACL failure: {}", error.message),
+        };
+        let properties: ObjectProperties = serde_json::from_value(
+            admin
+                .run(&object.logical_path, S3Action::Properties)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        admin
+            .run(
+                &object.logical_path,
+                S3Action::SetMetadata {
+                    etag: properties.etag,
+                    content_type: "text/plain".into(),
+                    metadata: BTreeMap::from([("project".into(), "filo".into())]),
+                },
+            )
+            .await
+            .unwrap();
+        if public_supported {
+            let preserved = admin
+                .run(&object.logical_path, S3Action::Acl)
+                .await
+                .unwrap();
+            assert!(
+                preserved["grants"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|g| g["uri"]
+                        .as_str()
+                        .is_some_and(|uri| uri.ends_with("/AllUsers"))),
+                "Metadata edit must preserve public-read ACL"
+            );
+        }
+        let properties = admin
+            .run(&object.logical_path, S3Action::Properties)
+            .await
+            .unwrap();
+        assert_eq!(properties["metadata"]["project"], "filo");
+        admin
+            .run(
+                &object.logical_path,
+                S3Action::SetTags {
+                    tags: BTreeMap::from([("test".into(), "yes".into())]),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            admin
+                .run(&object.logical_path, S3Action::Tags)
+                .await
+                .unwrap()["test"],
+            "yes"
+        );
+        admin
+            .run(
+                &object.logical_path,
+                S3Action::SetAcl {
+                    acl: "private".into(),
+                    confirmation: object.logical_path.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(admin
+            .run(&object.logical_path, S3Action::Acl)
+            .await
+            .unwrap()["grants"]
+            .is_array());
+        let share = admin
+            .run(
+                &object.logical_path,
+                S3Action::Share {
+                    expires: 60,
+                    version: Some(old),
+                },
+            )
+            .await
+            .unwrap();
+        // Fetch the real presigned URL, never print it or credentials.
+        let response = std::process::Command::new("curl")
+            .args(["--fail", "--silent", share["url"].as_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(response.status.success());
+        assert_eq!(response.stdout, b"first version");
+        assert!(admin
+            .run(
+                "",
+                S3Action::DeleteBucket {
+                    confirmation: name.clone()
+                }
+            )
+            .await
+            .is_err());
+        backend.delete(&object).await.unwrap();
+        let versions: VersionPage = serde_json::from_value(
+            admin
+                .run(
+                    &object.logical_path,
+                    S3Action::Versions {
+                        exact: true,
+                        key_marker: None,
+                        version_marker: None,
+                    },
+                )
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(versions.versions.iter().any(|v| v.delete_marker));
+        let mut restricted = volume.clone();
+        restricted.read_only = true;
+        let readonly = provider_opendal::S3Admin::new(&restricted, &config, &credentials).unwrap();
+        assert!(readonly
+            .run(
+                "",
+                S3Action::DeleteBucket {
+                    confirmation: name.clone()
+                }
+            )
+            .await
+            .is_err());
+        restricted.read_only = false;
+        restricted.root = VolumeRoot::S3 {
+            bucket: name.clone(),
+            prefix: "limited".into(),
+        };
+        let scoped = provider_opendal::S3Admin::new(&restricted, &config, &credentials).unwrap();
+        assert!(scoped
+            .run(
+                "",
+                S3Action::DeleteBucket {
+                    confirmation: name.clone()
+                }
+            )
+            .await
+            .is_err());
+    };
+    use futures::FutureExt;
+    let result = std::panic::AssertUnwindSafe(body).catch_unwind().await;
+    loop {
+        let page: VersionPage = serde_json::from_value(
+            admin
+                .run(
+                    "",
+                    S3Action::Versions {
+                        exact: false,
+                        key_marker: None,
+                        version_marker: None,
+                    },
+                )
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        if page.versions.is_empty() {
+            break;
+        }
+        for v in page.versions {
+            admin
+                .run(
+                    &v.key,
+                    S3Action::DeleteVersion {
+                        version: v.version_id,
+                        confirmation: v.key.clone(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+    }
+    admin
+        .run("", S3Action::DeleteBucket { confirmation: name })
+        .await
+        .unwrap();
+    if let Err(panic) = result {
+        std::panic::resume_unwind(panic);
+    }
 }

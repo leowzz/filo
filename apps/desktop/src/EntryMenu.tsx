@@ -24,6 +24,8 @@ export function EntryMenu({
   onClose,
   onOpen,
   onDetails,
+  onPreview,
+  onManage,
   onRename,
   onTransfer,
   onDelete,
@@ -35,6 +37,8 @@ export function EntryMenu({
   onClose: () => void;
   onOpen: () => void;
   onDetails: () => void;
+  onPreview: () => void;
+  onManage: () => void;
   onRename: () => void;
   onTransfer: (kind: TransferKind) => void;
   onDelete: (mode: DeleteMode) => void;
@@ -133,6 +137,18 @@ export function EntryMenu({
         <Info size={14} />
         显示简介
       </button>
+      {entries.length === 1 && entry.kind === "file" && (
+        <>
+          <button role="menuitem" onClick={() => perform(onPreview)}>
+            预览
+          </button>
+          {volume.root.type === "s3" && (
+            <button role="menuitem" onClick={() => perform(onManage)}>
+              对象管理…
+            </button>
+          )}
+        </>
+      )}
       {canOperate && (
         <>
           <div className="menu-separator" />

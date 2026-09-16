@@ -18,3 +18,5 @@
 - [上传和下载速度设置](13-transfer-speed.md)
 
 - [冲突处理与大目录](13-conflicts-and-paging.md)：覆盖/跳过/自动改名、分页、虚拟列表与验证入口。
+
+- [浏览与 S3 高级管理](14-browsing-and-s3-management.md)：预览、缩略图、内容搜索、自动刷新，以及 Bucket、版本和对象属性。

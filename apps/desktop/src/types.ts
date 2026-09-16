@@ -48,6 +48,7 @@ export type Volume = {
   capabilities: Capabilities;
 };
 export type Entry = {
+  etag?: string | null;
   locator: Locator;
   name: string;
   kind: "file" | "directory" | "virtual_prefix" | "symlink";

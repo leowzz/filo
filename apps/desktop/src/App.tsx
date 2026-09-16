@@ -1,3 +1,7 @@
+import { PreviewDialog } from "./PreviewDialog";
+import { ContentSearchDialog } from "./ContentSearchDialog";
+import { S3ManagerDialog } from "./S3ManagerDialog";
+import { BrowseTools } from "./BrowseTools";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Info, X } from "lucide-react";
 import {
@@ -95,6 +99,12 @@ export default function App() {
     version_id: null,
   };
   const [search, setSearch] = useState("");
+  const [preview, setPreview] = useState<Entry | null>(null);
+  const [contentSearch, setContentSearch] = useState(false);
+  const [s3Manager, setS3Manager] = useState<{
+    locator: Locator;
+    object: boolean;
+  } | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [name, setName] = useState("");
   const [renamePolicy, setRenamePolicy] = useState<ConflictPolicy>("reject");
@@ -377,6 +387,20 @@ export default function App() {
                 </button>
               </div>
             )}
+            <BrowseTools
+              key={`${volume.id}:${path}`}
+              parent={parent}
+              volume={volume}
+              selected={selected}
+              onPreview={() => selected && setPreview(selected)}
+              onSearch={() => setContentSearch(true)}
+              onManage={(object) =>
+                setS3Manager({
+                  locator: object && selected ? selected.locator : parent,
+                  object,
+                })
+              }
+            />
             <FileBrowser
               key={JSON.stringify([
                 volume.id,
@@ -407,6 +431,24 @@ export default function App() {
         {state.page === "settings" && <SettingsPage />}
       </main>
 
+      {preview && (
+        <PreviewDialog entry={preview} onClose={() => setPreview(null)} />
+      )}
+      {contentSearch && volume && (
+        <ContentSearchDialog
+          parent={parent}
+          showHidden={state.showHidden}
+          onClose={() => setContentSearch(false)}
+          onPreview={setPreview}
+        />
+      )}
+      {s3Manager && volume && (
+        <S3ManagerDialog
+          {...s3Manager}
+          volume={volume}
+          onClose={() => setS3Manager(null)}
+        />
+      )}
       {menuEntry && volume && menuPosition && (
         <EntryMenu
           entry={menuEntry}
@@ -416,6 +458,10 @@ export default function App() {
           onClose={closeEntryMenu}
           onOpen={() => openEntry(menuEntry)}
           onDetails={() => showDetails(menuEntry)}
+          onPreview={() => setPreview(menuEntry)}
+          onManage={() =>
+            setS3Manager({ locator: menuEntry.locator, object: true })
+          }
           onRename={() => openDialog({ type: "rename", entry: menuEntry })}
           onTransfer={(kind) =>
             setTransferDialog({ entries: selectedEntries, kind })

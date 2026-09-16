@@ -7,8 +7,9 @@ import {
   LoaderCircle,
   MoreHorizontal,
 } from "lucide-react";
+import { Thumbnail } from "./PreviewDialog";
 import { errorMessage } from "./api";
-import { EntryIcon, formatDate, formatSize, typeName } from "./components";
+import { formatDate, formatSize, typeName } from "./components";
 import { useBrowser } from "./store";
 import { type Entry, type Volume } from "./types";
 import { useFileSelection } from "./useFileSelection";
@@ -187,7 +188,7 @@ export function FileBrowser({
                   >
                     <td>
                       <span className="file-name">
-                        <EntryIcon entry={entry} />
+                        <Thumbnail entry={entry} />
                         <span title={entry.name}>{entry.name}</span>
                       </span>
                     </td>

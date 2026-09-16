@@ -7,6 +7,7 @@ edition.workspace = true
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+serde_json.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 storage-domain.workspace = true

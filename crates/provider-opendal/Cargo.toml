@@ -19,6 +19,7 @@ futures = "0.3"
 chrono = "0.4"
 tempfile.workspace = true
 open = "5"
+aws-sdk-s3 = { version = "1.146.1", default-features = false, features = ["rt-tokio", "rustls", "default-https-client"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))'.dependencies]
 trash = "5"
