@@ -1,3 +1,4 @@
+import { ChevronDown, Link2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "./api";
@@ -194,22 +195,25 @@ export function S3Form({
               <div>
                 <label className="field-label">
                   地域
-                  <select
-                    className="text-input"
-                    value={customRegion ? "custom" : region}
-                    onChange={(e) => {
-                      setCustomRegion(e.target.value === "custom");
-                      if (e.target.value !== "custom")
-                        setRegion(e.target.value);
-                    }}
-                  >
-                    {regions.map(([id, label]) => (
-                      <option key={id} value={id}>
-                        {label} · {id}
-                      </option>
-                    ))}
-                    <option value="custom">其他地域（手动填写）</option>
-                  </select>
+                  <span className="s3-select-control">
+                    <select
+                      className="text-input"
+                      value={customRegion ? "custom" : region}
+                      onChange={(e) => {
+                        setCustomRegion(e.target.value === "custom");
+                        if (e.target.value !== "custom")
+                          setRegion(e.target.value);
+                      }}
+                    >
+                      {regions.map(([id, label]) => (
+                        <option key={id} value={id}>
+                          {label} · {id}
+                        </option>
+                      ))}
+                      <option value="custom">其他地域（手动填写）</option>
+                    </select>
+                    <ChevronDown size={14} aria-hidden="true" />
+                  </span>
                 </label>
                 {customRegion && (
                   <label className="field-label">
@@ -225,17 +229,20 @@ export function S3Form({
               </div>
               <label className="field-label">
                 访问方式
-                <select
-                  className="text-input"
-                  value={addressMode}
-                  onChange={(e) =>
-                    setAddressMode(e.target.value as EndpointMode)
-                  }
-                >
-                  <option value="public">公网访问</option>
-                  <option value="internal">内网访问</option>
-                  <option value="custom">自定义访问地址</option>
-                </select>
+                <span className="s3-select-control">
+                  <select
+                    className="text-input"
+                    value={addressMode}
+                    onChange={(e) =>
+                      setAddressMode(e.target.value as EndpointMode)
+                    }
+                  >
+                    <option value="public">公网访问</option>
+                    <option value="internal">内网访问</option>
+                    <option value="custom">自定义访问地址</option>
+                  </select>
+                  <ChevronDown size={14} aria-hidden="true" />
+                </span>
               </label>
             </div>
             {addressMode === "internal" && (
@@ -246,20 +253,32 @@ export function S3Form({
           </>
         )}
         <label className="field-label">
-          访问地址（Endpoint）{provider === "generic" ? "（可选）" : ""}
-          <input
-            className="text-input"
-            value={effectiveEndpoint}
-            readOnly={cloud && addressMode !== "custom"}
-            onChange={(e) => setEndpoint(e.target.value)}
-            placeholder={
-              provider === "generic"
-                ? "留空使用 AWS S3"
-                : "https://s3.example.com"
-            }
-            required={provider !== "generic"}
-            aria-invalid={!endpointValid}
-          />
+          <span className="s3-endpoint-label">
+            <span>
+              访问地址（Endpoint）{provider === "generic" ? "（可选）" : ""}
+            </span>
+            {cloud && addressMode !== "custom" && (
+              <span className="s3-auto-badge">自动生成</span>
+            )}
+          </span>
+          <span
+            className={`s3-endpoint-control${cloud && addressMode !== "custom" ? " is-generated" : ""}`}
+          >
+            <Link2 size={15} aria-hidden="true" />
+            <input
+              className="text-input"
+              value={effectiveEndpoint}
+              readOnly={cloud && addressMode !== "custom"}
+              onChange={(e) => setEndpoint(e.target.value)}
+              placeholder={
+                provider === "generic"
+                  ? "留空使用 AWS S3"
+                  : "https://s3.example.com"
+              }
+              required={provider !== "generic"}
+              aria-invalid={!endpointValid}
+            />
+          </span>
           <span className="field-help s3-input-help">
             {provider === "rustfs"
               ? "填写 S3 API 地址，默认端口 9000；不是控制台的 9001 端口。"

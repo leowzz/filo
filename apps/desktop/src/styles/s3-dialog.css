@@ -52,10 +52,6 @@
   outline: 3px solid #007aff77;
   outline-offset: 1px;
 }
-.s3-fields input[readonly] {
-  background: #ededed;
-  color: #555;
-}
 .s3-input-help {
   display: block;
   font-weight: normal;
@@ -176,5 +172,111 @@
   }
   .storage-detail-panel:not([hidden]) {
     animation: none;
+  }
+}
+
+/* Consistent controls across native desktop and browser previews. */
+.s3-fields .text-input {
+  height: 34px;
+  border-color: #d6dbe1;
+  border-radius: 7px;
+  box-shadow: 0 1px 2px #172b4d04;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+.s3-fields .text-input:hover:not(:disabled):not([readonly]) {
+  border-color: #aab6c5;
+}
+.s3-fields .text-input:focus-visible {
+  outline: none;
+  border-color: #619fea;
+  box-shadow: 0 0 0 3px #007aff14;
+}
+.s3-select-control {
+  position: relative;
+  display: block;
+  margin-top: 6px;
+}
+.s3-select-control .text-input {
+  appearance: none;
+  -webkit-appearance: none;
+  margin-top: 0;
+  padding: 0 29px 0 10px;
+  background: #fff;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+.s3-select-control > svg {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #7d8998;
+  pointer-events: none;
+}
+.s3-endpoint-label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.s3-auto-badge {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #e8eef6;
+  color: #62758d;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.s3-endpoint-control {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 6px;
+  padding: 0 11px;
+  border: 1px solid #d6dbe1;
+  border-radius: 7px;
+  background: #fff;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+.s3-endpoint-control > svg {
+  color: #7c8ca0;
+}
+.s3-endpoint-control.is-generated {
+  border-color: #dde5ef;
+  background: #f0f4f9;
+}
+.s3-endpoint-control:focus-within {
+  border-color: #619fea;
+  box-shadow: 0 0 0 3px #007aff14;
+}
+.s3-endpoint-control .text-input {
+  margin: 0;
+  padding: 0;
+  height: 36px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #40546d;
+}
+.s3-endpoint-control .text-input:focus-visible {
+  box-shadow: none;
+}
+.s3-endpoint-control:has([aria-invalid="true"]) {
+  border-color: #d67a70;
+}
+.s3-select-control select:disabled {
+  cursor: default;
+}
+@media (prefers-reduced-motion: reduce) {
+  .s3-fields .text-input,
+  .s3-endpoint-control {
+    transition: none;
   }
 }
