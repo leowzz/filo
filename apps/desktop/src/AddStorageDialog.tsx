@@ -10,6 +10,7 @@ import { desktop, errorMessage } from "./api";
 import { Modal } from "./components";
 import { S3Form } from "./S3StorageDialog";
 import { s3Providers } from "./s3Providers";
+import { S3ProviderIcon } from "./StorageProvider";
 import type { S3Provider, Volume } from "./types";
 
 export function AddStorageDialog({
@@ -119,7 +120,8 @@ export function AddStorageDialog({
                     disabled={!desktop || busy}
                     onClick={() => select(provider)}
                   >
-                    <div>
+                    <S3ProviderIcon provider={provider} />
+                    <div className="provider-choice-copy">
                       <strong>{s3Providers[provider].name}</strong>
                       <p>{s3Providers[provider].description}</p>
                     </div>

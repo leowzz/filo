@@ -16,6 +16,7 @@ pub struct S3Admin {
     prefix: String,
     read_only: bool,
     region: String,
+    tos_stats: Option<crate::tos_stats::TosStats>,
 }
 fn invalid(message: &str) -> StorageError {
     StorageError::new(StorageErrorCode::InvalidConfiguration, message)
@@ -87,6 +88,7 @@ impl S3Admin {
             prefix: normalize_path(prefix)?,
             read_only: volume.read_only,
             region: config.region.clone(),
+            tos_stats: crate::tos_stats::TosStats::new(config, credentials, bucket),
         })
     }
     fn key(&self, path: &str) -> StorageResult<String> {
@@ -157,6 +159,14 @@ impl S3Admin {
                 if !logical.is_empty() {
                     return Err(invalid("存储概览需要使用连接根目录"));
                 }
+                let bucket_stats_error = if let Some(tos) = &self.tos_stats {
+                    match tos.overview().await {
+                        Ok(overview) => return Ok(overview),
+                        Err(error) => Some(error.message),
+                    }
+                } else {
+                    None
+                };
                 // A single bounded LIST includes nested and hidden objects, but never
                 // expands beyond the configured prefix or scans a large bucket.
                 let prefix = if self.prefix.is_empty() {
@@ -183,11 +193,15 @@ impl S3Admin {
                     })?;
                     total_size += size as u64;
                 }
-                Ok(json!({
+                let mut overview = json!({
                     "object_count": result.contents().len(),
                     "total_size": total_size,
                     "complete": result.is_truncated() == Some(false),
-                }))
+                });
+                if let Some(error) = bucket_stats_error {
+                    overview["bucket_stats_error"] = json!(error);
+                }
+                Ok(overview)
             }
             S3Action::BucketStatus => {
                 let r = self
@@ -797,6 +811,97 @@ mod tests {
             match expected {
                 Ok((count, size, complete)) => assert_eq!(result.unwrap(), json!({"object_count":count,"total_size":size,"complete":complete})),
                 Err(code) => assert_eq!(result.unwrap_err().code, code),
+            }
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn tos_overview_uses_bucket_stats_and_falls_back_to_scoped_listing() {
+        for denied in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                for step in 0..if denied { 2 } else { 1 } {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut request = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    while !request.windows(4).any(|b| b == b"\r\n\r\n") {
+                        let n = socket.read(&mut buf).await.unwrap();
+                        assert!(n > 0);
+                        request.extend_from_slice(&buf[..n]);
+                    }
+                    let headers = String::from_utf8_lossy(&request).to_lowercase();
+                    let (status, body) = if step == 0 {
+                        assert!(headers.starts_with("get /?stat= http/1.1"));
+                        assert!(headers.contains("authorization: tos4-hmac-sha256"));
+                        assert!(headers.contains("x-tos-security-token: test-token"));
+                        assert!(!headers.contains("prefix="));
+                        if denied {
+                            ("403 Forbidden", r#"{"Code":"AccessDenied"}"#)
+                        } else {
+                            (
+                                "200 OK",
+                                r#"{"TotalStorageStat":{"Storage":"2048","ChargeStorage":"99999","ObjectCount":1234}}"#,
+                            )
+                        }
+                    } else {
+                        assert!(headers.contains("list-type=2"));
+                        assert!(headers.contains("prefix=limited%2f"));
+                        assert!(headers.contains("max-keys=1000"));
+                        ("200 OK", "<ListBucketResult><IsTruncated>true</IsTruncated><Contents><Key>limited/file</Key><Size>100</Size></Contents></ListBucketResult>")
+                    };
+                    socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+                }
+            });
+            let volume = StorageVolume {
+                id: uuid::Uuid::new_v4(),
+                connection_id: uuid::Uuid::new_v4(),
+                name: "tos".into(),
+                root: VolumeRoot::S3 {
+                    bucket: "test-bucket".into(),
+                    prefix: "limited".into(),
+                },
+                read_only: true,
+            };
+            let mut config = S3ConnectionConfig {
+                provider: Some(S3Provider::Tos),
+                endpoint: Some(endpoint.clone()),
+                region: "cn-beijing".into(),
+                force_path_style: true,
+            };
+            let credentials = S3Credentials {
+                access_key_id: "test".into(),
+                secret_access_key: "test".into(),
+                session_token: Some("test-token".into()),
+            };
+            let mut admin = S3Admin::new(&volume, &config, &credentials).unwrap();
+            config.endpoint = Some("https://tos-s3-cn-beijing.volces.com".into());
+            admin.tos_stats = Some(
+                crate::tos_stats::TosStats::new(&config, &credentials, "test-bucket")
+                    .unwrap()
+                    .with_test_url(url::Url::parse(&format!("{endpoint}/?stat=")).unwrap()),
+            );
+            let overview = tokio::time::timeout(
+                Duration::from_secs(5),
+                admin.run("", S3Action::StorageOverview),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            if denied {
+                assert_eq!(overview["complete"], false);
+                assert_eq!(overview["object_count"], 1);
+                assert!(overview.get("source").is_none());
+                assert!(overview["bucket_stats_error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("tos:GetBucketStat"));
+            } else {
+                assert_eq!(
+                    overview,
+                    json!({"object_count": 1234, "total_size": 2048, "complete": true, "source": "tos_bucket_stat"})
+                );
             }
             server.await.unwrap();
         }

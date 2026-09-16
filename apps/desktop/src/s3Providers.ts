@@ -12,7 +12,7 @@ export const s3Providers = {
     region: "us-east-1",
   },
   tos: {
-    name: "火山引擎 TOS",
+    name: "火山云 TOS",
     description: "按地域自动配置 S3 访问地址",
     region: "cn-beijing",
   },

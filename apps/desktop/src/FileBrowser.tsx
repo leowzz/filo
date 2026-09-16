@@ -20,6 +20,7 @@ import { useEffect } from "react";
 import type { useDirectoryQuery } from "./useDirectoryQuery";
 import { useVirtualRows } from "./useVirtualRows";
 import { DetailsPanel } from "./DetailsPanel";
+import { StorageTypeLabel } from "./StorageProvider";
 
 export type EntrySort = "name" | "size" | "modified";
 
@@ -359,11 +360,8 @@ export function FileBrowser({
         </span>
         <span>
           <span className="status-dot" />
-          {volume.read_only
-            ? "只读访问"
-            : volume.root.type === "s3"
-              ? "S3 兼容存储"
-              : "本地文件系统"}
+          <StorageTypeLabel volume={volume} />
+          {volume.read_only && " · 只读访问"}
           <span className="status-separator">/</span>双击打开文件或文件夹
         </span>
       </footer>

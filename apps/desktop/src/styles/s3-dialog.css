@@ -35,6 +35,25 @@
   color: #72777d;
   line-height: 1.5;
 }
+.storage-provider-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  color: #6d8295;
+}
+.storage-provider-icon img {
+  display: block;
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+.provider-choice-copy {
+  flex: 1;
+  min-width: 0;
+}
 .s3-fields {
   max-height: 62vh;
   overflow-y: auto;

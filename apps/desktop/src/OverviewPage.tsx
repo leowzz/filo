@@ -7,6 +7,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { type Volume } from "./types";
+import { StorageTypeLabel } from "./StorageProvider";
 
 export function OverviewPage({
   volumes,
@@ -102,11 +103,12 @@ export function OverviewPage({
               </div>
               <div className="card-bottom">
                 <span className="pill">
-                  {item.read_only
-                    ? "只读"
-                    : item.root.type === "s3"
-                      ? "S3"
-                      : "本地目录"}
+                  {item.root.type === "s3" ? (
+                    <StorageTypeLabel volume={item} />
+                  ) : (
+                    "本地目录"
+                  )}
+                  {item.read_only && " · 只读"}
                 </span>
                 <span>打开文件浏览器</span>
                 <ArrowRight size={17} />

@@ -17,7 +17,10 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
     const volumes = [volume('S3 demo', {type: 's3', bucket: 'demo', prefix: ''}),
       volume('Prefix demo', {type: 's3', bucket: 'demo', prefix: 'projects/photos'}),
       volume('Local demo', {type: 'local', root_path: '/demo'})];
-    window.__TAURI_INTERNALS__ = {transformCallback: () => 1, unregisterCallback: () => {}, invoke: async (command, args) => {
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {unregisterListener: () => {}};
+    window.__TAURI_INTERNALS__ = {metadata: {currentWindow: {label: 'main'}, currentWebview: {label: 'main'}}, transformCallback: () => 1, unregisterCallback: () => {}, invoke: async (command, args) => {
+      if (command === 'plugin:event|listen') return 1;
+      if (command === 'plugin:event|unlisten') return;
       if (command === 'list_volumes') return volumes;
       if (command === 'list_transfers') return [];
       if (command === 'directory_stamp') return '1';
@@ -161,11 +164,56 @@ const geometry = await page.evaluate(() => {
   };
 });
 assert.deepEqual(geometry, { pageFits: true, panelFits: true, aligned: true });
+await page.evaluate(() => {
+  window.overview = {
+    object_count: 1234567,
+    total_size: 1073741824,
+    complete: true,
+    source: "tos_bucket_stat",
+  };
+});
+await page.click('button[aria-label="刷新存储概览"]');
+await page.waitForFunction(() =>
+  document
+    .querySelector(".storage-overview")
+    .textContent.includes("存储桶概览"),
+);
+text = await page.evaluate(
+  () => document.querySelector(".storage-overview").textContent,
+);
+assert.match(text, /范围：整个桶（demo）/);
+assert.match(text, /桶级别数据.*并非当前配置位置/);
+assert.match(text, /桶内对象数量1,234,567 个/);
+assert.match(text, /桶占用空间1\.0 GB/);
+assert.match(text, /延迟可能超过一小时/);
+assert.doesNotMatch(text, /projects\/photos|仅统计当前版本|不含历史版本/);
+await page.screenshot({ path: "/tmp/filo-tos-bucket-overview.png" });
+await page.evaluate(() => {
+  window.overview = {
+    object_count: 1000,
+    total_size: 1024,
+    complete: false,
+    bucket_stats_error: "TOS 拒绝读取桶统计，请检查 tos:GetBucketStat 权限",
+  };
+});
+await page.click('button[aria-label="刷新存储概览"]');
+await page.waitForFunction(() =>
+  document
+    .querySelector(".storage-overview")
+    .textContent.includes("tos:GetBucketStat"),
+);
+text = await page.evaluate(
+  () => document.querySelector(".storage-overview").textContent,
+);
+assert.match(text, /范围：projects\/photos/);
+assert.match(text, /当前显示的是配置位置的统计/);
+assert.match(text, /1,000\+ 个/);
+assert.doesNotMatch(text, /桶占用空间|已统计容量|整个桶/);
 const calls = await page.evaluate(() => window.overviewCalls.length);
 await page.click('.volume-nav button:has-text("Local demo")');
 await page.waitForFunction(() => !document.querySelector(".storage-overview"));
 assert.equal(await page.evaluate(() => window.overviewCalls.length), calls);
 console.log(
-  "PASS: complete/partial/empty/error/loading states, retry, volume scope/cache, no automatic pagination, local isolation, 1280px/960px layout",
+  "PASS: complete/partial/empty/error/loading states, TOS bucket scope/capacity/delay, scoped fallback, retry, cache, no automatic pagination, local isolation, 1280px/960px layout",
 );
 if (!globalThis.filoKeepBrowser) await task.finish({ keep: [] });

@@ -12,7 +12,12 @@ window.isTauri=true;
 window.s3Calls=[];
 window.testVolumes=[];
 window.testConnections=[];
-window.__TAURI_INTERNALS__={invoke:async(command,args)=>{
+window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{}};
+window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:()=>1,unregisterCallback:()=>{},invoke:async(command,args)=>{
+  if(command==='plugin:event|listen')return 1;
+  if(command==='plugin:event|unlisten')return;
+  if(command==='directory_stamp')return '1';
+  if(command==='manage_s3')return {object_count:0,total_size:0,complete:true};
   if(command==='list_volumes')return window.testVolumes;
   if(command==='list_connections')return window.testConnections;
   if(command==='list_transfers'||command==='list_entries')return [];
@@ -56,8 +61,34 @@ assert.deepEqual(
       (e) => e.textContent,
     ),
   ),
-  ["通用 S3 协议", "RustFS", "火山引擎 TOS", "阿里云 OSS"],
+  ["通用 S3 协议", "RustFS", "火山云 TOS", "阿里云 OSS"],
 );
+await page.waitForFunction(() => {
+  const icons = [...document.querySelectorAll(".storage-provider-icon img")];
+  return (
+    icons.length === 3 &&
+    icons.every((image) => image.complete && image.naturalWidth > 0)
+  );
+});
+const iconGeometry = await page.evaluate(() => {
+  const choices = [...document.querySelectorAll(".provider-choice")];
+  return choices.map((choice) => ({
+    iconLeft: choice
+      .querySelector(".storage-provider-icon")
+      .getBoundingClientRect().left,
+    textLeft: choice
+      .querySelector(".provider-choice-copy")
+      .getBoundingClientRect().left,
+  }));
+});
+assert.ok(
+  iconGeometry.every(
+    (item) =>
+      item.iconLeft === iconGeometry[0].iconLeft &&
+      item.textLeft === iconGeometry[0].textLeft,
+  ),
+);
+await page.screenshot({ path: "/tmp/filo-provider-icons.png" });
 await page.click(".storage-section input[type=checkbox]");
 await page.click('button:text-is("选择本地目录")');
 await page.waitForFunction(() => window.localReadOnly === true);
@@ -141,7 +172,7 @@ await page.click('button[aria-label="关闭"]');
 for (const [provider, label] of [
   ["generic", "通用 S3 协议"],
   ["rustfs", "RustFS"],
-  ["tos", "火山引擎 TOS"],
+  ["tos", "火山云 TOS"],
   ["oss", "阿里云 OSS"],
 ]) {
   await openChooser();
@@ -218,6 +249,7 @@ for (const [provider, label] of [
     false,
   );
   if (provider === "oss") {
+    await page.focus(field("Security Token"));
     await page.fill(field("Security Token"), "test-session");
     await page.evaluate(() => (window.failTest = true));
     await page.click('button:text-is("测试连接")');
@@ -255,6 +287,35 @@ for (const [provider, label] of [
   }
   await page.click('button[aria-label="关闭"]');
 }
+// Saved connection metadata supplies the same label on all three surfaces.
+for (const [provider, label] of [
+  [null, "通用"],
+  ["rustfs", "RustFS"],
+  ["tos", "火山云 TOS"],
+  ["oss", "阿里云 OSS"],
+]) {
+  await page.evaluate((provider) => {
+    window.testConnections[0].config.provider = provider;
+  }, provider);
+  await page.click('button[aria-label="切换详情面板"]');
+  await page.waitForFunction(
+    (label) =>
+      document.querySelector(".details-panel > .pill")?.textContent === label,
+    label,
+  );
+  assert.match(
+    await page.evaluate(() => document.querySelector(".statusbar").textContent),
+    new RegExp(label),
+  );
+  await page.click('.main-nav button:has-text("概览")');
+  await page.waitForFunction(
+    (label) =>
+      document.querySelector(".volume-card .pill")?.textContent.includes(label),
+    label,
+  );
+  await page.click(".volume-card");
+  await page.click('button[aria-label="切换详情面板"]');
+}
 console.log(
   "PASS: local read-only, provider defaults, region/address changes, custom endpoints, validation, test failure, save/edit, retained credentials, animated expansion, provider switching, draft retention and busy state",
 );
@@ -284,7 +345,7 @@ for (const [width, height] of [
     }),
     true,
   );
-  await page.click('button.provider-choice:has-text("火山引擎 TOS")');
+  await page.click('button.provider-choice:has-text("火山云 TOS")');
   await page.waitForFunction(
     () =>
       !document
