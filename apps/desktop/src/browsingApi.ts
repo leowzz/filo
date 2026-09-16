@@ -35,6 +35,7 @@ export type Properties = {
   metadata: Record<string, string>;
 };
 export type S3Action =
+  | { action: "storage_overview" }
   | { action: "bucket_status" | "properties" | "tags" | "acl" }
   | { action: "create_bucket"; name: string }
   | { action: "delete_bucket"; confirmation: string }

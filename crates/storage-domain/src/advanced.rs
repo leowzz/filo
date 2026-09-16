@@ -49,6 +49,7 @@ pub struct ObjectProperties {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum S3Action {
+    StorageOverview,
     BucketStatus,
     CreateBucket {
         name: String,

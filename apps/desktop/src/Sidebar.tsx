@@ -98,10 +98,8 @@ export function Sidebar({
           >
             <HardDrive size={17} />
             <span className="truncate">{item.name}</span>
-            {item.read_only ? (
+            {item.read_only && (
               <LockKeyhole size={12} className="muted" />
-            ) : (
-              <span className="status-dot" />
             )}
           </button>
         ))}

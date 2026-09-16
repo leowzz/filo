@@ -45,7 +45,7 @@ await page.waitForSelector(".volume-nav button");
 await page.click('.volume-nav button:has-text("RustFS")');
 await page.waitForSelector(".file-thumbnail");
 await page.click('tr[data-entry-path="note.txt"] .file-name');
-await page.click('.browse-tools button:text-is("预览")');
+await page.click('button[aria-label="预览"]');
 await page.waitForSelector(".text-preview");
 assert.match(
   await page.evaluate(
@@ -59,7 +59,7 @@ assert.equal(
   "preview never executes HTML",
 );
 await page.click('dialog button[aria-label="关闭"]');
-await page.click('.browse-tools button:text-is("搜索文件内容")');
+await page.click('button[aria-label="搜索文件内容"]');
 await page.fill("#content-query", "hello");
 await page.click('button:text-is("开始搜索")');
 await page.waitForSelector(".content-results button");
@@ -67,7 +67,8 @@ await page.click(".content-results button");
 await page.waitForSelector(".text-preview");
 await page.click('dialog:has(.preview-content) button[aria-label="关闭"]');
 await page.click('dialog button[aria-label="关闭"]');
-await page.click('.browse-tools button:text-is("对象管理")');
+await page.click('summary[aria-label="更多操作"]');
+await page.click('.browser-actions-popover button:text-is("对象管理…")');
 await page.waitForSelector(".version-list article");
 assert.equal(
   await page.evaluate(
@@ -110,7 +111,8 @@ await page.waitForFunction(() =>
   window.calls.some((c) => c.args?.action?.action === "set_acl"),
 );
 await page.click('dialog button[aria-label="关闭"]');
-await page.click('.browse-tools button:text-is("Bucket 管理")');
+await page.click('summary[aria-label="更多操作"]');
+await page.click('.browser-actions-popover button:text-is("Bucket 管理…")');
 await page.waitForSelector('button:text-is("启用版本控制")');
 assert.equal(
   await page.evaluate(

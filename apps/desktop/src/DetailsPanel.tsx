@@ -1,6 +1,7 @@
 import { Copy, HardDrive, Info, ShieldCheck } from "lucide-react";
 import { EntryIcon, formatDate, formatSize, typeName } from "./components";
 import { type Entry, type Volume } from "./types";
+import { S3StorageOverview } from "./S3StorageOverview";
 
 export function DetailsPanel({
   volume,
@@ -45,6 +46,9 @@ export function DetailsPanel({
               ? "S3 兼容存储"
               : "本地文件系统"}
       </span>
+      {selectedEntries.length === 0 && volume.root.type === "s3" && (
+        <S3StorageOverview volume={volume} />
+      )}
       <dl>
         <dt>位置</dt>
         <dd>

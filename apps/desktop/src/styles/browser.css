@@ -245,6 +245,38 @@
   margin-top: 22px;
   color: #9b9b9b;
 }
+.storage-overview {
+  border-top: 1px solid #e5e5e5;
+  margin-top: 22px;
+  padding-top: 12px;
+}
+.storage-overview-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.storage-overview-heading h4 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+}
+.storage-overview dl {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.storage-overview dd {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.storage-overview-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #858585;
+  overflow-wrap: anywhere;
+}
 .detail-tip p {
   font-size: 11px;
   line-height: 1.8;

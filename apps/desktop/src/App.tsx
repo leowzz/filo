@@ -1,7 +1,6 @@
 import { PreviewDialog } from "./PreviewDialog";
 import { ContentSearchDialog } from "./ContentSearchDialog";
 import { S3ManagerDialog } from "./S3ManagerDialog";
-import { BrowseTools } from "./BrowseTools";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Info, X } from "lucide-react";
 import {
@@ -343,6 +342,9 @@ export default function App() {
               ? setUploadRequest(request.remote)
               : fileTransfer.mutate({ ...request, conflictPolicy: "overwrite" })
           }
+          onPreview={() => selected && setPreview(selected)}
+          onContentSearch={() => setContentSearch(true)}
+          onManage={(object) => setS3Manager({ locator: object && selected ? selected.locator : parent, object })}
           onRefresh={() => void entriesQuery.refetch()}
           isFetching={entriesQuery.isFetching}
           transfers={transfersQuery.data ?? []}
@@ -387,20 +389,6 @@ export default function App() {
                 </button>
               </div>
             )}
-            <BrowseTools
-              key={`${volume.id}:${path}`}
-              parent={parent}
-              volume={volume}
-              selected={selected}
-              onPreview={() => selected && setPreview(selected)}
-              onSearch={() => setContentSearch(true)}
-              onManage={(object) =>
-                setS3Manager({
-                  locator: object && selected ? selected.locator : parent,
-                  object,
-                })
-              }
-            />
             <FileBrowser
               key={JSON.stringify([
                 volume.id,

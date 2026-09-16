@@ -1,3 +1,4 @@
+import { Upload } from "lucide-react";
 import { useState } from "react";
 import { Modal } from "./components";
 import { ConflictPolicyField } from "./ConflictPolicyField";
@@ -11,13 +12,18 @@ export function UploadDialog({
 }) {
   const [policy, setPolicy] = useState<ConflictPolicy>("reject");
   return (
-    <Modal title="上传文件" onClose={onClose}>
-      <ConflictPolicyField value={policy} onChange={setPolicy} />
+    <Modal title="上传文件" className="upload-dialog" onClose={onClose}>
+      <ConflictPolicyField
+        presentation="choices"
+        value={policy}
+        onChange={setPolicy}
+      />
       <div className="modal-footer">
         <button className="secondary" onClick={onClose}>
           取消
         </button>
         <button className="primary" onClick={() => onStart(policy)}>
+          <Upload size={15} aria-hidden="true" />
           选择文件…
         </button>
       </div>

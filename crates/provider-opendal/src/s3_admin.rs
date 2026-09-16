@@ -143,10 +143,52 @@ impl S3Admin {
                 "Bucket 管理需要连接整个 Bucket，不能使用受限 Prefix",
             ));
         }
-        if !bucket_action && !matches!(action, S3Action::Versions { .. }) && logical.is_empty() {
+        if !bucket_action
+            && !matches!(
+                action,
+                S3Action::Versions { .. } | S3Action::StorageOverview
+            )
+            && logical.is_empty()
+        {
             return Err(invalid("请选择对象"));
         }
         match action {
+            S3Action::StorageOverview => {
+                if !logical.is_empty() {
+                    return Err(invalid("存储概览需要使用连接根目录"));
+                }
+                // A single bounded LIST includes nested and hidden objects, but never
+                // expands beyond the configured prefix or scans a large bucket.
+                let prefix = if self.prefix.is_empty() {
+                    String::new()
+                } else {
+                    format!("{}/", self.prefix)
+                };
+                let result = self
+                    .client
+                    .list_objects_v2()
+                    .bucket(&self.bucket)
+                    .prefix(prefix)
+                    .max_keys(1000)
+                    .send()
+                    .await
+                    .map_err(failure)?;
+                let mut total_size = 0u64;
+                for object in result.contents() {
+                    let size = object.size().filter(|size| *size >= 0).ok_or_else(|| {
+                        StorageError::new(
+                            StorageErrorCode::Unsupported,
+                            "服务未返回有效的对象大小，无法统计容量",
+                        )
+                    })?;
+                    total_size += size as u64;
+                }
+                Ok(json!({
+                    "object_count": result.contents().len(),
+                    "total_size": total_size,
+                    "complete": result.is_truncated() == Some(false),
+                }))
+            }
             S3Action::BucketStatus => {
                 let r = self
                     .client
@@ -690,6 +732,76 @@ impl S3Admin {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn storage_overview_is_bounded_scoped_and_distinguishes_incomplete_results() {
+        for (prefix, body, status, expected) in [
+            ("", "<IsTruncated>false</IsTruncated>", "200 OK", Ok((0, 0, true))),
+            ("limited", "<IsTruncated>false</IsTruncated><Contents><Key>limited/nested/.hidden</Key><Size>123</Size></Contents><Contents><Key>limited/folder/</Key><Size>0</Size></Contents><Contents><Key>limited/file</Key><Size>456</Size></Contents>", "200 OK", Ok((3, 579, true))),
+            ("limited", "<IsTruncated>true</IsTruncated><NextContinuationToken>next-page</NextContinuationToken><Contents><Key>limited/file</Key><Size>100</Size></Contents>", "200 OK", Ok((1, 100, false))),
+            ("", "<Contents><Key>file</Key><Size>100</Size></Contents>", "200 OK", Ok((1, 100, false))),
+            ("", "<IsTruncated>false</IsTruncated><Contents><Key>file</Key></Contents>", "200 OK", Err(StorageErrorCode::Unsupported)),
+            ("limited", "", "403 Forbidden", Err(StorageErrorCode::AccessDenied)),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                // Accept exactly one request: a truncated result must not start a scan.
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buf = [0u8; 4096];
+                while !request.windows(4).any(|b| b == b"\r\n\r\n") {
+                    let n = socket.read(&mut buf).await.unwrap();
+                    assert!(n > 0);
+                    request.extend_from_slice(&buf[..n]);
+                }
+                let headers = String::from_utf8_lossy(&request);
+                let target = headers.lines().next().unwrap().split_whitespace().nth(1).unwrap();
+                let url = url::Url::parse(&format!("http://localhost{target}")).unwrap();
+                let query: BTreeMap<_, _> = url.query_pairs().into_owned().collect();
+                assert!(headers.starts_with("GET "));
+                assert_eq!(url.path().trim_end_matches('/'), "/test-bucket");
+                assert_eq!(query.get("list-type").map(String::as_str), Some("2"));
+                assert_eq!(query.get("max-keys").map(String::as_str), Some("1000"));
+                assert_eq!(query.get("prefix").map(String::as_str).unwrap_or(""), if prefix.is_empty() { "" } else { "limited/" });
+                assert!(!query.contains_key("delimiter"));
+                assert!(!query.contains_key("continuation-token"));
+                let body = if status.starts_with("403") {
+                    "<Error><Code>AccessDenied</Code></Error>".to_string()
+                } else {
+                    format!(r#"<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">{body}</ListBucketResult>"#)
+                };
+                socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: application/xml\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            });
+            let volume = StorageVolume {
+                id: uuid::Uuid::new_v4(),
+                connection_id: uuid::Uuid::new_v4(),
+                name: "test".into(),
+                root: VolumeRoot::S3 { bucket: "test-bucket".into(), prefix: prefix.into() },
+                read_only: true,
+            };
+            let config = S3ConnectionConfig {
+                provider: None,
+                endpoint: Some(endpoint),
+                region: "us-east-1".into(),
+                force_path_style: true,
+            };
+            let credentials = S3Credentials {
+                access_key_id: "test".into(),
+                secret_access_key: "test".into(),
+                session_token: None,
+            };
+            let admin = S3Admin::new(&volume, &config, &credentials).unwrap();
+            assert!(admin.run("nested", S3Action::StorageOverview).await.is_err());
+            let result = admin.run("", S3Action::StorageOverview).await;
+            match expected {
+                Ok((count, size, complete)) => assert_eq!(result.unwrap(), json!({"object_count":count,"total_size":size,"complete":complete})),
+                Err(code) => assert_eq!(result.unwrap_err().code, code),
+            }
+            server.await.unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn acl_saves_are_read_back_and_ignored_writes_are_not_reported_as_success() {
         for applied in [true, false] {
