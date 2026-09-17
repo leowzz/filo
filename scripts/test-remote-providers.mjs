@@ -46,6 +46,7 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
     window.remoteConnections=[{id,name:input.name,provider:'remote',config:{protocol:input.protocol,host:input.host,port:input.port,share:input.share,known_hosts:input.known_hosts}}];
     return volume;
   }
+  if(command==='load_default_sftp_private_key'||command==='pick_sftp_private_key')return null;
   if(command==='create_local_storage')return null;
   throw new Error('Unexpected IPC: '+command);
 }};`,
@@ -222,6 +223,8 @@ await page.selectOption(
   'xpath=//label[not(ancestor::*[@hidden]) and starts-with(normalize-space(.), "认证方式")]//select',
   "private_key",
 );
+await page.focus(`${visibleForm()} button:text-is("粘贴私钥")`);
+await page.keyboard.press("Enter");
 await page.fill(
   textarea("SSH 私钥"),
   "-----BEGIN OPENSSH PRIVATE KEY-----\nTEST\n-----END OPENSSH PRIVATE KEY-----",

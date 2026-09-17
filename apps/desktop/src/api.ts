@@ -13,6 +13,7 @@ import type {
   Connection,
   S3Input,
   RemoteInput,
+  SftpPrivateKey,
   TransferSettings,
 } from "./types";
 
@@ -77,6 +78,16 @@ export const api = {
       clearTimeout(timer);
     }
   },
+  loadDefaultSftpPrivateKey: () =>
+    desktop
+      ? invoke<SftpPrivateKey | null>("load_default_sftp_private_key")
+      : Promise.resolve(null),
+  pickSftpPrivateKey: () =>
+    desktop
+      ? invoke<SftpPrivateKey | null>("pick_sftp_private_key")
+      : Promise.reject(
+          new Error("选择私钥文件仅可在桌面应用中使用，请直接粘贴私钥。"),
+        ),
   transferLocalFile: (
     remote: Locator,
     upload: boolean,

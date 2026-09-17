@@ -6,6 +6,10 @@ export type Locator = {
 export type S3Provider = "generic" | "rustfs" | "tos" | "oss";
 export type RemoteProtocol = "ftp" | "ftps" | "sftp" | "smb";
 export type RemoteAuthMethod = "password" | "private_key";
+export type SftpPrivateKey = {
+  path: string;
+  private_key: string;
+};
 export type S3Config = {
   provider?: S3Provider | null;
   endpoint: string | null;

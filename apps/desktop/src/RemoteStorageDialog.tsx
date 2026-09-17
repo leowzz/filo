@@ -4,7 +4,7 @@ import {
   KeyRound,
   LoaderCircle,
 } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "./api";
 import { Modal } from "./components";
@@ -15,6 +15,7 @@ import type {
   RemoteAuthMethod,
   RemoteInput,
   RemoteProtocol,
+  SftpPrivateKey,
   Volume,
 } from "./types";
 import "./styles/remote-dialog.css";
@@ -22,6 +23,8 @@ import "./styles/remote-dialog.css";
 type RemoteVolume = Volume & {
   root: { type: "remote"; path: string };
 };
+type SftpPrivateKeySource = "default" | "file" | "paste";
+type SftpPrivateKeyOperation = "default" | "picker" | null;
 
 function asRemoteVolume(volume: Volume | undefined): RemoteVolume | undefined {
   if (!volume || volume.root.type !== "remote") return undefined;
@@ -130,9 +133,20 @@ export function RemoteForm({
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [privateKey, setPrivateKey] = useState("");
+  const [privateKeySource, setPrivateKeySource] =
+    useState<SftpPrivateKeySource>("default");
+  const [privateKeyPath, setPrivateKeyPath] = useState("");
+  const [privateKeyOperation, setPrivateKeyOperation] =
+    useState<SftpPrivateKeyOperation>(null);
+  const [privateKeyError, setPrivateKeyError] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [domain, setDomain] = useState("");
   const [tested, setTested] = useState(false);
+  const privateKeyRequest = useRef(0);
+
+  const activePrivateKey =
+    protocol === "sftp" && replaceCredentials && authMethod === "private_key";
+  const privateKeyLoading = privateKeyOperation !== null;
 
   const portNumber = Number(port);
   const hostValue = host.trim();
@@ -221,15 +235,124 @@ export function RemoteForm({
       onSaved(saved);
     },
   });
+
+  function resetConnectionStatus() {
+    setTested(false);
+    test.reset();
+    save.reset();
+  }
+
+  function cancelPrivateKeyRequest() {
+    privateKeyRequest.current += 1;
+    setPrivateKeyOperation(null);
+  }
+
+  function applyPrivateKeyResult(
+    result: SftpPrivateKey,
+    source: Exclude<SftpPrivateKeySource, "paste">,
+  ) {
+    setPrivateKeySource(source);
+    setPrivateKeyPath(result.path);
+    setPrivateKey(result.private_key);
+    setPrivateKeyError("");
+    resetConnectionStatus();
+  }
+
+  async function loadDefaultPrivateKey() {
+    const requestId = ++privateKeyRequest.current;
+    resetConnectionStatus();
+    setPrivateKeySource("default");
+    setPrivateKeyPath("");
+    setPrivateKey("");
+    setPrivateKeyError("");
+    setPrivateKeyOperation("default");
+    try {
+      const result = await api.loadDefaultSftpPrivateKey();
+      if (requestId !== privateKeyRequest.current) return;
+      if (!result || result.private_key.trim().length === 0) {
+        setPrivateKeyError("未找到默认 SSH 私钥，请选择私钥文件或粘贴私钥。");
+        return;
+      }
+      applyPrivateKeyResult(result, "default");
+    } catch (error) {
+      if (requestId !== privateKeyRequest.current) return;
+      setPrivateKeyError(
+        `无法读取默认私钥：${errorMessage(error)} 请重试，或选择私钥文件/粘贴私钥。`,
+      );
+    } finally {
+      if (requestId === privateKeyRequest.current) setPrivateKeyOperation(null);
+    }
+  }
+
+  async function choosePrivateKeyFile() {
+    const requestId = ++privateKeyRequest.current;
+    resetConnectionStatus();
+    setPrivateKeyError("");
+    setPrivateKeyOperation("picker");
+    try {
+      const result = await api.pickSftpPrivateKey();
+      if (requestId !== privateKeyRequest.current) return;
+      // A cancelled native picker returns null. Keep the current source and
+      // key so cancelling cannot discard a usable credential.
+      if (!result) return;
+      if (result.private_key.trim().length === 0) {
+        setPrivateKeyError(
+          "所选文件没有读取到私钥内容，请选择其他文件或直接粘贴私钥。",
+        );
+        return;
+      }
+      applyPrivateKeyResult(result, "file");
+    } catch (error) {
+      if (requestId !== privateKeyRequest.current) return;
+      setPrivateKeyError(`读取私钥文件失败：${errorMessage(error)}`);
+    } finally {
+      if (requestId === privateKeyRequest.current) setPrivateKeyOperation(null);
+    }
+  }
+
+  function switchToPaste() {
+    cancelPrivateKeyRequest();
+    resetConnectionStatus();
+    setPrivateKeySource("paste");
+    setPrivateKeyPath("");
+    setPrivateKeyError("");
+    // Never place a key read from disk into the visible paste textarea.
+    setPrivateKey("");
+  }
+
+  useEffect(() => {
+    if (!activePrivateKey) {
+      cancelPrivateKeyRequest();
+      setPrivateKeySource("default");
+      setPrivateKeyPath("");
+      setPrivateKeyError("");
+      setPrivateKey("");
+      return;
+    }
+    void loadDefaultPrivateKey();
+  }, [activePrivateKey]);
+
+  useEffect(() => {
+    return () => {
+      privateKeyRequest.current += 1;
+    };
+  }, []);
+
   const pending = save.isPending || test.isPending;
   const busy = pending || externalBusy;
+  const actionsBusy = busy || privateKeyLoading;
   useEffect(() => {
     onBusyChange?.(pending);
   }, [onBusyChange, pending]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (valid && !busy) save.mutate();
+    if (valid && !actionsBusy) save.mutate();
+  }
+
+  function close() {
+    cancelPrivateKeyRequest();
+    onClose();
   }
 
   const pathHelp =
@@ -361,7 +484,17 @@ export function RemoteForm({
             <input
               type="checkbox"
               checked={replaceCredentials}
-              onChange={(event) => setReplaceCredentials(event.target.checked)}
+              onChange={(event) => {
+                const next = event.target.checked;
+                if (!next) {
+                  cancelPrivateKeyRequest();
+                  setPrivateKeySource("default");
+                  setPrivateKeyPath("");
+                  setPrivateKeyError("");
+                  setPrivateKey("");
+                }
+                setReplaceCredentials(next);
+              }}
             />
             更换登录凭据
           </label>
@@ -408,9 +541,18 @@ export function RemoteForm({
                     onChange={(event) => {
                       const next = event.target.value as RemoteAuthMethod;
                       setAuthMethod(next);
-                      if (next === "private_key") setPassword("");
-                      else {
+                      if (next === "private_key") {
+                        setPassword("");
+                        setPrivateKeySource("default");
+                        setPrivateKeyPath("");
+                        setPrivateKeyError("");
                         setPrivateKey("");
+                      } else {
+                        cancelPrivateKeyRequest();
+                        setPrivateKey("");
+                        setPrivateKeySource("default");
+                        setPrivateKeyPath("");
+                        setPrivateKeyError("");
                         setPassphrase("");
                       }
                     }}
@@ -424,18 +566,100 @@ export function RemoteForm({
             )}
             {protocol === "sftp" && authMethod === "private_key" ? (
               <>
-                <label className="field-label remote-textarea-label">
-                  SSH 私钥
-                  <textarea
-                    className="text-input remote-textarea remote-private-key"
-                    value={privateKey}
-                    onChange={(event) => setPrivateKey(event.target.value)}
-                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                    rows={5}
-                    spellCheck={false}
-                    required
-                  />
-                </label>
+                <div className="field-label remote-private-key-field">
+                  <span className="remote-private-key-label">SSH 私钥</span>
+                  <div className="remote-private-key-control">
+                    {privateKeyLoading && (
+                      <span
+                        className="remote-private-key-loading"
+                        aria-live="polite"
+                      >
+                        正在读取私钥…
+                      </span>
+                    )}
+                    {!privateKeyLoading &&
+                      privateKeySource === "default" &&
+                      (privateKeyPath ? (
+                        <span className="remote-private-key-status">
+                          已加载默认私钥文件：
+                          <code>{privateKeyPath}</code>
+                        </span>
+                      ) : !privateKeyError ? (
+                        <span className="remote-private-key-status">
+                          未找到默认 SSH 私钥，请选择私钥文件或粘贴私钥。
+                        </span>
+                      ) : null)}
+                    {!privateKeyLoading && privateKeySource === "file" && (
+                      <span className="remote-private-key-status">
+                        已选择私钥文件：<code>{privateKeyPath}</code>
+                      </span>
+                    )}
+                    {!privateKeyLoading && privateKeySource === "paste" && (
+                      <span className="remote-private-key-status">
+                        请粘贴私钥内容。
+                      </span>
+                    )}
+                    {privateKeyError && (
+                      <p className="error-text" role="alert">
+                        {privateKeyError}
+                      </p>
+                    )}
+                    <div
+                      className="remote-private-key-actions"
+                      role="group"
+                      aria-label="私钥来源"
+                    >
+                      {privateKeySource !== "default" ||
+                      (!privateKeyPath && !privateKeyLoading) ? (
+                        <button
+                          type="button"
+                          className="secondary"
+                          data-private-key-source="default"
+                          disabled={privateKeyOperation === "default"}
+                          onClick={() => void loadDefaultPrivateKey()}
+                        >
+                          使用默认私钥
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="secondary"
+                        data-private-key-source="file"
+                        disabled={privateKeyOperation === "picker"}
+                        onClick={() => void choosePrivateKeyFile()}
+                      >
+                        选择私钥文件
+                      </button>
+                      {privateKeySource !== "paste" && (
+                        <button
+                          type="button"
+                          className="secondary"
+                          data-private-key-source="paste"
+                          onClick={switchToPaste}
+                        >
+                          粘贴私钥
+                        </button>
+                      )}
+                    </div>
+                    {privateKeySource === "paste" && (
+                      <label className="field-label remote-textarea-label">
+                        SSH 私钥
+                        <textarea
+                          className="text-input remote-textarea remote-private-key"
+                          autoFocus
+                          value={privateKey}
+                          onChange={(event) =>
+                            setPrivateKey(event.target.value)
+                          }
+                          placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                          rows={5}
+                          spellCheck={false}
+                          required
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
                 <label className="field-label">
                   私钥口令（可选）
                   <input
@@ -497,20 +721,20 @@ export function RemoteForm({
           type="button"
           className="secondary"
           disabled={busy}
-          onClick={onClose}
+          onClick={close}
         >
           {embedded ? "返回选择" : "取消"}
         </button>
         <button
           type="button"
           className="secondary"
-          disabled={!valid || busy}
+          disabled={!valid || actionsBusy}
           onClick={() => test.mutate()}
         >
           {test.isPending && <LoaderCircle size={14} className="spin" />}
           {test.isPending ? "正在测试…" : "测试连接"}
         </button>
-        <button className="primary" disabled={!valid || busy}>
+        <button className="primary" disabled={!valid || actionsBusy}>
           {save.isPending && <LoaderCircle size={14} className="spin" />}
           {save.isPending ? "正在保存…" : "保存连接"}
         </button>
@@ -523,7 +747,7 @@ export function RemoteForm({
   ) : (
     <Modal
       title={`${volume ? "编辑" : "添加"} ${preset.name} 连接`}
-      onClose={onClose}
+      onClose={close}
       busy={busy}
       className="remote-storage-modal"
     >

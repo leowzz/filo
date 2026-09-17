@@ -1862,6 +1862,7 @@ dependencies = [
 name = "filo-desktop"
 version = "0.1.6"
 dependencies = [
+ "base64 0.22.1",
  "serde",
  "serde_json",
  "storage-application",
@@ -1872,6 +1873,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-process",
  "tauri-plugin-updater",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",

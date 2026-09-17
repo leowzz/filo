@@ -133,6 +133,62 @@
   min-height: 112px !important;
 }
 
+.remote-private-key-field {
+  min-width: 0;
+}
+
+.remote-private-key-label {
+  display: block;
+}
+
+.remote-private-key-control {
+  min-width: 0;
+  margin-top: 4px;
+}
+
+.remote-private-key-status,
+.remote-private-key-loading {
+  display: block;
+  color: #536a82;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.remote-private-key-status code {
+  display: block;
+  max-width: 100%;
+  color: #344b65;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.remote-private-key-loading {
+  color: #617892;
+}
+
+.remote-private-key-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 8px 0 10px;
+}
+
+.remote-private-key-actions button {
+  min-height: 30px;
+  padding: 5px 9px;
+  white-space: normal;
+}
+
+.remote-private-key-control > .error-text {
+  margin: 7px 0 0;
+}
+
+.remote-private-key-control .remote-textarea-label {
+  margin-bottom: 0;
+}
+
 .remote-credentials {
   margin: 14px 0 12px;
   padding: 12px 12px 2px;
