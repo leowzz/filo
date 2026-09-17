@@ -14,19 +14,18 @@ export function PreviewDialog({
   onClose: () => void;
 }) {
   const entry = entries.length === 1 ? entries[0] : undefined;
-  return (
-    <Modal
-      className={entry ? "preview-modal" : "selection-preview-modal"}
-      title={entry ? `预览 · ${entry.name}` : `预览 · ${entries.length} 个项目`}
-      onClose={onClose}
-    >
-      {entry ? (
-        <FilePreview entry={entry} />
-      ) : (
+  if (!entry) {
+    return (
+      <Modal
+        className="selection-preview-modal"
+        title={`预览 · ${entries.length} 个项目`}
+        onClose={onClose}
+      >
         <SelectionPreview entries={entries} />
-      )}
-    </Modal>
-  );
+      </Modal>
+    );
+  }
+  return <FilePreview entry={entry} onClose={onClose} />;
 }
 
 function SelectionPreview({ entries }: { entries: Entry[] }) {
@@ -68,7 +67,13 @@ function SelectionPreview({ entries }: { entries: Entry[] }) {
   );
 }
 
-function FilePreview({ entry }: { entry: Entry }) {
+function FilePreview({
+  entry,
+  onClose,
+}: {
+  entry: Entry;
+  onClose: () => void;
+}) {
   const query = useQuery({
     queryKey: [
       "preview",
@@ -83,36 +88,57 @@ function FilePreview({ entry }: { entry: Entry }) {
     gcTime: 30_000,
     refetchOnWindowFocus: false,
   });
+  const compact = !query.data;
   return (
-    <div className="preview-content">
-      {query.isPending && <p role="status">正在读取预览…</p>}
-      {query.isError && (
-        <p role="alert">
-          {errorMessage(query.error)}{" "}
-          <button onClick={() => void query.refetch()}>重试</button>
-        </p>
-      )}
-      {query.data?.kind === "image" && (
-        <img
-          className="image-preview"
-          src={`data:${query.data.mime};base64,${query.data.content}`}
-          alt={entry.name}
-        />
-      )}
-      {query.data?.kind === "text" && (
-        <>
-          <TextPreview name={entry.name} content={query.data.content} />
-          {query.data.truncated && (
-            <p>仅预览前 1 MiB，完整内容请打开或下载文件。</p>
-          )}
-        </>
-      )}
-      {query.data?.kind === "pdf" && (
-        <Suspense fallback={<p>正在加载 PDF 预览…</p>}>
-          <PdfPreview content={query.data.content} />
-        </Suspense>
-      )}
-    </div>
+    <Modal
+      className={
+        compact ? "preview-modal preview-modal-compact" : "preview-modal"
+      }
+      title={`预览 · ${entry.name}`}
+      onClose={onClose}
+    >
+      <div className="preview-content">
+        {query.isPending && (
+          <p className="preview-status" role="status">
+            正在读取预览…
+          </p>
+        )}
+        {query.isError && (
+          <div className="preview-status" role="alert">
+            <p>{errorMessage(query.error)}</p>
+            <button
+              className="secondary"
+              type="button"
+              onClick={() => void query.refetch()}
+            >
+              重试
+            </button>
+          </div>
+        )}
+        {query.data?.kind === "image" && (
+          <img
+            className="image-preview"
+            src={`data:${query.data.mime};base64,${query.data.content}`}
+            alt={entry.name}
+          />
+        )}
+        {query.data?.kind === "text" && (
+          <>
+            <TextPreview name={entry.name} content={query.data.content} />
+            {query.data.truncated && (
+              <p>仅预览前 1 MiB，完整内容请打开或下载文件。</p>
+            )}
+          </>
+        )}
+        {query.data?.kind === "pdf" && (
+          <Suspense
+            fallback={<p className="preview-status">正在加载 PDF 预览…</p>}
+          >
+            <PdfPreview content={query.data.content} />
+          </Suspense>
+        )}
+      </div>
+    </Modal>
   );
 }
 export function Thumbnail({ entry }: { entry: Entry }) {

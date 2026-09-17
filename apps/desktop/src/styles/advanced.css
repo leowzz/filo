@@ -8,6 +8,21 @@
 .preview-content {
   min-width: 0;
 }
+.preview-status {
+  margin: 4px 0 2px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #555;
+}
+.preview-status[role="alert"] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+.preview-status p {
+  overflow-wrap: anywhere;
+}
 .selection-preview-stats {
   display: grid;
   gap: 16px;
@@ -146,6 +161,15 @@
 
 .modal.preview-modal {
   width: 820px;
+}
+.modal.preview-modal-compact {
+  width: 400px;
+}
+.preview-modal .modal-head h2 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .modal.advanced-modal {
   width: 700px;

@@ -107,7 +107,9 @@ export function Modal({
       aria-labelledby="modal-title"
     >
       <div className="modal-head">
-        <h2 id="modal-title">{title}</h2>
+        <h2 id="modal-title" title={title}>
+          {title}
+        </h2>
         <button
           className="icon-button"
           aria-label="关闭"
