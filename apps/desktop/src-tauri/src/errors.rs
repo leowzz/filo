@@ -56,9 +56,10 @@ pub(crate) fn install(app: tauri::AppHandle) {
 
 // All application IPC commands use this declaration, including future commands.
 macro_rules! commands {
-    ($($vis:vis async fn $name:ident($($args:tt)*) -> $result:ty $body:block)*) => {
+    ($($(#[$meta:meta])* $vis:vis async fn $name:ident($($args:tt)*) -> $result:ty $body:block)*) => {
         $(
             #[tauri::command]
+            $(#[$meta])*
             $vis async fn $name($($args)*) -> $result {
                 storage_application::catch_panic(async move $body).await
             }

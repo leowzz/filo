@@ -100,6 +100,7 @@ pub async fn preflight_upload(
     Ok(Some(UploadPreflight { paths, conflicts }))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn upload_dropped_files(
     window: tauri::Window,
     dropped: State<'_, DroppedFiles>,
