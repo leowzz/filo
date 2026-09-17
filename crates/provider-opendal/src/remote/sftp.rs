@@ -84,7 +84,7 @@ fn ssh_error(error: russh::Error) -> StorageError {
     let (code, message, retryable) = match error {
         russh::Error::UnknownKey | russh::Error::KeyChanged { .. } => (
             StorageErrorCode::AuthenticationFailed,
-            "SFTP 主机密钥校验失败，请检查 known_hosts",
+            "SFTP 服务器身份验证失败，请重新检查服务器地址和端口",
             false,
         ),
         russh::Error::CouldNotReadKey
@@ -450,6 +450,7 @@ impl SftpBackend {
         let username = credentials.username.clone();
         let password = credentials.password.clone();
         let ssh_config = russh::client::Config {
+            preferred: super::ssh_hosts::preferred_for_keys(&known_keys),
             keepalive_interval: Some(KEEPALIVE_INTERVAL),
             keepalive_max: 3,
             nodelay: true,

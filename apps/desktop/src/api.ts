@@ -14,6 +14,7 @@ import type {
   S3Input,
   RemoteInput,
   SftpPrivateKey,
+  SftpHostKeyInspection,
   TransferSettings,
 } from "./types";
 
@@ -78,6 +79,18 @@ export const api = {
       clearTimeout(timer);
     }
   },
+  inspectSftpHostKey: (host: string, port: number, knownHosts: string) =>
+    desktop
+      ? invoke<SftpHostKeyInspection>("inspect_sftp_host_key", {
+          host,
+          port,
+          knownHosts,
+        })
+      : Promise.reject(
+          new Error(
+            "SFTP 主机密钥检查仅可在桌面应用中使用，请在桌面应用中重试。",
+          ),
+        ),
   loadDefaultSftpPrivateKey: () =>
     desktop
       ? invoke<SftpPrivateKey | null>("load_default_sftp_private_key")

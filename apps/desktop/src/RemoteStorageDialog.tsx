@@ -15,6 +15,7 @@ import type {
   RemoteAuthMethod,
   RemoteInput,
   RemoteProtocol,
+  SftpHostKeyInspection,
   SftpPrivateKey,
   Volume,
 } from "./types";
@@ -25,10 +26,21 @@ type RemoteVolume = Volume & {
 };
 type SftpPrivateKeySource = "default" | "file" | "paste";
 type SftpPrivateKeyOperation = "default" | "picker" | null;
+type RemoteAction = "test" | "save";
 
 function asRemoteVolume(volume: Volume | undefined): RemoteVolume | undefined {
   if (!volume || volume.root.type !== "remote") return undefined;
   return volume as RemoteVolume;
+}
+
+function endpointKey(host: string, port: number) {
+  return `${host}\u0000${port}`;
+}
+
+function endpointLabel(host: string, port: number) {
+  const displayHost =
+    host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `${displayHost}:${port}`;
 }
 
 export function RemoteStorageDialog({
@@ -124,9 +136,27 @@ export function RemoteForm({
   );
   const [path, setPath] = useState(volume?.root.path ?? "");
   const [share, setShare] = useState(connection?.config.share ?? "");
-  const [knownHosts, setKnownHosts] = useState(
-    connection?.config.known_hosts ?? "",
+  const initialHost = (connection?.config.host ?? "").trim();
+  const initialPort = connection?.config.port ?? preset.defaultPort;
+  const initialEndpointKey = endpointKey(initialHost, initialPort);
+  const [hostKeyPin, setHostKeyPin] = useState(
+    protocol === "sftp" ? (connection?.config.known_hosts ?? "") : "",
   );
+  const [trustedEndpointKey, setTrustedEndpointKey] = useState<string | null>(
+    protocol === "sftp" && connection?.config.known_hosts?.trim()
+      ? initialEndpointKey
+      : null,
+  );
+  const [hostKeyInspection, setHostKeyInspection] =
+    useState<SftpHostKeyInspection | null>(null);
+  const [hostKeyInspectionEndpoint, setHostKeyInspectionEndpoint] = useState<
+    string | null
+  >(null);
+  const [hostKeyError, setHostKeyError] = useState("");
+  const [hostKeyInspectionPending, setHostKeyInspectionPending] =
+    useState(false);
+  const [pendingSftpAction, setPendingSftpAction] =
+    useState<RemoteAction | null>(null);
   const [readOnly, setReadOnly] = useState(volume?.read_only ?? false);
   const [replaceCredentials, setReplaceCredentials] = useState(!volume);
   const [authMethod, setAuthMethod] = useState<RemoteAuthMethod>("password");
@@ -143,6 +173,10 @@ export function RemoteForm({
   const [domain, setDomain] = useState("");
   const [tested, setTested] = useState(false);
   const privateKeyRequest = useRef(0);
+  const hostKeyRequest = useRef(0);
+  const endpointKeyRef = useRef(initialEndpointKey);
+  const hostKeyCheckRef = useRef<HTMLDivElement>(null);
+  const mounted = useRef(true);
 
   const activePrivateKey =
     protocol === "sftp" && replaceCredentials && authMethod === "private_key";
@@ -167,8 +201,12 @@ export function RemoteForm({
   const shareValue = share.trim();
   const shareValid =
     protocol !== "smb" || (shareValue.length > 0 && !/[\\/:]/.test(shareValue));
-  const knownHostsValue = knownHosts.trim();
-  const knownHostsValid = protocol !== "sftp" || knownHostsValue.length > 0;
+  const currentEndpointKey = endpointKey(hostValue, portNumber);
+  endpointKeyRef.current = currentEndpointKey;
+  const knownHostsValue =
+    protocol === "sftp" && trustedEndpointKey === currentEndpointKey
+      ? hostKeyPin
+      : "";
   const usernameValue = username.trim();
   const credentialsValid =
     !replaceCredentials ||
@@ -186,7 +224,6 @@ export function RemoteForm({
     hostValid &&
     portValid &&
     shareValid &&
-    knownHostsValid &&
     credentialsValid,
   );
   const input: RemoteInput = {
@@ -216,12 +253,14 @@ export function RemoteForm({
       : null,
   };
   const test = useMutation({
-    mutationFn: () => api.testRemote(volume?.id ?? null, input),
+    mutationFn: (request: RemoteInput) =>
+      api.testRemote(volume?.id ?? null, request),
     onMutate: () => setTested(false),
     onSuccess: () => setTested(true),
   });
   const save = useMutation({
-    mutationFn: () => api.saveRemote(volume?.id ?? null, input),
+    mutationFn: (request: RemoteInput) =>
+      api.saveRemote(volume?.id ?? null, request),
     onSuccess: async (saved) => {
       if (volume) {
         await client.cancelQueries({ queryKey: ["entries", volume.id] });
@@ -235,6 +274,136 @@ export function RemoteForm({
       onSaved(saved);
     },
   });
+  const pending = save.isPending || test.isPending;
+  const hostKeyConfirmation =
+    pendingSftpAction !== null && hostKeyInspection?.status === "unknown";
+  const busy = pending || externalBusy || hostKeyInspectionPending;
+  const actionsBusy = busy || privateKeyLoading || hostKeyConfirmation;
+  const workflowBusy =
+    pending || hostKeyInspectionPending || hostKeyConfirmation;
+
+  function clearHostKeyWorkflow() {
+    hostKeyRequest.current += 1;
+    setHostKeyInspectionPending(false);
+    setHostKeyInspection(null);
+    setHostKeyInspectionEndpoint(null);
+    setHostKeyError("");
+    setPendingSftpAction(null);
+  }
+
+  function invalidateHostKeyTrust() {
+    clearHostKeyWorkflow();
+    setHostKeyPin("");
+    setTrustedEndpointKey(null);
+  }
+
+  function runRemoteAction(action: RemoteAction, request: RemoteInput) {
+    if (!mounted.current) return;
+    if (action === "test") test.mutate(request);
+    else save.mutate(request);
+  }
+
+  function cancelHostKeyAction() {
+    clearHostKeyWorkflow();
+  }
+
+  function trustAndContinue() {
+    if (
+      protocol !== "sftp" ||
+      pendingSftpAction === null ||
+      hostKeyInspection?.status !== "unknown" ||
+      hostKeyInspectionEndpoint !== currentEndpointKey ||
+      !hostKeyInspection.known_hosts ||
+      !valid ||
+      busy ||
+      privateKeyLoading
+    )
+      return;
+
+    const action = pendingSftpAction;
+    const exactPin = hostKeyInspection.known_hosts;
+    const actionInput = { ...input, known_hosts: exactPin };
+    const actionEndpointKey = currentEndpointKey;
+    if (endpointKeyRef.current !== actionEndpointKey) {
+      invalidateHostKeyTrust();
+      return;
+    }
+
+    setHostKeyPin(exactPin);
+    setTrustedEndpointKey(actionEndpointKey);
+    clearHostKeyWorkflow();
+    runRemoteAction(action, actionInput);
+  }
+
+  async function inspectBeforeAction(action: RemoteAction) {
+    if (!valid || actionsBusy) return;
+    resetConnectionStatus();
+    if (protocol !== "sftp") {
+      runRemoteAction(action, input);
+      return;
+    }
+
+    const actionEndpointKey = currentEndpointKey;
+    const requestId = ++hostKeyRequest.current;
+    const requestInput = input;
+    setHostKeyInspection(null);
+    setHostKeyInspectionEndpoint(actionEndpointKey);
+    setHostKeyError("");
+    setPendingSftpAction(action);
+    setHostKeyInspectionPending(true);
+
+    try {
+      const result = await api.inspectSftpHostKey(
+        requestInput.host,
+        requestInput.port,
+        requestInput.known_hosts,
+      );
+      if (!mounted.current || requestId !== hostKeyRequest.current) return;
+      if (endpointKeyRef.current !== actionEndpointKey) {
+        invalidateHostKeyTrust();
+        return;
+      }
+
+      if (result.status === "trusted") {
+        const exactPin = result.known_hosts;
+        setHostKeyPin(exactPin);
+        setTrustedEndpointKey(actionEndpointKey);
+        setHostKeyInspection(null);
+        setPendingSftpAction(null);
+        setHostKeyInspectionPending(false);
+        runRemoteAction(action, { ...requestInput, known_hosts: exactPin });
+        return;
+      }
+
+      setHostKeyInspection(result);
+      setHostKeyInspectionEndpoint(actionEndpointKey);
+      setHostKeyInspectionPending(false);
+      if (result.status === "unknown") {
+        // The returned pin is held in the inspection result until the user
+        // confirms it. It must never reach a connection mutation implicitly.
+        setHostKeyPin("");
+        setTrustedEndpointKey(null);
+      } else {
+        // Keep the prior pin so every retry still compares against it. A
+        // changed host key has no trust or re-trust path in this dialog.
+        setPendingSftpAction(null);
+      }
+    } catch (error) {
+      if (!mounted.current || requestId !== hostKeyRequest.current) return;
+      if (endpointKeyRef.current !== actionEndpointKey) {
+        invalidateHostKeyTrust();
+        return;
+      }
+      setHostKeyInspectionPending(false);
+      setHostKeyInspection(null);
+      setHostKeyError(`无法检查 SFTP 主机密钥：${errorMessage(error)}`);
+      // Keep the intended action so the inline retry can repeat inspection.
+    } finally {
+      if (mounted.current && requestId === hostKeyRequest.current) {
+        setHostKeyInspectionPending(false);
+      }
+    }
+  }
 
   function resetConnectionStatus() {
     setTested(false);
@@ -338,19 +507,39 @@ export function RemoteForm({
     };
   }, []);
 
-  const pending = save.isPending || test.isPending;
-  const busy = pending || externalBusy;
-  const actionsBusy = busy || privateKeyLoading;
   useEffect(() => {
-    onBusyChange?.(pending);
-  }, [onBusyChange, pending]);
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      hostKeyRequest.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hostKeyConfirmation) return;
+    const frame = requestAnimationFrame(() => {
+      const element = hostKeyCheckRef.current;
+      if (!element) return;
+      element.scrollIntoView({ block: "nearest" });
+      element
+        .querySelector<HTMLButtonElement>('[data-sftp-host-key-action="trust"]')
+        ?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [hostKeyConfirmation]);
+
+  useEffect(() => {
+    onBusyChange?.(workflowBusy);
+    return () => onBusyChange?.(false);
+  }, [onBusyChange, workflowBusy]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (valid && !actionsBusy) save.mutate();
+    if (!actionsBusy) void inspectBeforeAction("save");
   }
 
   function close() {
+    clearHostKeyWorkflow();
     cancelPrivateKeyRequest();
     onClose();
   }
@@ -367,13 +556,15 @@ export function RemoteForm({
     <form
       className="remote-form"
       onChange={() => {
-        setTested(false);
-        test.reset();
-        save.reset();
+        resetConnectionStatus();
+        if (hostKeyInspection || hostKeyError) clearHostKeyWorkflow();
       }}
       onSubmit={submit}
     >
-      <fieldset className="connection-fields remote-fields" disabled={busy}>
+      <fieldset
+        className="connection-fields remote-fields"
+        disabled={busy || hostKeyConfirmation}
+      >
         <label className="field-label">
           连接名称
           <input
@@ -393,7 +584,10 @@ export function RemoteForm({
             <input
               className="text-input"
               value={host}
-              onChange={(event) => setHost(event.target.value)}
+              onChange={(event) => {
+                if (event.target.value !== host) invalidateHostKeyTrust();
+                setHost(event.target.value);
+              }}
               placeholder="例如 192.168.1.20 或 files.example.com"
               autoComplete="url"
               required
@@ -413,7 +607,10 @@ export function RemoteForm({
               step={1}
               inputMode="numeric"
               value={port}
-              onChange={(event) => setPort(event.target.value)}
+              onChange={(event) => {
+                if (event.target.value !== port) invalidateHostKeyTrust();
+                setPort(event.target.value);
+              }}
               required
               aria-invalid={port.length > 0 && !portValid}
             />
@@ -459,25 +656,6 @@ export function RemoteForm({
           />
           <span className="field-help remote-input-help">{pathHelp}</span>
         </label>
-
-        {protocol === "sftp" && (
-          <label className="field-label remote-textarea-label">
-            SSH 主机密钥（known_hosts）
-            <textarea
-              className="text-input remote-textarea remote-known-hosts"
-              value={knownHosts}
-              onChange={(event) => setKnownHosts(event.target.value)}
-              placeholder="粘贴 ssh-keyscan 输出的一行或多行"
-              rows={4}
-              spellCheck={false}
-              required
-              aria-invalid={knownHosts.length > 0 && !knownHostsValid}
-            />
-            <span className="field-help remote-input-help">
-              为防止连接到冒充服务器，必须提供该服务器的主机密钥；不会自动信任未知主机。
-            </span>
-          </label>
-        )}
 
         {volume && (
           <label className="checkbox-label">
@@ -705,6 +883,136 @@ export function RemoteForm({
         </p>
       </fieldset>
 
+      {hostKeyInspectionPending && pendingSftpAction !== null && (
+        <div
+          className="remote-host-key-check remote-host-key-pending"
+          data-sftp-host-key-state="inspecting"
+          role="status"
+          aria-live="polite"
+        >
+          <LoaderCircle size={15} className="spin" aria-hidden="true" />
+          <span>正在验证服务器身份…</span>
+          <button
+            type="button"
+            className="secondary"
+            data-sftp-host-key-action="cancel"
+            onClick={cancelHostKeyAction}
+          >
+            取消
+          </button>
+        </div>
+      )}
+      {hostKeyInspection?.status === "unknown" &&
+        pendingSftpAction !== null && (
+          <div
+            className="remote-host-key-check remote-host-key-unknown"
+            data-sftp-host-key-state="unknown"
+            role="alert"
+            ref={hostKeyCheckRef}
+          >
+            <strong>首次连接，需要确认服务器身份</strong>
+            <p>
+              请确认下面的主机密钥信息来自你要连接的服务器。确认后才会继续
+              {pendingSftpAction === "test" ? "测试连接" : "保存连接"}。
+            </p>
+            <dl className="remote-host-key-details">
+              <div>
+                <dt>服务器</dt>
+                <dd>
+                  <code>{endpointLabel(hostValue, portNumber)}</code>
+                </dd>
+              </div>
+              <div>
+                <dt>SHA256 指纹</dt>
+                <dd>
+                  <code>{hostKeyInspection.fingerprint}</code>
+                </dd>
+              </div>
+              <div>
+                <dt>算法</dt>
+                <dd>{hostKeyInspection.algorithm}</dd>
+              </div>
+            </dl>
+            <div className="remote-host-key-actions">
+              <button
+                type="button"
+                className="primary"
+                data-sftp-host-key-action="trust"
+                onClick={trustAndContinue}
+              >
+                信任并继续
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                data-sftp-host-key-action="cancel"
+                onClick={cancelHostKeyAction}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        )}
+      {hostKeyInspection?.status === "changed" && (
+        <div
+          className="remote-host-key-check remote-host-key-changed"
+          data-sftp-host-key-state="changed"
+          role="alert"
+        >
+          <strong>服务器主机密钥已变化，已阻止连接</strong>
+          <p>
+            当前服务器提供的主机密钥与已保存的信任信息不一致。请检查服务器地址、端口和服务器配置后重试。
+          </p>
+          <dl className="remote-host-key-details">
+            <div>
+              <dt>服务器</dt>
+              <dd>
+                <code>{endpointLabel(hostValue, portNumber)}</code>
+              </dd>
+            </div>
+            <div>
+              <dt>当前 SHA256 指纹</dt>
+              <dd>
+                <code>{hostKeyInspection.fingerprint}</code>
+              </dd>
+            </div>
+            <div>
+              <dt>算法</dt>
+              <dd>{hostKeyInspection.algorithm}</dd>
+            </div>
+          </dl>
+        </div>
+      )}
+      {hostKeyError && pendingSftpAction !== null && (
+        <div
+          className="remote-host-key-check remote-host-key-error"
+          data-sftp-host-key-state="error"
+          role="alert"
+        >
+          <strong>无法检查服务器身份</strong>
+          <p>{hostKeyError}</p>
+          <div className="remote-host-key-actions">
+            <button
+              type="button"
+              className="secondary"
+              data-sftp-host-key-action="retry"
+              disabled={actionsBusy}
+              onClick={() => void inspectBeforeAction(pendingSftpAction)}
+            >
+              重试检查
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              data-sftp-host-key-action="cancel"
+              disabled={actionsBusy}
+              onClick={cancelHostKeyAction}
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
       {(save.isError || test.isError) && (
         <p className="error-text" role="alert">
           {errorMessage(save.error ?? test.error)}
@@ -729,7 +1037,7 @@ export function RemoteForm({
           type="button"
           className="secondary"
           disabled={!valid || actionsBusy}
-          onClick={() => test.mutate()}
+          onClick={() => void inspectBeforeAction("test")}
         >
           {test.isPending && <LoaderCircle size={14} className="spin" />}
           {test.isPending ? "正在测试…" : "测试连接"}

@@ -1863,6 +1863,7 @@ name = "filo-desktop"
 version = "0.1.6"
 dependencies = [
  "base64 0.22.1",
+ "provider-opendal",
  "serde",
  "serde_json",
  "storage-application",
@@ -4612,6 +4613,7 @@ dependencies = [
  "async-trait",
  "aws-sdk-s3",
  "chrono",
+ "data-encoding",
  "futures",
  "hmac 0.12.1",
  "md-5 0.10.6",
@@ -4626,6 +4628,7 @@ dependencies = [
  "rustls-native-certs",
  "serde",
  "serde_json",
+ "sha1 0.10.7",
  "sha2 0.10.9",
  "smb2",
  "storage-domain",

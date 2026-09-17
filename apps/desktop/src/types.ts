@@ -10,6 +10,12 @@ export type SftpPrivateKey = {
   path: string;
   private_key: string;
 };
+export type SftpHostKeyInspection = {
+  status: "trusted" | "unknown" | "changed";
+  known_hosts: string;
+  fingerprint: string;
+  algorithm: string;
+};
 export type S3Config = {
   provider?: S3Provider | null;
   endpoint: string | null;

@@ -9,7 +9,8 @@ const page = task.page("p1");
 const injected = await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
   source: `
 window.isTauri=true;
-window.keyCalls=[]; window.keyVolumes=[]; window.keyConnections=[];
+window.keyCalls=[]; window.hostTrustCalls=[]; window.keyVolumes=[]; window.keyConnections=[];
+window.hostTrustResponse={status:'trusted',known_hosts:'fixture.invalid ssh-ed25519 SYNTHETIC_HOST_KEY',fingerprint:'SHA256:SYNTHETIC_HOST',algorithm:'ssh-ed25519'};
 window.defaultKey={path:'/fixture/.ssh/id_ed25519',private_key:'SYNTHETIC_DEFAULT_KEY'};
 window.pickedKey=null;
 window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{}};
@@ -33,6 +34,10 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
     if(window.pickerError)throw {message:'所选文件不是有效的私钥'};
     return window.pickedKey;
   }
+  if(command==='inspect_sftp_host_key'){
+    window.hostTrustCalls.push({command,args});
+    return window.hostTrustResponse;
+  }
   if(command==='test_remote_connection'){window.keyCalls.push({command,args});return;}
   if(command==='save_remote_storage'){
     window.keyCalls.push({command,args});
@@ -54,6 +59,7 @@ const input = (label) =>
 const auth =
   'xpath=//label[not(ancestor::*[@hidden]) and starts-with(normalize-space(.), "认证方式")]//select';
 const keyArea = `${form} .remote-private-key`;
+let formInspectionBaseline = 0;
 const open = async () => {
   await page.click('.sidebar button[aria-label="添加存储空间"]');
   await page.focus('button[data-provider="sftp"]');
@@ -61,7 +67,9 @@ const open = async () => {
   await page.fill(input("连接名称"), "SFTP fixture");
   await page.fill(`${form} .remote-host-field input`, "fixture.invalid");
   await page.fill(input("用户名"), "fixture");
-  await page.fill(`${form} textarea`, "fixture.invalid ssh-ed25519 SYNTHETIC");
+  formInspectionBaseline = await page.evaluate(
+    () => window.hostTrustCalls.length,
+  );
 };
 const calls = (command) =>
   page.evaluate(
@@ -70,6 +78,9 @@ const calls = (command) =>
   );
 const testKey = async (expected) => {
   const previous = await calls("test_remote_connection");
+  const previousInspections = await page.evaluate(
+    () => window.hostTrustCalls.length,
+  );
   await page.click(button("测试连接"));
   await page.waitForFunction(
     (previous) =>
@@ -86,6 +97,23 @@ const testKey = async (expected) => {
     ),
     expected,
   );
+  const inspection = await page.evaluate(() => window.hostTrustCalls.at(-1));
+  assert.equal(inspection.args.host, "fixture.invalid");
+  assert.equal(inspection.args.port, 22);
+  assert.equal(
+    inspection.args.knownHosts,
+    previousInspections === formInspectionBaseline
+      ? ""
+      : "fixture.invalid ssh-ed25519 SYNTHETIC_HOST_KEY",
+    "native inspection receives the empty first pin or the retained saved pin",
+  );
+  assert.equal(
+    await page.evaluate(
+      () => window.keyCalls.filter((c) => c.command === "test_remote_connection").at(-1).args.input.known_hosts,
+    ),
+    "fixture.invalid ssh-ed25519 SYNTHETIC_HOST_KEY",
+    "trusted host inspection supplies the saved pin to the connection action",
+  );
 };
 const close = async () => {
   await page.focus('dialog button[aria-label="关闭"]');
@@ -101,6 +129,11 @@ try {
   });
   await page.goto(globalThis.filoTestUrl ?? "http://127.0.0.1:1420");
   await open();
+  assert.equal(
+    await page.evaluate(() => document.querySelector(".remote-known-hosts")),
+    null,
+    "SFTP host trust is native and has no manual known_hosts textarea",
+  );
   assert.equal(
     await calls("load_default_sftp_private_key"),
     0,

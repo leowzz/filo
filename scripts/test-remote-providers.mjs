@@ -17,6 +17,8 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
   source: `
 window.isTauri=true;
 window.remoteCalls=[];
+window.hostTrustCalls=[];
+window.hostTrustResponse={status:'trusted',known_hosts:'[::1]:22 ssh-ed25519 SYNTHETIC_HOST_KEY',fingerprint:'SHA256:SYNTHETIC_HOST',algorithm:'ssh-ed25519'};
 window.remoteVolumes=[];
 window.remoteConnections=[];
 window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{}};
@@ -35,6 +37,10 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
     if(window.failRemote)throw {message:'远程连接失败，请检查服务器和认证信息'};
     if(window.holdRemote)await new Promise(resolve=>window.releaseRemote=resolve);
     return;
+  }
+  if(command==='inspect_sftp_host_key'){
+    window.hostTrustCalls.push({command,args});
+    return window.hostTrustResponse;
   }
   if(command==='save_remote_storage'){
     window.remoteCalls.push({command,args});
@@ -88,6 +94,14 @@ const remoteButton = (text) =>
   `${visibleForm()} .modal-footer button:text-is("${text}")`;
 const lastInput = () =>
   page.evaluate(() => window.remoteCalls.at(-1).args.input);
+const invokeRemoteAction = async (text) => {
+  const previous = await page.evaluate(() => window.remoteCalls.length);
+  await page.click(remoteButton(text));
+  await page.waitForFunction(
+    (previous) => window.remoteCalls.length > previous,
+    previous,
+  );
+};
 
 await openChooser();
 assert.deepEqual(
@@ -119,8 +133,7 @@ await page.fill(field("SMB 共享名称"), "public");
 await page.fill(field("共享内目录"), "documents/projects");
 await page.fill(field("用户名"), "leo");
 await page.fill(field("密码"), "secret");
-await page.click(remoteButton("测试连接"));
-await page.waitForSelector(`${visibleForm()} [role=status]`);
+await invokeRemoteAction("测试连接");
 assert.deepEqual(await lastInput(), {
   name: "家庭 NAS",
   protocol: "smb",
@@ -139,7 +152,7 @@ assert.deepEqual(await lastInput(), {
   },
 });
 await page.evaluate(() => (window.failRemote = true));
-await page.click(remoteButton("测试连接"));
+await invokeRemoteAction("测试连接");
 await page.waitForSelector(`${visibleForm()} [role=alert]`);
 assert.match(
   await page.evaluate(
@@ -149,7 +162,7 @@ assert.match(
 );
 await page.evaluate(() => (window.failRemote = false));
 await page.evaluate(() => (window.holdRemote = true));
-await page.click(remoteButton("测试连接"));
+await invokeRemoteAction("测试连接");
 await page.waitForFunction(() => Boolean(window.releaseRemote));
 await page.waitForFunction(
   () =>
@@ -173,7 +186,7 @@ assert.equal(
   false,
   "late connection success must not overwrite the timeout",
 );
-await page.click(remoteButton("保存连接"));
+await invokeRemoteAction("保存连接");
 await page.waitForFunction(() => !document.querySelector("dialog[open]"));
 assert.equal(await page.evaluate(() => window.remoteVolumes.length), 1);
 
@@ -193,8 +206,7 @@ await page.waitForSelector(visibleForm());
 assert.equal(await value(field("服务器地址")), "192.168.1.20");
 assert.equal(await value(field("SMB 共享名称")), "public");
 assert.equal(await value(field("共享内目录")), "documents/projects");
-await page.click(remoteButton("测试连接"));
-await page.waitForSelector(`${visibleForm()} [role=status]`);
+await invokeRemoteAction("测试连接");
 assert.equal((await lastInput()).credentials, null);
 await page.click(
   'xpath=//label[not(ancestor::*[@hidden]) and starts-with(normalize-space(.), "更换登录凭据")]//input',
@@ -202,13 +214,12 @@ await page.click(
 await page.fill(field("用户名"), "leo");
 await page.fill(field("密码"), "new-secret");
 assert.equal((await lastInput()).credentials?.password, undefined);
-await page.click(remoteButton("测试连接"));
-await page.waitForSelector(`${visibleForm()} [role=status]`);
+await invokeRemoteAction("测试连接");
 assert.equal((await lastInput()).credentials.password, "new-secret");
 await page.focus('button[aria-label="关闭"]');
 await page.keyboard.press("Enter");
 
-// SFTP requires an explicit host key and supports private-key authentication.
+// SFTP obtains its host key from the native inspector and supports private-key authentication.
 await openChooser();
 await page.focus('button[data-provider="sftp"]');
 await page.keyboard.press("Enter");
@@ -217,7 +228,11 @@ await page.fill(field("连接名称"), "开发机");
 await page.fill(field("服务器地址"), "[::1]");
 await page.fill(field("端口"), "22");
 await page.fill(field("远程目录"), "/srv/files");
-await page.fill(textarea("SSH 主机密钥"), "[::1]:22 ssh-ed25519 AAAATEST");
+assert.equal(
+  await page.evaluate(() => document.querySelector(".remote-known-hosts")),
+  null,
+  "SFTP host trust is native and has no manual known_hosts textarea",
+);
 await page.fill(field("用户名"), "deploy");
 await page.selectOption(
   'xpath=//label[not(ancestor::*[@hidden]) and starts-with(normalize-space(.), "认证方式")]//select',
@@ -236,9 +251,17 @@ assert.equal(
   ),
   false,
 );
-await page.click(remoteButton("测试连接"));
-await page.waitForSelector(`${visibleForm()} [role=status]`);
+await invokeRemoteAction("测试连接");
 assert.equal((await lastInput()).protocol, "sftp");
+assert.deepEqual(await page.evaluate(() => window.hostTrustCalls.at(-1).args), {
+  host: "[::1]",
+  port: 22,
+  knownHosts: "",
+});
+assert.equal(
+  (await lastInput()).known_hosts,
+  "[::1]:22 ssh-ed25519 SYNTHETIC_HOST_KEY",
+);
 assert.equal((await lastInput()).credentials.password, "");
 assert.match((await lastInput()).credentials.private_key, /BEGIN OPENSSH/);
 await page.selectOption(
@@ -246,8 +269,7 @@ await page.selectOption(
   "password",
 );
 await page.fill(field("密码"), "password-mode");
-await page.click(remoteButton("测试连接"));
-await page.waitForSelector(`${visibleForm()} [role=status]`);
+await invokeRemoteAction("测试连接");
 assert.equal((await lastInput()).credentials.private_key, "");
 assert.equal((await lastInput()).credentials.passphrase, "");
 assert.equal((await lastInput()).credentials.password, "password-mode");
@@ -270,7 +292,7 @@ assert.equal(
   "host field rejects embedded ports",
 );
 await page.fill(field("服务器地址"), "files.example.com");
-await page.click(remoteButton("保存连接"));
+await invokeRemoteAction("保存连接");
 await page.waitForFunction(() => !document.querySelector("dialog[open]"));
 assert.equal(
   await page.evaluate(

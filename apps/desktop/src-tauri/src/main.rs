@@ -8,6 +8,7 @@ use tauri_plugin_dialog::DialogExt;
 
 mod dropped_files;
 mod errors;
+mod ssh_hosts;
 mod ssh_keys;
 
 #[derive(serde::Serialize)]
@@ -394,7 +395,8 @@ fn main() {
             delete_entry,
             open_entry,
             ssh_keys::load_default_sftp_private_key,
-            ssh_keys::pick_sftp_private_key
+            ssh_keys::pick_sftp_private_key,
+            ssh_hosts::inspect_sftp_host_key
         ])
         .run(tauri::generate_context!());
     if let Err(error) = result {

@@ -26,7 +26,7 @@ macOS 开发启动前需配置可用的固定签名证书，在 `.env` 中填写
 | --- | --- |
 | 本地目录 | 系统原生目录选择器，支持多个已有目录及只读模式 |
 | FTP / FTPS | 用户名、密码和根目录；FTPS 使用显式 TLS，验证服务端证书 |
-| SFTP | SSH 密码或私钥认证，校验填写的 known_hosts 主机公钥 |
+| SFTP | SSH 密码或私钥认证，自动验证服务器身份，首次连接确认指纹 |
 | SMB / Samba | 主机、共享名称、用户名、密码与可选域 |
 | 通用 S3 协议 | AWS S3、MinIO 及其他兼容服务；可配置 Endpoint、Region、Bucket、Prefix 和 Path-style |
 | RustFS | 独立连接入口，填写自建服务地址 |

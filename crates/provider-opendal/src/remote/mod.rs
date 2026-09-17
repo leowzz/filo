@@ -1,6 +1,7 @@
 mod ftp;
 mod sftp;
 mod smb;
+mod ssh_hosts;
 
 use async_trait::async_trait;
 use storage_domain::*;
@@ -10,6 +11,7 @@ use uuid::Uuid;
 pub use ftp::FtpBackend;
 use sftp::SftpBackend;
 use smb::SmbBackend;
+pub use ssh_hosts::{inspect_sftp_host_key, SftpHostKeyInspection, SftpHostKeyStatus};
 
 /// Dispatches the provider-independent storage contract to one connected
 /// remote protocol implementation.
