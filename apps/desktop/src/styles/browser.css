@@ -25,11 +25,12 @@
   text-align: center;
 }
 .file-area {
+  --directory-gutter: 24px;
   position: relative;
   min-width: 0;
   flex: 1;
   overflow: auto;
-  padding: 0 10px;
+  padding: 0 10px 0 var(--directory-gutter);
   -webkit-user-select: none;
   user-select: none;
 }

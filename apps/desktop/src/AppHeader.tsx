@@ -61,6 +61,7 @@ export function AppHeader({
   onPaste,
   onContentSearch,
   onManage,
+  onViewOptions,
   onRefresh,
   isFetching,
   transfers,
@@ -95,6 +96,7 @@ export function AppHeader({
   onPaste: () => void;
   onContentSearch: () => void;
   onManage: (object: boolean) => void;
+  onViewOptions: () => void;
   onRefresh: () => void;
   isFetching: boolean;
   onOpenTransferDirectory: (job: TransferJob) => Promise<string | null | void>;
@@ -197,6 +199,13 @@ export function AppHeader({
       disabled: !browsing,
       checked: refresh.enabled,
       run: () => refresh.setEnabled(!refresh.enabled),
+    },
+    {
+      id: "view-options",
+      group: "显示",
+      label: "查看显示选项…",
+      disabled: !browsing,
+      run: onViewOptions,
     },
     {
       id: "object",

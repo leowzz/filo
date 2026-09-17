@@ -207,10 +207,26 @@ const margin = await page.evaluate(() => {
   const rect = document.querySelector(".file-area").getBoundingClientRect();
   return { x: rect.left + 3, y: rect.top + 70 };
 });
+assert.equal(
+  await page.evaluate(() => {
+    const area = document.querySelector(".file-area").getBoundingClientRect();
+    const table = document.querySelector(".file-table").getBoundingClientRect();
+    return table.left - area.left >= 24;
+  }),
+  true,
+  "Directory gutter stays large enough to target",
+);
 await page.mouse.click(margin.x, margin.y);
 assert.equal((await selected()).length, 0, "Blank space clears selection");
 await drag(margin, await point(4));
 assert.ok((await selected()).length > 1, "Drag can start in blank space");
+await page.click('[aria-label="更多操作"]');
+await page.click(
+  '.browser-actions-popover button:has-text("查看显示选项…")',
+);
+await page.waitForSelector("#browser-sort");
+await page.click('dialog button:has-text("完成")');
+await page.focus(".file-area");
 await page.keyboard.press("Meta+a");
 assert.match(
   await page.evaluate(() => document.querySelector(".statusbar").textContent),

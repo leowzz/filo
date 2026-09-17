@@ -782,6 +782,7 @@ export default function App() {
               object,
             })
           }
+          onViewOptions={() => setViewOptions(true)}
           onRefresh={() => {
             void entriesQuery.refetch();
             void client.invalidateQueries({ queryKey: ["preview"] });
