@@ -1860,7 +1860,7 @@ dependencies = [
 
 [[package]]
 name = "filo-desktop"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "base64 0.22.1",
  "provider-opendal",
@@ -4608,7 +4608,7 @@ dependencies = [
 
 [[package]]
 name = "provider-opendal"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "aws-sdk-s3",
@@ -6277,7 +6277,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "storage-application"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -6301,7 +6301,7 @@ dependencies = [
 
 [[package]]
 name = "storage-domain"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "serde",
  "serde_json",
@@ -6311,7 +6311,7 @@ dependencies = [
 
 [[package]]
 name = "storage-provider-api"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "storage-domain",
@@ -6321,7 +6321,7 @@ dependencies = [
 
 [[package]]
 name = "storage-repository"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "serde_json",
  "sqlx",
