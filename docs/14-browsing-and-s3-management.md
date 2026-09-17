@@ -4,7 +4,7 @@
 
 ## 预览、缩略图与内容搜索
 
-- 预览支持 UTF-8 文本、PNG/JPEG/GIF/WebP 图片和 PDF 翻页。HTML、SVG 等文本直接显示源内容，不执行脚本。图片列表显示 80px 缩略图，GIF 使用静态帧。图片/PDF 上限 20 MiB，文本预览显示前 1 MiB；图片解码设有尺寸与内存限制，同时最多处理三个预览请求。其他格式可使用系统应用打开或下载。读取中或不支持预览时使用紧凑提示窗，避免空内容撑满宽预览框；成功读出图片、文本或 PDF 后再展开。
+- 预览支持文件夹、UTF-8 文本、PNG/JPEG/GIF/WebP 图片和 PDF 翻页。HTML、SVG 等文本直接显示源内容，不执行脚本。图片列表显示 80px 缩略图，GIF 使用静态帧。图片/PDF 上限 20 MiB，文本预览显示前 1 MiB；图片解码设有尺寸与内存限制，同时最多处理三个预览请求。其他格式可使用系统应用打开或下载。读取中或不支持预览时使用紧凑提示窗，避免空内容撑满宽预览框；成功读出图片、文本或 PDF 后再展开。文件夹预览列出部分子项，不读取文件内容。预览打开时，方向键上/下切换当前目录中的上一项或下一项，并同步列表选中项。
 - 内容搜索从当前目录递归读取文件，展示每个匹配文件的首个命中行与片段，点击结果打开预览。ASCII 字母不区分大小写，其他字符精确匹配；隐藏文件遵循浏览开关，符号链接和检测为二进制的文件跳过。搜索覆盖文件完整字节流，不限于预览的前 1 MiB；不解析 Office、压缩文件或 PDF 的文本层，也不做 OCR。读取失败单独提示；停止搜索或关闭窗口会取消任务。
 - 搜索最多返回 1,000 个匹配文件，最多扫描 100,000 个文件/目录，达到上限明确提示缩小范围。S3 内容搜索会下载内容，可能产生网络流量和请求费用。
 - 自动刷新按当前目录条目的名称、类型、大小、修改时间和 ETag 检查变化：本地每 5 秒、S3 每 15 秒（检查耗时另计），页面不可见时暂停。有变化才刷新目录；失败后停止检查并提供重试。该功能为定期检查，并非文件系统事件实时通知。偏好与其他浏览开关一样在当前页面会话内生效。
@@ -26,5 +26,6 @@
 - `FILO_S3_TEST_CONFIG="$HOME/.config/filo/rustfs.json" cargo test -p storage-application --test s3_integration -- --ignored --nocapture`：普通传输与高级管理。高级测试新建随机 Bucket，验证版本、Metadata、Tags、ACL 和真实签名链接下载，再清理测试版本及 Bucket；不删除既有 Bucket。仅用于显式配置的测试服务。
 - Vite 启动后运行 `ego-browser nodejs < scripts/test-advanced-browsing.mjs`：模拟 IPC 验证预览不执行 HTML、缩略图、搜索、属性保存、确认流程、删除标记、自动刷新和窄窗口。
 - Vite 启动后运行 `ego-browser nodejs < scripts/test-preview-status.mjs`：模拟 IPC 验证加载中与不支持预览使用紧凑提示窗，成功读出内容后展开为宽预览。
+- Vite 启动后运行 `ego-browser nodejs < scripts/test-preview-navigation.mjs`：模拟 IPC 验证文件夹预览、方向键切换相邻项目，以及列表选中项同步。
 
 接口依据：[S3 CopyObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html)、[版本删除](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObject.html)、[空 Bucket 删除](https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucket.html)。各 S3 兼容服务及凭据支持的权限不同，RustFS 实测结果不能替代 TOS、OSS 或 AWS 的实机验收。

@@ -270,7 +270,7 @@ export function AppHeader({
               className="icon-button"
               title="预览（空格）"
               aria-label="预览"
-              disabled={selectedEntries.length < 2 && selected?.kind !== "file"}
+              disabled={selectedEntries.length === 0}
               onClick={onPreview}
             >
               <Eye size={19} />

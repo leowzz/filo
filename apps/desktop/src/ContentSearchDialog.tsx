@@ -12,7 +12,7 @@ export function ContentSearchDialog({
   parent: Locator;
   showHidden: boolean;
   onClose: () => void;
-  onPreview: (entry: Entry) => void;
+  onPreview: (entry: Entry, siblings: Entry[]) => void;
 }) {
   const [query, setQuery] = useState("");
   const [state, setState] = useState<SearchState | null>(null);
@@ -142,7 +142,12 @@ export function ContentSearchDialog({
             {state.hits.map((hit) => (
               <button
                 key={hit.entry.locator.logical_path}
-                onClick={() => onPreview(hit.entry)}
+                onClick={() =>
+                  onPreview(
+                    hit.entry,
+                    state.hits.map((result) => result.entry),
+                  )
+                }
               >
                 <strong>
                   {hit.entry.locator.logical_path} · 第 {hit.line} 行

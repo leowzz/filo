@@ -219,8 +219,7 @@ export function FileBrowser({
               event.target instanceof HTMLElement &&
               (event.target === event.currentTarget ||
                 event.target.matches("[data-entry-path]")) &&
-              (selectedEntries.length > 1 ||
-                selectedEntries[0]?.kind === "file")
+              selectedEntries.length > 0
             ) {
               event.preventDefault();
               if (!event.repeat) onPreview();

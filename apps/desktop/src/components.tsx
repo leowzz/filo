@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 import {
   File,
   FileArchive,
@@ -91,12 +91,14 @@ export function Modal({
   onClose,
   busy = false,
   className = "",
+  onKeyDown,
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   busy?: boolean;
   className?: string;
+  onKeyDown?: (event: KeyboardEvent<HTMLDialogElement>) => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -112,6 +114,7 @@ export function Modal({
         event.preventDefault();
         if (!busy) onClose();
       }}
+      onKeyDown={onKeyDown}
       aria-labelledby="modal-title"
     >
       <div className="modal-head">

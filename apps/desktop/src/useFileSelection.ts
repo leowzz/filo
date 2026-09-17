@@ -53,6 +53,24 @@ export function useFileSelection(
     });
   }
 
+  function reveal(path: string) {
+    if (!paths.includes(path)) return;
+    pendingFocus.current = { scope, path };
+    setState({
+      scope,
+      paths: new Set([path]),
+      anchor: path,
+    });
+    const area = areaRef.current;
+    if (!area) return;
+    const top = HEADER_HEIGHT + rowPaths.indexOf(path) * ROW_HEIGHT;
+    if (top < area.scrollTop + HEADER_HEIGHT) {
+      area.scrollTop = top - HEADER_HEIGHT;
+    } else if (top + ROW_HEIGHT > area.scrollTop + area.clientHeight) {
+      area.scrollTop = top + ROW_HEIGHT - area.clientHeight;
+    }
+  }
+
   function select(path: string, modifiers: Modifiers) {
     pendingFocus.current = null;
     const additive = modifiers.metaKey || modifiers.ctrlKey;
@@ -81,10 +99,12 @@ export function useFileSelection(
     const pending = pendingFocus.current;
     const area = areaRef.current;
     if (!pending || !area) return;
-    if (pending.scope !== scope || document.activeElement !== area) {
+    if (pending.scope !== scope) {
       pendingFocus.current = null;
       return;
     }
+    // Keep the pending row while a modal holds focus; reveal it after close.
+    if (document.activeElement !== area) return;
     const row = Array.from(
       area.querySelectorAll<HTMLElement>("[data-entry-path]"),
     ).find((element) => element.dataset.entryPath === pending.path);
@@ -316,6 +336,7 @@ export function useFileSelection(
     rectangle,
     selectedPaths,
     setSelection,
+    reveal,
     select,
     onPointerDown,
     onClickCapture,

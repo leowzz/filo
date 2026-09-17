@@ -162,10 +162,47 @@
 .modal.preview-modal {
   width: 820px;
 }
-.modal.preview-modal-compact {
+.modal.preview-modal-compact,
+.modal.preview-modal:has(.preview-content.is-compact) {
   width: 400px;
 }
-.preview-modal .modal-head h2 {
+.directory-preview-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 12px;
+  min-width: 0;
+}
+.directory-preview-heading strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.directory-preview-heading .modal-description {
+  margin: 4px 0 0;
+}
+.directory-preview-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  max-height: 40vh;
+  overflow: auto;
+}
+.directory-preview-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 0;
+}
+.directory-preview-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preview-modal .modal-head h2,
+.selection-preview-modal .modal-head h2 {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

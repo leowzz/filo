@@ -68,7 +68,7 @@ async function dialogState() {
     const title = dialog.querySelector("#modal-title");
     return {
       width: Math.round(dialog.getBoundingClientRect().width),
-      compact: dialog.classList.contains("preview-modal-compact"),
+      compact: !!dialog.querySelector(".preview-content.is-compact"),
       title: title?.textContent ?? "",
       titleAttr: title?.getAttribute("title") ?? "",
       status: dialog.querySelector("[role=status]")?.textContent?.trim() ?? null,
@@ -89,7 +89,7 @@ await page.click(
   'tr[data-entry-path="r730xd-ompublication-zh-cn.pdf"] .file-name',
 );
 await page.keyboard.press("Space");
-await page.waitForSelector("dialog.preview-modal-compact [role=status]");
+await page.waitForSelector("dialog.preview-modal .is-compact [role=status]");
 await page.waitForFunction(
   () => typeof window.pendingPreviews["r730xd-ompublication-zh-cn.pdf"] === "function",
 );
@@ -116,7 +116,7 @@ await close();
 
 await page.click('tr[data-entry-path="app_dir_rename.exe"] .file-name');
 await page.keyboard.press("Space");
-await page.waitForSelector("dialog.preview-modal-compact [role=alert]");
+await page.waitForSelector("dialog.preview-modal .is-compact [role=alert]");
 state = await dialogState();
 assert.equal(state.compact, true);
 assert.ok(state.width <= 420, `unsupported dialog too wide: ${state.width}`);

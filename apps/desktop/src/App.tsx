@@ -163,7 +163,10 @@ export default function App() {
   };
   const [search, setSearch] = useState("");
   const [viewOptions, setViewOptions] = useState(false);
-  const [preview, setPreview] = useState<Entry[] | null>(null);
+  const [preview, setPreview] = useState<{
+    entries: Entry[];
+    siblings: Entry[];
+  } | null>(null);
   const [contentSearch, setContentSearch] = useState(false);
   const [s3Manager, setS3Manager] = useState<{
     locator: Locator;
@@ -766,7 +769,9 @@ export default function App() {
               ? requestUpload(request.remote)
               : fileTransfer.mutate({ ...request, conflictPolicy: "overwrite" })
           }
-          onPreview={() => setPreview(selectedEntries)}
+          onPreview={() =>
+            setPreview({ entries: selectedEntries, siblings: entries })
+          }
           onCopy={copySelection}
           onCut={cutSelection}
           onPaste={pasteSelection}
@@ -888,7 +893,9 @@ export default function App() {
                 )
               }
               pastePending={pastePending}
-              onPreview={() => setPreview(selectedEntries)}
+              onPreview={() =>
+                setPreview({ entries: selectedEntries, siblings: entries })
+              }
               onCopy={copySelection}
               onCut={cutSelection}
               onPaste={pasteSelection}
@@ -923,14 +930,32 @@ export default function App() {
         <BrowserViewOptions onClose={() => setViewOptions(false)} />
       )}
       {preview && (
-        <PreviewDialog entries={preview} onClose={() => setPreview(null)} />
+        <PreviewDialog
+          entries={preview.entries}
+          siblings={preview.siblings}
+          listOptions={{
+            search: "",
+            show_hidden: state.showHidden,
+            folders_only: false,
+            sort: state.sort,
+          }}
+          onClose={() => setPreview(null)}
+          onSelect={(entry) => {
+            selection.reveal(entry.locator.logical_path);
+            setPreview((current) =>
+              current ? { ...current, entries: [entry] } : null,
+            );
+          }}
+        />
       )}
       {contentSearch && volume && (
         <ContentSearchDialog
           parent={parent}
           showHidden={state.showHidden}
           onClose={() => setContentSearch(false)}
-          onPreview={(entry) => setPreview([entry])}
+          onPreview={(entry, siblings) =>
+            setPreview({ entries: [entry], siblings })
+          }
         />
       )}
       {s3Manager && volume && (
@@ -949,7 +974,9 @@ export default function App() {
           onClose={closeEntryMenu}
           onOpen={() => openEntry(menuEntry)}
           onDetails={() => showDetails(menuEntry)}
-          onPreview={() => setPreview(selectedEntries)}
+          onPreview={() =>
+            setPreview({ entries: selectedEntries, siblings: entries })
+          }
           onCopy={copySelection}
           onCut={cutSelection}
           onPaste={pasteSelection}
