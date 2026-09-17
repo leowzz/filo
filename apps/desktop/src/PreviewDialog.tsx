@@ -4,6 +4,7 @@ import { Modal, EntryIcon, formatSize } from "./components";
 import { browsingApi } from "./browsingApi";
 import { errorMessage } from "./api";
 import type { Entry } from "./types";
+import { TextPreview } from "./TextPreview";
 const PdfPreview = lazy(() => import("./PdfPreview"));
 export function PreviewDialog({
   entries,
@@ -100,7 +101,7 @@ function FilePreview({ entry }: { entry: Entry }) {
       )}
       {query.data?.kind === "text" && (
         <>
-          <pre className="text-preview">{query.data.content}</pre>
+          <TextPreview name={entry.name} content={query.data.content} />
           {query.data.truncated && (
             <p>仅预览前 1 MiB，完整内容请打开或下载文件。</p>
           )}

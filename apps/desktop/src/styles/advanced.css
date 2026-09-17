@@ -48,6 +48,9 @@
   background: #f6f7f9;
   padding: 14px;
 }
+.text-preview code {
+  font: inherit;
+}
 .pdf-preview {
   display: block;
   max-width: 100%;
