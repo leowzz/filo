@@ -5,10 +5,15 @@ use storage_domain::{StorageError, StorageErrorCode, StorageResult};
 use tauri::Manager;
 
 fn known_hosts_error(path: &Path, error: io::Error) -> StorageError {
-    let code = match error.kind() {
-        io::ErrorKind::PermissionDenied => StorageErrorCode::AccessDenied,
-        io::ErrorKind::NotFound => StorageErrorCode::NotFound,
-        _ => StorageErrorCode::Io,
+    let code = if std::fs::metadata(path).is_ok_and(|metadata| metadata.is_dir()) {
+        // Windows reports PermissionDenied when a directory is opened as a file.
+        StorageErrorCode::Io
+    } else {
+        match error.kind() {
+            io::ErrorKind::PermissionDenied => StorageErrorCode::AccessDenied,
+            io::ErrorKind::NotFound => StorageErrorCode::NotFound,
+            _ => StorageErrorCode::Io,
+        }
     };
     StorageError::new(
         code,
@@ -117,5 +122,22 @@ mod tests {
         std::fs::create_dir(&path).expect("known_hosts directory");
         let error = read_known_hosts(&path).expect_err("directory must fail");
         assert_eq!(error.code, StorageErrorCode::Io);
+        assert_eq!(
+            known_hosts_error(&path, io::Error::from(io::ErrorKind::PermissionDenied)).code,
+            StorageErrorCode::Io
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_known_hosts_file_is_access_denied() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("known_hosts");
+        std::fs::write(&path, "fixture\n").expect("known_hosts");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+        let error = read_known_hosts(&path).expect_err("unreadable file must fail");
+        assert_eq!(error.code, StorageErrorCode::AccessDenied);
     }
 }
