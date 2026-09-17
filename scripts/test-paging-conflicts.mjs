@@ -186,7 +186,7 @@ await page.fill("dialog input.text-input", "existing.txt");
 await page.click("dialog button.primary");
 await page.waitForFunction(() => !document.querySelector("dialog"));
 assert.match(
-  await page.evaluate(() => document.querySelector(".notice").textContent),
+  await page.evaluate(() => document.querySelector("#floating-notices").textContent),
   /跳过/,
 );
 assert.equal(

@@ -272,7 +272,7 @@ async fn open_transfer_file(
     service: State<'_, StorageService>,
     job_id: uuid::Uuid,
     directory: bool,
-) -> StorageResult<()> {
+) -> StorageResult<Option<String>> {
     service.open_transfer_file(job_id, directory).await
 }
 async fn open_entry(

@@ -248,7 +248,7 @@ await page.evaluate(() => {
 await page.waitForSelector(".upload-dialog");
 await page.click('button:text-is("继续上传")');
 await page.waitForFunction(() =>
-  document.querySelector(".notice")?.textContent.includes("1 项未开始"),
+  document.querySelector("#floating-notices")?.textContent.includes("1 项未开始"),
 );
 await page.keyboard.press("Escape");
 await page.click('.volume-nav button[title="Read only"]');
@@ -268,7 +268,7 @@ assert.match(
 );
 await page.evaluate(() => window.emitDropEvent("drop"));
 await page.waitForFunction(() =>
-  document.querySelector(".notice")?.textContent.includes("只读"),
+  document.querySelector("#floating-notices")?.textContent.includes("只读"),
 );
 assert.equal(
   await page.evaluate(() => !!document.querySelector("dialog")),
@@ -325,7 +325,7 @@ await page.evaluate(() => {
   window.emitDropEvent("drop");
 });
 await page.waitForFunction(() =>
-  document.querySelector(".notice")?.textContent.includes("上传预检测失败"),
+  document.querySelector("#floating-notices")?.textContent.includes("上传预检测失败"),
 );
 assert.equal(
   await page.evaluate(
@@ -357,7 +357,7 @@ await page.evaluate(() => {
   window.emitDropEvent("drop");
 });
 await page.waitForFunction(() =>
-  document.querySelector(".notice")?.textContent.includes("上传发生冲突"),
+  document.querySelector("#floating-notices")?.textContent.includes("上传发生冲突"),
 );
 assert.equal(
   await page.evaluate(() => !!document.querySelector(".upload-dialog")),

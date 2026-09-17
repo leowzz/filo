@@ -1,4 +1,4 @@
-import { activeTransfer, type TransferJob } from "./types";
+import { activeTransfer, type TransferJob, type Volume } from "./types";
 
 export const transferStateLabels: Record<TransferJob["state"], string> = {
   queued: "等待中",
@@ -59,4 +59,24 @@ export function updateTransfer(current: TransferJob[] = [], job: TransferJob) {
   )
     return current;
   return current.map((item) => (item.id === job.id ? job : item));
+}
+
+/** Native upload/download endpoints use temporary local volumes absent from the sidebar. */
+export function transferDirection(
+  job: TransferJob,
+  volumes: Volume[],
+  uploadIds: Set<string>,
+) {
+  if (uploadIds.has(job.id)) return "upload";
+  if (job.kind === "move") return "transfer";
+  const source = volumes.find((volume) => volume.id === job.source.volume_id);
+  const destination = volumes.find(
+    (volume) => volume.id === job.destination.volume_id,
+  );
+  const sourceRemote = source !== undefined && source.root.type !== "local";
+  const destinationRemote =
+    destination !== undefined && destination.root.type !== "local";
+  if (destinationRemote && !sourceRemote) return "upload";
+  if (sourceRemote && !destinationRemote) return "download";
+  return "transfer";
 }

@@ -233,7 +233,7 @@ assert.equal(
   true,
 );
 assert.match(
-  await page.evaluate(() => document.querySelector(".notice").textContent),
+  await page.evaluate(() => document.querySelector("#floating-notices").textContent),
   /2 项已移入回收站，1 项已永久删除/,
 );
 console.log(

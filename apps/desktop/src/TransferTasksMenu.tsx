@@ -8,17 +8,20 @@ import {
   X,
 } from "lucide-react";
 import { Fragment, useEffect, useId, useRef, useState } from "react";
+import { FloatingNotice } from "./FloatingNotice";
 import { api, errorMessage } from "./api";
-import { activeTransfer, type TransferJob } from "./types";
+import { activeTransfer, type TransferJob, type Volume } from "./types";
 import { TransferProgress } from "./TransferProgress";
 import {
   sortTransfers,
+  transferDirection,
   transferStateLabels,
   transferSummary,
 } from "./transferPresentation";
 
 export function TransferTasksMenu({
   jobs,
+  volumes,
   uploadIds,
   recentTransfer,
   loading,
@@ -28,24 +31,32 @@ export function TransferTasksMenu({
   onOpenDirectory,
 }: {
   jobs: TransferJob[];
+  volumes: Volume[];
   uploadIds: Set<string>;
   recentTransfer: { id: number; jobIds: string[] } | null;
   loading: boolean;
   error: boolean;
   onRetry: () => void;
   onViewAll: () => void;
-  onOpenDirectory: (job: TransferJob) => Promise<void>;
+  onOpenDirectory: (job: TransferJob) => Promise<string | null | void>;
 }) {
-  const [actionError, setActionError] = useState("");
+  const [toast, setToast] = useState<{ message: string } | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   async function openResult(job: TransferJob, directory: boolean) {
-    setActionError("");
+    setToast(null);
     setPendingAction(job.id);
     try {
-      if (directory) await onOpenDirectory(job);
-      else await api.openTransferFile(job.id, false);
+      const notice = directory
+        ? await onOpenDirectory(job)
+        : await api.openTransferFile(job.id, false);
+      if (notice) setToast({ message: notice });
     } catch (error) {
-      setActionError(errorMessage(error));
+      setToast({ message: errorMessage(error) });
     } finally {
       setPendingAction(null);
     }
@@ -62,14 +73,23 @@ export function TransferTasksMenu({
   const id = useId();
   const { active, running, label: summary } = transferSummary(jobs);
   const uploading = active.filter(
-    (job) => uploadIds.has(job.id) && job.state !== "queued",
+    (job) =>
+      transferDirection(job, volumes, uploadIds) === "upload" &&
+      job.state !== "queued",
+  ).length;
+  const downloading = active.filter(
+    (job) =>
+      transferDirection(job, volumes, uploadIds) === "download" &&
+      job.state !== "queued",
   ).length;
   const label = active.length
     ? !running
       ? `等待中 ${active.length}`
       : uploading === running
         ? `上传中 ${uploading}`
-        : `传输中 ${running}`
+        : downloading === running
+          ? `下载中 ${downloading}`
+          : `传输中 ${running}`
     : "传输任务";
   const recent = sortTransfers(jobs);
   const batchIds = new Set(recentTransfer?.jobIds ?? []);
@@ -104,7 +124,14 @@ export function TransferTasksMenu({
     if (!open) return;
     closeButton.current?.focus();
     const dismiss = (event: PointerEvent) => {
-      if (event.target instanceof Node && !ref.current?.contains(event.target))
+      if (
+        event.target instanceof Node &&
+        !ref.current?.contains(event.target) &&
+        !(
+          event.target instanceof Element &&
+          event.target.closest("#floating-notices")
+        )
+      )
         setOpen(false);
     };
     const escape = (event: KeyboardEvent) => {
@@ -131,11 +158,20 @@ export function TransferTasksMenu({
         // without a new focus target. Outside pointer clicks are handled above.
         if (
           event.relatedTarget instanceof Node &&
-          !event.currentTarget.contains(event.relatedTarget)
+          !event.currentTarget.contains(event.relatedTarget) &&
+          !(
+            event.relatedTarget instanceof Element &&
+            event.relatedTarget.closest("#floating-notices")
+          )
         )
           setOpen(false);
       }}
     >
+      {toast && (
+        <FloatingNotice key={toast.message} onDismiss={() => setToast(null)}>
+          {toast.message}
+        </FloatingNotice>
+      )}
       <button
         ref={trigger}
         className={`icon-button transfer-tasks-trigger ${active.length ? "is-active" : ""} ${open ? "on" : ""} ${highlighting ? "is-highlighted" : ""}`}
@@ -177,17 +213,12 @@ export function TransferTasksMenu({
               <X size={16} />
             </button>
           </div>
-          {actionError && (
-            <p className="transfer-tasks-message error-text" role="alert">
-              {actionError}
-            </p>
-          )}
           {error && (
-            <p className="transfer-tasks-message error-text" role="alert">
+            <FloatingNotice>
               无法刷新任务列表 <button onClick={onRetry}>重试</button>
-            </p>
+            </FloatingNotice>
           )}
-          {loading && (
+          {loading && jobs.length === 0 && (
             <p className="transfer-tasks-message muted">正在读取任务…</p>
           )}
           {!loading && !error && jobs.length === 0 && (
@@ -205,8 +236,20 @@ export function TransferTasksMenu({
               </p>
             )}
             {visible.map((job, index) => {
-              const upload = uploadIds.has(job.id);
-              const name = job.source.logical_path.split("/").at(-1);
+              const direction = transferDirection(job, volumes, uploadIds);
+              const operation =
+                direction === "upload"
+                  ? "上传"
+                  : direction === "download"
+                    ? "下载"
+                    : job.kind === "move"
+                      ? "移动"
+                      : "传输";
+              const name = (
+                direction === "download" ? job.destination : job.source
+              ).logical_path
+                .split("/")
+                .at(-1);
               return (
                 <Fragment key={job.id}>
                   {batchJobs.length > 0 && index === batchJobs.length && (
@@ -226,36 +269,39 @@ export function TransferTasksMenu({
                       )}
                       <strong title={name}>{name}</strong>
                       <span className={`transfer-state ${job.state}`}>
-                        {upload && job.state === "running"
-                          ? "上传中"
+                        {job.state === "running"
+                          ? `${operation}中`
                           : transferStateLabels[job.state]}
                       </span>
+                      {direction === "download" &&
+                        job.state === "completed" && (
+                          <div className="transfer-item-actions">
+                            <button
+                              className="icon-button"
+                              disabled={pendingAction !== null}
+                              title="打开文件"
+                              aria-label="打开文件"
+                              onClick={() => void openResult(job, false)}
+                            >
+                              <FileSymlink size={14} />
+                            </button>
+                            <button
+                              className="icon-button"
+                              disabled={pendingAction !== null}
+                              title="所在目录"
+                              aria-label="所在目录"
+                              onClick={() => void openResult(job, true)}
+                            >
+                              <FolderOpen size={14} />
+                            </button>
+                          </div>
+                        )}
                     </div>
                     <TransferProgress
                       showSpeed
                       job={job}
-                      operation={
-                        upload ? "上传" : job.kind === "move" ? "移动" : "传输"
-                      }
+                      operation={operation}
                     />
-                    {job.state === "completed" && (
-                      <div className="transfer-item-actions">
-                        <button
-                          disabled={pendingAction !== null}
-                          onClick={() => void openResult(job, false)}
-                        >
-                          <FileSymlink size={14} />
-                          打开文件
-                        </button>
-                        <button
-                          disabled={pendingAction !== null}
-                          onClick={() => void openResult(job, true)}
-                        >
-                          <FolderOpen size={14} />
-                          所在目录
-                        </button>
-                      </div>
-                    )}
                     {job.error_message && (
                       <p
                         className="error-text transfer-tasks-error"

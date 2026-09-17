@@ -152,7 +152,18 @@ impl StorageService {
         &self,
         job_id: uuid::Uuid,
         directory: bool,
-    ) -> StorageResult<()> {
+    ) -> StorageResult<Option<String>> {
+        let (volume, locator) = self.transfer_file_location(job_id).await?;
+        OpenDalLocalBackend::new(&volume)
+            .await?
+            .open_transfer_path(&locator, directory)
+            .await
+    }
+
+    pub(crate) async fn transfer_file_location(
+        &self,
+        job_id: uuid::Uuid,
+    ) -> StorageResult<(StorageVolume, StorageLocator)> {
         let job = self
             .repository
             .list_transfers()
@@ -165,23 +176,18 @@ impl StorageService {
         let volumes = self.repository.list_volumes().await?;
         for locator in [&job.destination, &job.source] {
             let selected = self
-                .selected_volumes
-                .lock()
-                .await
-                .get(&locator.volume_id)
-                .cloned();
+                .repository
+                .transfer_local_volume(locator.volume_id)
+                .await?;
             let volume =
                 selected.or_else(|| volumes.iter().find(|v| v.id == locator.volume_id).cloned());
             if let Some(volume) = volume.filter(|v| matches!(v.root, VolumeRoot::Local { .. })) {
-                return OpenDalLocalBackend::new(&volume)
-                    .await?
-                    .open_transfer_path(locator, directory)
-                    .await;
+                return Ok((volume, locator.clone()));
             }
         }
         Err(StorageError::new(
             StorageErrorCode::NotFound,
-            "本地文件位置已不可用，请从文件管理器打开；远程文件可在所在目录中查看",
+            "此旧传输记录未保存本地目录，请从文件管理器打开文件；重新下载后将保留位置",
         ))
     }
 

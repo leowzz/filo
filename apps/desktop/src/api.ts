@@ -206,7 +206,7 @@ export const api = {
       conflictPolicy,
     }),
   openTransferFile: (jobId: string, directory: boolean) =>
-    invoke<void>("open_transfer_file", { jobId, directory }),
+    invoke<string | null>("open_transfer_file", { jobId, directory }),
   open: (locator: Locator) => invoke<void>("open_entry", { locator }),
   delete: (locator: Locator, mode: DeleteMode, recursive = false) =>
     invoke<DeleteOutcome>("delete_entry", {

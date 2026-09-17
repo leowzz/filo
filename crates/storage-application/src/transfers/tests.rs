@@ -173,10 +173,11 @@ async fn selected_folder_upload_preserves_tree_and_applies_conflict_policies() {
         // access must remain revoked after the temporary transfer ends.
         assert!(fixture
             .service
-            .selected_volumes
-            .lock()
+            .repository
+            .transfer_local_volume(job.source.volume_id)
             .await
-            .contains_key(&job.source.volume_id));
+            .unwrap()
+            .is_some());
         assert!(fixture
             .service
             .stat_entry(job.source.clone())
@@ -1352,4 +1353,63 @@ async fn overwrite_rejects_mixed_kinds_and_skipping_a_folder_keeps_all_sources()
         b"keep file"
     );
     assert!(fixture.destination.path().join("target.bin").is_dir());
+}
+
+#[tokio::test]
+async fn downloaded_file_location_survives_reopening_without_restoring_general_access() {
+    let fixture = Fixture::new().await;
+    let downloads = tempfile::tempdir().unwrap();
+    std::fs::write(fixture.source.path().join("original.txt"), b"downloaded").unwrap();
+    let job = fixture
+        .service
+        .transfer_selected_file_with_policy(
+            downloads.path().join("renamed.txt"),
+            StorageLocator {
+                volume_id: fixture.source_id,
+                logical_path: "original.txt".into(),
+                version_id: None,
+            },
+            false,
+            ConflictPolicy::Reject,
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(fixture.result(job.id).await.state, TransferState::Completed);
+    let restarted = StorageService::new(
+        Repository::open(&fixture._database.path().join("test.sqlite"))
+            .await
+            .unwrap(),
+    );
+    let (volume, locator) = restarted.transfer_file_location(job.id).await.unwrap();
+    assert_eq!(locator.logical_path, "renamed.txt");
+    let VolumeRoot::Local { root_path } = volume.root else {
+        panic!("expected local volume")
+    };
+    assert_eq!(
+        std::fs::read(root_path.join(&locator.logical_path)).unwrap(),
+        b"downloaded"
+    );
+    assert!(restarted.stat_entry(locator.clone()).await.is_err());
+    assert!(!restarted
+        .list_volumes()
+        .await
+        .unwrap()
+        .iter()
+        .any(|v| v.volume.id == locator.volume_id));
+    restarted
+        .repository
+        .remove_transfer_local_volume(locator.volume_id)
+        .await
+        .unwrap();
+    let mut legacy = fixture.result(job.id).await;
+    legacy.id = Uuid::new_v4();
+    legacy.source.volume_id = Uuid::new_v4();
+    restarted.repository.save_transfer(&legacy).await.unwrap();
+    let error = restarted
+        .transfer_file_location(legacy.id)
+        .await
+        .err()
+        .unwrap();
+    assert!(error.message.contains("未保存本地目录"));
 }

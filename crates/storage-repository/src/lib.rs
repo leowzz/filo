@@ -74,6 +74,34 @@ impl Repository {
             .collect()
     }
 
+    pub async fn save_transfer_local_volume(&self, volume: &StorageVolume) -> StorageResult<()> {
+        sqlx::query("INSERT INTO transfer_local_volumes (id, volume_json) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET volume_json = excluded.volume_json")
+            .bind(volume.id.to_string())
+            .bind(serde_json::to_string(volume).map_err(database_error)?)
+            .execute(&self.pool).await.map_err(database_error)?;
+        Ok(())
+    }
+
+    pub async fn transfer_local_volume(&self, id: Uuid) -> StorageResult<Option<StorageVolume>> {
+        let json: Option<String> =
+            sqlx::query_scalar("SELECT volume_json FROM transfer_local_volumes WHERE id = ?")
+                .bind(id.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(database_error)?;
+        json.map(|value| serde_json::from_str(&value).map_err(database_error))
+            .transpose()
+    }
+
+    pub async fn remove_transfer_local_volume(&self, id: Uuid) -> StorageResult<()> {
+        sqlx::query("DELETE FROM transfer_local_volumes WHERE id = ?")
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(database_error)?;
+        Ok(())
+    }
+
     pub async fn save_transfer(&self, job: &TransferJob) -> StorageResult<()> {
         sqlx::query("INSERT INTO transfer_jobs (id, kind, source_json, destination_json, state, bytes_total, bytes_transferred, error_code, error_message, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET destination_json = excluded.destination_json, state = excluded.state, bytes_total = excluded.bytes_total, bytes_transferred = excluded.bytes_transferred, error_code = excluded.error_code, error_message = excluded.error_message, updated_at = excluded.updated_at")
             .bind(job.id.to_string())

@@ -74,7 +74,7 @@ assert.equal(await page.evaluate(() => !!document.querySelector('.file-table')),
 await page.waitForSelector('.transfer-tasks-popover');
 assert.equal(await page.evaluate(() => document.querySelectorAll('.transfer-item.is-highlighted').length), 5);
 assert.equal(await page.evaluate(() => document.querySelector('.transfer-tasks-popover').getBoundingClientRect().height <= 440), true);
-assert.match(await page.evaluate(() => document.querySelector('.notice').textContent), /已提交 5 项，1 项未开始/);
+assert.match(await page.evaluate(() => document.querySelector('#floating-notices').textContent), /已提交 5 项，1 项未开始/);
 await page.waitForSelector('.transfer-tasks-popover');
 assert.match(await page.evaluate(() => document.querySelector('.transfer-tasks-header').textContent), /3 项传输中 · 2 项等待中/);
 assert.equal(await page.evaluate(() => document.querySelectorAll('.transfer-tasks-list article').length), 5);
@@ -158,14 +158,14 @@ await page.waitForFunction(() => parseFloat(document.querySelector('[data-transf
 await page.evaluate(() => window.advance('download', 'completed', 1000));
 await page.waitForSelector('[data-transfer-id="download"] .transfer-item-actions');
 assert.equal(await page.evaluate(() => !!document.querySelector('[data-transfer-id="download"] .transfer-speed')), false, 'completed jobs do not show speed');
-await page.click('[data-transfer-id="download"] button:text-is("打开文件")');
+await page.click('[data-transfer-id="download"] button[aria-label="打开文件"]');
 assert.deepEqual(await page.evaluate(() => window.openedTransfer), {jobId:'download',directory:false});
-await page.click('[data-transfer-id="download"] button:text-is("所在目录")');
+await page.click('[data-transfer-id="download"] button[aria-label="所在目录"]');
 assert.deepEqual(await page.evaluate(() => window.openedTransfer), {jobId:'download',directory:true});
 await page.evaluate(() => window.openFailure = true);
-await page.click('[data-transfer-id="download"] button:text-is("打开文件")');
-await page.waitForSelector('.transfer-tasks-message[role="alert"]');
-assert.match(await page.evaluate(() => document.querySelector('.transfer-tasks-message[role="alert"]').textContent), /文件已不存在/);
+await page.click('[data-transfer-id="download"] button[aria-label="打开文件"]');
+await page.waitForSelector('.floating-notice[role="status"]');
+assert.match(await page.evaluate(() => document.querySelector('.floating-notice[role="status"]').textContent), /文件已不存在/);
 for (const width of [1280, 960]) {
   await page.cdp('Emulation.setDeviceMetricsOverride', {width,height:720,deviceScaleFactor:1,mobile:false});
   const layout = await page.evaluate(() => {

@@ -164,8 +164,11 @@ async fn opening_resolves_only_authorized_regular_files_even_when_readonly() {
     for path in ["", "../outside", "/etc/passwd", "missing"] {
         assert!(backend.open_path(&locator(&backend, path)).await.is_err());
         for directory in [false, true] {
+            if path == "missing" && directory {
+                continue;
+            }
             assert!(backend
-                .open_transfer_path(&locator(&backend, path), directory)
+                .transfer_open_target(&locator(&backend, path), directory)
                 .await
                 .is_err());
         }
@@ -326,4 +329,31 @@ async fn rejects_symlinks_and_path_escape() {
         StorageEntryKind::Symlink
     );
     assert!(outside.path().join("secret").exists());
+}
+
+#[tokio::test]
+async fn transfer_directory_reveals_existing_files_and_opens_parent_for_missing_files() {
+    let (directory, backend) = fixture(true).await;
+    let name = "a file 'with' $(quotes).txt";
+    let file = std::fs::canonicalize(directory.path()).unwrap().join(name);
+    std::fs::write(&file, b"content").unwrap();
+    let entry = locator(&backend, name);
+    assert_eq!(
+        backend.transfer_open_target(&entry, true).await.unwrap(),
+        (file.clone(), true, false)
+    );
+    assert_eq!(
+        backend.transfer_open_target(&entry, false).await.unwrap(),
+        (file.clone(), false, false)
+    );
+    std::fs::remove_file(&file).unwrap();
+    assert_eq!(
+        backend.transfer_open_target(&entry, true).await.unwrap(),
+        (file.parent().unwrap().to_path_buf(), false, true)
+    );
+    assert!(backend.transfer_open_target(&entry, false).await.is_err());
+    assert!(backend
+        .transfer_open_target(&locator(&backend, "missing-parent/file"), true)
+        .await
+        .is_err());
 }

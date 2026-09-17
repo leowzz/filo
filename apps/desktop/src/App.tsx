@@ -1,8 +1,9 @@
+import { FloatingNotice } from "./FloatingNotice";
 import { PreviewDialog } from "./PreviewDialog";
 import { ContentSearchDialog } from "./ContentSearchDialog";
 import { S3ManagerDialog } from "./S3ManagerDialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Info, X } from "lucide-react";
+import { Info } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -732,6 +733,7 @@ export default function App() {
 
       <main className="main-content">
         <AppHeader
+          volumes={volumes}
           volume={volume}
           path={path}
           selected={selected}
@@ -784,7 +786,7 @@ export default function App() {
                 job.destination.logical_path.split("/").slice(0, -1).join("/"),
               );
             } else {
-              await api.openTransferFile(job.id, true);
+              return api.openTransferFile(job.id, true);
             }
           }}
           transfers={transfersQuery.data ?? []}
@@ -796,17 +798,21 @@ export default function App() {
         />
 
         {volumesQuery.isError && (
-          <div className="error-banner" role="alert">
+          <FloatingNotice key={errorMessage(volumesQuery.error)}>
             {errorMessage(volumesQuery.error)}
             <button onClick={() => void volumesQuery.refetch()}>重试</button>
-          </div>
+          </FloatingNotice>
         )}
         {updater.availableVersion && state.page !== "settings" && (
-          <div className="notice" role="status">
-            <Info size={16} />
+          <FloatingNotice key={updater.availableVersion}>
             Filo {updater.availableVersion} 已可用
             <button onClick={() => state.setPage("settings")}>查看更新</button>
-          </div>
+          </FloatingNotice>
+        )}
+        {notice && (
+          <FloatingNotice key={notice} onDismiss={() => setNotice("")}>
+            {notice}
+          </FloatingNotice>
         )}
         {!desktop && (
           <div className="browser-banner">
@@ -827,34 +833,27 @@ export default function App() {
 
         {state.page === "browser" && volume && (
           <>
-            {notice && (
-              <div className="notice" role="status">
-                <Check size={15} />
-                {notice}
-                <button aria-label="关闭提示" onClick={() => setNotice("")}>
-                  <X size={14} />
-                </button>
-              </div>
-            )}
             {retryAvailable && pasteRetry && (
-              <div
-                className="paste-retry-bar"
-                role="group"
-                aria-label="粘贴重试选项"
-              >
-                <span>还有 {pasteRetry.entries.length} 项未完成</span>
-                <ConflictPolicyField
-                  value={pastePolicy}
-                  onChange={setPastePolicy}
-                />
-                <button
-                  className="secondary"
-                  disabled={pastePending}
-                  onClick={pasteSelection}
+              <FloatingNotice duration={0}>
+                <div
+                  className="paste-retry-bar"
+                  role="group"
+                  aria-label="粘贴重试选项"
                 >
-                  重试未完成项
-                </button>
-              </div>
+                  <span>还有 {pasteRetry.entries.length} 项未完成</span>
+                  <ConflictPolicyField
+                    value={pastePolicy}
+                    onChange={setPastePolicy}
+                  />
+                  <button
+                    className="secondary"
+                    disabled={pastePending}
+                    onClick={pasteSelection}
+                  >
+                    重试未完成项
+                  </button>
+                </div>
+              </FloatingNotice>
             )}
             <FileBrowser
               key={JSON.stringify([

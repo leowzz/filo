@@ -1,3 +1,4 @@
+import { FloatingNotice } from "./FloatingNotice";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownUp,
@@ -36,18 +37,16 @@ export function TransfersPage({ volumes }: { volumes: Volume[] }) {
     <div className="page-scroll simple-page transfers-page">
       <h1>传输任务</h1>
       <p className="muted">文件上传、下载、复制与移动 · 最近 200 项任务</p>
-      {summary.active.length > 0 && (
-        <p className="transfer-summary" role="status">
-          {summary.label}
-        </p>
-      )}
+      <p className="transfer-summary" role="status">
+        {summary.active.length > 0 ? summary.label : "暂无进行中的任务"}
+      </p>
       {(query.isError || cancel.isError) && (
-        <p className="error-text" role="alert">
+        <FloatingNotice key={errorMessage(query.error ?? cancel.error)}>
           {errorMessage(query.error ?? cancel.error)}
           <button className="secondary" onClick={() => void query.refetch()}>
             刷新
           </button>
-        </p>
+        </FloatingNotice>
       )}
       {query.isPending && <p className="muted">正在读取任务…</p>}
       {query.data?.length === 0 && (

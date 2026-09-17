@@ -41,7 +41,6 @@ pub struct StorageService {
     transfer_limits: Arc<OnceCell<Arc<TransferLimits>>>,
     settings_lock: Arc<Mutex<()>>,
     credentials: Arc<dyn CredentialStore>,
-    selected_volumes: Arc<Mutex<std::collections::HashMap<Uuid, StorageVolume>>>,
     temporary_backends: Arc<Mutex<std::collections::HashMap<Uuid, Arc<dyn StorageBackend>>>>,
     transfers: Arc<Mutex<std::collections::HashMap<Uuid, transfers::ActiveTransfer>>>,
 }
@@ -59,7 +58,6 @@ impl StorageService {
             preview_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             thumbnail_slots: Arc::new(tokio::sync::Semaphore::new(1)),
             searches: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            selected_volumes: Arc::new(Mutex::new(std::collections::HashMap::new())),
             temporary_backends: Arc::new(Mutex::new(std::collections::HashMap::new())),
             repository,
             mutation_lock: Arc::new(RwLock::new(())),

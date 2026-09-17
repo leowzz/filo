@@ -48,12 +48,35 @@ fn provider_error(error: opendal::Error) -> StorageError {
 }
 
 impl OpenDalLocalBackend {
-    /// Open an authorized transfer result or its containing folder.
+    /// Returns a notice when a missing file's containing directory was opened.
     pub async fn open_transfer_path(
         &self,
         locator: &StorageLocator,
         directory: bool,
-    ) -> StorageResult<()> {
+    ) -> StorageResult<Option<String>> {
+        let (path, reveal, missing) = self.transfer_open_target(locator, directory).await?;
+        tokio::task::spawn_blocking(move || {
+            if reveal {
+                reveal_file(&path)
+            } else {
+                open::that(path).map_err(|_| {
+                    StorageError::new(
+                        StorageErrorCode::Io,
+                        "无法打开文件或目录，请检查文件关联和系统权限",
+                    )
+                })
+            }
+        })
+        .await
+        .map_err(|_| StorageError::new(StorageErrorCode::Internal, "打开文件任务意外中断"))??;
+        Ok(missing.then(|| "文件已不存在，已打开所在目录".into()))
+    }
+
+    async fn transfer_open_target(
+        &self,
+        locator: &StorageLocator,
+        directory: bool,
+    ) -> StorageResult<(PathBuf, bool, bool)> {
         let logical = self.check_locator(locator)?;
         if logical.is_empty() {
             return Err(StorageError::new(
@@ -61,33 +84,28 @@ impl OpenDalLocalBackend {
                 "请选择传输的文件或文件夹",
             ));
         }
-        let path = self.checked_path(&logical, false).await?;
-        let kind = self.stat(locator).await?.kind;
-        if !matches!(kind, StorageEntryKind::File | StorageEntryKind::Directory) {
-            return Err(StorageError::new(
+        let path = self.checked_path(&logical, directory).await?;
+        match self.stat(locator).await {
+            Ok(entry)
+                if matches!(
+                    entry.kind,
+                    StorageEntryKind::File | StorageEntryKind::Directory
+                ) =>
+            {
+                Ok((path, directory, false))
+            }
+            Err(error) if directory && error.code == StorageErrorCode::NotFound => {
+                let parent = path.parent().ok_or_else(|| {
+                    StorageError::new(StorageErrorCode::InvalidPath, "无法打开所在目录")
+                })?;
+                Ok((parent.to_path_buf(), false, true))
+            }
+            Err(error) => Err(error),
+            Ok(_) => Err(StorageError::new(
                 StorageErrorCode::Unsupported,
                 "无法打开此类型的文件",
-            ));
+            )),
         }
-        let path = if directory {
-            path.parent()
-                .ok_or_else(|| {
-                    StorageError::new(StorageErrorCode::InvalidPath, "无法打开所在目录")
-                })?
-                .to_path_buf()
-        } else {
-            path
-        };
-        tokio::task::spawn_blocking(move || {
-            open::that(path).map_err(|_| {
-                StorageError::new(
-                    StorageErrorCode::Io,
-                    "无法打开文件或目录，请检查文件关联和系统权限",
-                )
-            })
-        })
-        .await
-        .map_err(|_| StorageError::new(StorageErrorCode::Internal, "打开文件任务意外中断"))?
     }
 
     async fn open_path(&self, locator: &StorageLocator) -> StorageResult<PathBuf> {
@@ -418,5 +436,53 @@ impl StorageBackend for OpenDalLocalBackend {
             logical
         };
         self.operator.delete(&path).await.map_err(provider_error)
+    }
+}
+
+/// Pass paths as arguments, never through a shell.
+fn reveal_file(path: &std::path::Path) -> StorageResult<()> {
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("/usr/bin/open")
+        .arg("-R")
+        .arg(path)
+        .status();
+    #[cfg(target_os = "windows")]
+    let status = std::process::Command::new("explorer.exe")
+        .arg(format!("/select,{}", path.display()))
+        .status();
+    #[cfg(target_os = "linux")]
+    let status = {
+        let uri = url::Url::from_file_path(path)
+            .map_err(|_| StorageError::new(StorageErrorCode::InvalidPath, "无法定位文件"))?;
+        std::process::Command::new("gdbus")
+            .args([
+                "call",
+                "--session",
+                "--dest",
+                "org.freedesktop.FileManager1",
+                "--object-path",
+                "/org/freedesktop/FileManager1",
+                "--method",
+                "org.freedesktop.FileManager1.ShowItems",
+            ])
+            .arg(format!(
+                "[{}]",
+                serde_json::to_string(uri.as_str()).unwrap()
+            ))
+            .arg("")
+            .status()
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    return Err(StorageError::new(
+        StorageErrorCode::Unsupported,
+        "当前系统不支持定位文件",
+    ));
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    match status {
+        Ok(status) if status.success() => Ok(()),
+        _ => Err(StorageError::new(
+            StorageErrorCode::Io,
+            "无法在文件管理器中定位文件，请检查系统权限",
+        )),
     }
 }

@@ -317,19 +317,14 @@
 
 .transfer-item-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 8px;
+  flex-shrink: 0;
+  gap: 2px;
+  margin-left: 2px;
 }
-.transfer-item-actions button {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+.transfer-item-actions .icon-button {
   color: var(--accent);
-  font-size: 12px;
-}
-.transfer-item-actions button:hover {
-  text-decoration: underline;
+  width: 28px;
+  height: 28px;
 }
 .transfer-item-actions button:disabled {
   opacity: 0.5;
@@ -338,4 +333,48 @@
 .transfer-speed {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+#floating-notices {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100vw - 40px);
+  pointer-events: none;
+}
+.floating-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 10px 16px;
+  border-radius: 8px;
+  background: #292929;
+  color: #fff;
+  box-shadow: 0 4px 20px #0003;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+}
+.floating-notice-content {
+  min-width: 0;
+}
+.floating-notice-content > button {
+  margin-left: 10px;
+  text-decoration: underline;
+}
+.floating-notice .icon-button {
+  color: inherit;
+  flex-shrink: 0;
+}
+.floating-notice .paste-retry-bar {
+  margin: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
 }

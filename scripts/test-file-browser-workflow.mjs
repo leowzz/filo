@@ -179,7 +179,7 @@ await page.waitForSelector('tr[data-entry-path="dest"]');
 await page.keyboard.press("ControlOrMeta+v");
 await page.waitForFunction(() =>
   document
-    .querySelector(".notice")
+    .querySelector("#floating-notices")
     ?.textContent.includes("1 项已完成，1 项未完成"),
 );
 assert.deepEqual(
@@ -219,7 +219,7 @@ assert.match(
 await page.selectOption("#conflict-policy", "overwrite");
 await page.click('button:text-is("重试未完成项")');
 await page.waitForFunction(() =>
-  document.querySelector(".notice")?.textContent.includes("已完成复制 1 项"),
+  document.querySelector("#floating-notices")?.textContent.includes("已完成复制 1 项"),
 );
 const pasteCalls = await calls("start_transfer");
 assert.equal(
@@ -265,7 +265,7 @@ await page.waitForFunction(() =>
 );
 await page.keyboard.press("ControlOrMeta+v");
 await page.waitForFunction(() =>
-  document.querySelector(".notice")?.textContent.includes("已完成移动 1 项"),
+  document.querySelector("#floating-notices")?.textContent.includes("已完成移动 1 项"),
 );
 assert.equal(
   await page.evaluate(() =>
@@ -305,7 +305,7 @@ const beforeSelfPaste = (await calls("start_transfer")).length;
 await page.keyboard.press("ControlOrMeta+v");
 await page.waitForFunction(() =>
   document
-    .querySelector(".notice")
+    .querySelector("#floating-notices")
     ?.textContent.includes("不能将文件夹粘贴到自身或其子目录"),
 );
 assert.equal((await calls("start_transfer")).length, beforeSelfPaste);

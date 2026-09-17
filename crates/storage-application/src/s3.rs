@@ -284,7 +284,8 @@ impl StorageService {
 
     /// `path` is authorized by a native file picker or drop event in the Tauri command.
     /// Uploads accept files and folders; downloads retain single-file authorization.
-    /// Its authorization expires with this task; it is never added as a saved location.
+    /// General access expires with this task. Persisted metadata only supports opening
+    /// completed transfer results; it never becomes a browsable saved location.
     pub async fn transfer_selected_file(
         &self,
         path: PathBuf,
@@ -358,20 +359,20 @@ impl StorageService {
         } else {
             (remote, local)
         };
+        // Persist before starting: even an immediate completion/restart must retain its path.
+        self.repository.save_transfer_local_volume(&volume).await?;
         self.temporary_backends
             .lock()
             .await
             .insert(volume.id, backend);
-        self.selected_volumes
-            .lock()
-            .await
-            .insert(volume.id, volume.clone());
         let result = self
             .start_transfer_with_policy(TransferKind::Copy, source, destination, policy, observer)
             .await;
         if result.is_err() {
-            self.selected_volumes.lock().await.remove(&volume.id);
             self.temporary_backends.lock().await.remove(&volume.id);
+            self.repository
+                .remove_transfer_local_volume(volume.id)
+                .await?;
         }
         result
     }

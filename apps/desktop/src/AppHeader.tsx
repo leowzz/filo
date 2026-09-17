@@ -1,3 +1,4 @@
+import { FloatingNotice } from "./FloatingNotice";
 import {
   BrowserActionsMenu,
   useNativeBrowserMenu,
@@ -36,6 +37,7 @@ import {
 import type { Dialog } from "./StorageActionDialog";
 
 export function AppHeader({
+  volumes,
   volume,
   path,
   selected,
@@ -69,6 +71,7 @@ export function AppHeader({
   onRetryTransfers,
   onOpenTransferDirectory,
 }: {
+  volumes: Volume[];
   volume?: Volume;
   path: string;
   selected?: Entry;
@@ -94,7 +97,7 @@ export function AppHeader({
   onManage: (object: boolean) => void;
   onRefresh: () => void;
   isFetching: boolean;
-  onOpenTransferDirectory: (job: TransferJob) => Promise<void>;
+  onOpenTransferDirectory: (job: TransferJob) => Promise<string | null | void>;
   transfers: TransferJob[];
   uploadIds: Set<string>;
   recentTransfer: { id: number; jobIds: string[] } | null;
@@ -377,6 +380,7 @@ export function AppHeader({
           </button>
         )}
         <TransferTasksMenu
+          volumes={volumes}
           jobs={transfers}
           uploadIds={uploadIds}
           recentTransfer={recentTransfer}
@@ -388,10 +392,10 @@ export function AppHeader({
         />
       </header>
       {browsing && refresh.error && (
-        <div className="error-banner" role="alert">
+        <FloatingNotice key={refresh.error}>
           检查变化失败：{refresh.error}
           <button onClick={refresh.retry}>重试</button>
-        </div>
+        </FloatingNotice>
       )}
     </>
   );

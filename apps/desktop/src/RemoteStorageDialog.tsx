@@ -694,21 +694,6 @@ export function RemoteForm({
                 required
               />
             </label>
-            {protocol === "smb" && (
-              <label className="field-label">
-                域（可选）
-                <input
-                  className="text-input"
-                  value={domain}
-                  onChange={(event) => setDomain(event.target.value)}
-                  placeholder="例如 WORKGROUP"
-                  autoComplete="organization"
-                />
-                <span className="field-help remote-input-help">
-                  仅在服务器要求 Windows 域登录时填写。
-                </span>
-              </label>
-            )}
             {protocol === "sftp" && (
               <label className="field-label">
                 认证方式
@@ -860,6 +845,21 @@ export function RemoteForm({
                   autoComplete="new-password"
                   required
                 />
+              </label>
+            )}
+            {protocol === "smb" && (
+              <label className="field-label">
+                域（可选）
+                <input
+                  className="text-input"
+                  value={domain}
+                  onChange={(event) => setDomain(event.target.value)}
+                  placeholder="例如 WORKGROUP"
+                  autoComplete="organization"
+                />
+                <span className="field-help remote-input-help">
+                  仅在服务器要求 Windows 域登录时填写。
+                </span>
               </label>
             )}
           </div>
