@@ -374,7 +374,12 @@
 }
 .floating-notice .paste-retry-bar {
   margin: 0;
+  padding: 0;
   color: inherit;
   background: transparent;
   border: 0;
+}
+.floating-notice .paste-retry-bar .field-help,
+.floating-notice .paste-retry-bar .delete-warning {
+  display: none;
 }

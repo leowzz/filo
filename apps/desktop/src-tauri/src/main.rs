@@ -251,6 +251,15 @@ async fn stat_entry(
 ) -> StorageResult<StorageEntry> {
     service.stat_entry(locator).await
 }
+async fn preflight_transfer_conflicts(
+    service: State<'_, StorageService>,
+    destination: StorageLocator,
+    sources: Vec<StorageLocator>,
+) -> StorageResult<Vec<String>> {
+    service
+        .preflight_transfer_conflicts(destination, sources)
+        .await
+}
 async fn create_directory(
     service: State<'_, StorageService>,
     parent: StorageLocator,
@@ -398,6 +407,7 @@ fn main() {
             list_entries,
             list_entries_page,
             stat_entry,
+            preflight_transfer_conflicts,
             create_directory,
             rename_entry,
             delete_entry,

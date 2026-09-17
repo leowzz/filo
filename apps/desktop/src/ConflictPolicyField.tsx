@@ -4,10 +4,12 @@ export function ConflictPolicyField({
   value,
   onChange,
   presentation = "select",
+  sourceLabel = "上传的文件",
 }: {
   presentation?: "select" | "choices";
   value: ConflictPolicy;
   onChange: (value: ConflictPolicy) => void;
+  sourceLabel?: string;
 }) {
   const groupId = useId();
   if (presentation === "choices") {
@@ -19,7 +21,7 @@ export function ConflictPolicyField({
       {
         value: "overwrite",
         title: "覆盖同名文件",
-        description: "用上传的文件替换已有文件，文件夹合并。",
+        description: `用${sourceLabel}替换已有文件，文件夹合并。`,
       },
       {
         value: "rename",
@@ -73,7 +75,7 @@ export function ConflictPolicyField({
         value={value}
         onChange={(event) => onChange(event.target.value as ConflictPolicy)}
       >
-        <option value="reject">提示冲突，保留两边内容</option>
+        <option value="reject">停止同名项目，不覆盖</option>
         <option value="overwrite">覆盖同名文件</option>
         <option value="skip">跳过已有项目</option>
         <option value="rename">自动改名，保留两份</option>

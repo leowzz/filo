@@ -45,6 +45,34 @@ fn sorted_paths(mut paths: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
 }
 
 #[tokio::test]
+async fn transfer_preflight_reads_actual_destination_metadata() {
+    let fixture = Fixture::new().await;
+    std::fs::write(fixture.destination.path().join("source.bin"), b"existing").unwrap();
+    std::fs::create_dir(fixture.destination.path().join("folder")).unwrap();
+    let parent = StorageLocator {
+        volume_id: fixture.destination_id,
+        logical_path: "".into(),
+        version_id: None,
+    };
+    let source = |path: &str| StorageLocator {
+        volume_id: fixture.source_id,
+        logical_path: path.into(),
+        version_id: None,
+    };
+    assert_eq!(
+        fixture
+            .service
+            .preflight_transfer_conflicts(
+                parent,
+                vec![source("source.bin"), source("folder"), source("new.txt")],
+            )
+            .await
+            .unwrap(),
+        vec!["source.bin", "folder"]
+    );
+}
+
+#[tokio::test]
 async fn upload_preflight_recurses_into_folders_and_propagates_errors() {
     let fixture = Fixture::new().await;
     let remote = StorageLocator {

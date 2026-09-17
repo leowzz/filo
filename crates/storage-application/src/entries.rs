@@ -1,4 +1,5 @@
 use crate::{file_operations, OpenDalLocalBackend, StorageService};
+use futures::{stream, StreamExt};
 use storage_domain::*;
 
 impl StorageService {
@@ -7,6 +8,68 @@ impl StorageService {
     }
     pub async fn stat_entry(&self, locator: StorageLocator) -> StorageResult<StorageEntry> {
         self.backend(locator.volume_id).await?.stat(&locator).await
+    }
+    pub async fn preflight_transfer_conflicts(
+        &self,
+        mut destination: StorageLocator,
+        sources: Vec<StorageLocator>,
+    ) -> StorageResult<Vec<String>> {
+        destination.logical_path = normalize_path(&destination.logical_path)?;
+        destination.version_id = None;
+        let backend = self.backend(destination.volume_id).await?;
+        let parent = backend.stat(&destination).await?;
+        if !crate::tree::directory(&parent) {
+            return Err(StorageError::new(
+                StorageErrorCode::InvalidPath,
+                "请选择目标文件夹",
+            ));
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut targets = Vec::new();
+        for (index, source) in sources.into_iter().enumerate() {
+            let path = normalize_path(&source.logical_path)?;
+            let name = path
+                .rsplit('/')
+                .next()
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| {
+                    StorageError::new(StorageErrorCode::InvalidPath, "请选择文件或文件夹")
+                })?;
+            validate_name(name)?;
+            if !seen.insert(name.to_owned()) {
+                continue;
+            }
+            let target = StorageLocator {
+                logical_path: if destination.logical_path.is_empty() {
+                    name.to_owned()
+                } else {
+                    format!("{}/{name}", destination.logical_path)
+                },
+                ..destination.clone()
+            };
+            targets.push((index, name.to_owned(), target));
+        }
+        let checks = stream::iter(targets.into_iter().map(|(index, name, target)| {
+            let backend = backend.clone();
+            async move {
+                match backend.stat(&target).await {
+                    Ok(_) => Ok(Some((index, name))),
+                    Err(error) if error.code == StorageErrorCode::NotFound => Ok(None),
+                    Err(error) => Err(error),
+                }
+            }
+        }))
+        .buffer_unordered(3)
+        .collect::<Vec<StorageResult<Option<(usize, String)>>>>()
+        .await;
+        let mut conflicts = Vec::new();
+        for check in checks {
+            if let Some(conflict) = check? {
+                conflicts.push(conflict);
+            }
+        }
+        conflicts.sort_by_key(|(index, _)| *index);
+        Ok(conflicts.into_iter().map(|(_, name)| name).collect())
     }
     pub async fn create_directory(
         &self,

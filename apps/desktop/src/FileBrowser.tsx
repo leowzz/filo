@@ -50,8 +50,6 @@ export function FileBrowser({
   clipboardPaths,
   pastePending,
   onPreview,
-  onCopy,
-  onCut,
   onPaste,
   canPaste,
   onCreateFolder,
@@ -79,8 +77,6 @@ export function FileBrowser({
   clipboardPaths: Set<string>;
   pastePending: boolean;
   onPreview: () => void;
-  onCopy: () => void;
-  onCut: () => void;
   onPaste: () => void;
   canPaste: boolean;
   onCreateFolder: () => void;
@@ -183,29 +179,6 @@ export function FileBrowser({
                 rect.top + 40,
                 event.currentTarget,
               );
-              return;
-            }
-            const editingTarget =
-              event.target instanceof Element &&
-              event.target.closest(
-                "button, input, textarea, select, a, [contenteditable], [role=menu]",
-              );
-            const shortcutTarget =
-              !editingTarget &&
-              !event.nativeEvent.isComposing &&
-              event.target instanceof HTMLElement &&
-              (event.target === event.currentTarget ||
-                !!event.target.closest("[data-entry-path]"));
-            if (
-              shortcutTarget &&
-              !event.altKey &&
-              (event.metaKey || event.ctrlKey) &&
-              ["c", "x", "v"].includes(event.key.toLowerCase())
-            ) {
-              event.preventDefault();
-              if (event.key.toLowerCase() === "c") onCopy();
-              else if (event.key.toLowerCase() === "x") onCut();
-              else onPaste();
               return;
             }
             if (

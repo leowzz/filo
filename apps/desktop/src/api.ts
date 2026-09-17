@@ -127,6 +127,11 @@ export const api = {
         paths: paths ?? null,
       },
     ),
+  preflightTransferConflicts: (destination: Locator, sources: Locator[]) =>
+    invoke<string[]>("preflight_transfer_conflicts", {
+      destination,
+      sources,
+    }),
   uploadDroppedFiles: (
     remote: Locator,
     paths: string[],

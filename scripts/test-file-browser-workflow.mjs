@@ -90,11 +90,18 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
         entries = sortEntries(entries, args.options.sort);
         return { entries, total: entries.length, next_cursor: null };
       }
+      if (command === 'preflight_transfer_conflicts') {
+        const existing = files[args.destination.volume_id]?.[args.destination.logical_path] ?? [];
+        const names = new Set(existing.map(item => item.name));
+        return args.sources
+          .map(source => source.logical_path.split('/').pop())
+          .filter(name => names.has(name));
+      }
       if (command === 'start_transfer') {
         const sourceName = args.source.logical_path.split('/').pop();
         const attempt = (window.transferAttempts[sourceName] ?? 0) + 1;
         window.transferAttempts[sourceName] = attempt;
-        const failed = sourceName === 'flaky.txt' && attempt === 1;
+        const failed = sourceName === 'flaky.txt' && attempt === 1 && args.conflictPolicy === 'reject';
         const job = {
           id: 'paste-' + window.jobs.length + '-' + sourceName,
           kind: args.kind,
@@ -154,6 +161,74 @@ const clickRow = async (path, modifier) => {
 
 await clickRow("good.txt");
 await clickRow("flaky.txt", "ControlOrMeta");
+await page.keyboard.press("ControlOrMeta+c");
+await page.keyboard.press("ControlOrMeta+v");
+await page.waitForSelector("dialog");
+assert.match(
+  await page.evaluate(() => document.querySelector("dialog").textContent),
+  /将 2 个项目复制.*覆盖同名文件.*自动改名/s,
+  "Same-directory paste asks how to handle conflicts",
+);
+assert.deepEqual(
+  await page.evaluate(() =>
+    [...document.querySelectorAll("dialog li")]
+      .map((item) => item.textContent)
+      .sort(),
+  ),
+  ["flaky.txt", "good.txt"],
+  "Conflict dialog lists every selected item with a matching destination",
+);
+assert.equal(
+  (await calls("start_transfer")).length,
+  0,
+  "Paste does not start before the conflict choice",
+);
+assert.equal(
+  await page.evaluate(
+    () => document.querySelector('dialog input[value="overwrite"]').checked,
+  ),
+  true,
+  "Overwrite is the explicit default choice",
+);
+await page.click('button:text-is("继续复制")');
+await page.waitForFunction(() =>
+  document
+    .querySelector("#floating-notices")
+    ?.textContent.includes("已保留原项目，未创建副本"),
+);
+assert.equal(
+  (await calls("start_transfer")).length,
+  0,
+  "Overwriting the exact same source is a no-op",
+);
+await page.keyboard.press("ControlOrMeta+v");
+await page.waitForSelector("dialog");
+await page.click('input[value="rename"]');
+await page.click('button:text-is("继续复制")');
+await page.waitForFunction(() =>
+  document
+    .querySelector("#floating-notices")
+    ?.textContent.includes("已完成复制 2 项"),
+);
+assert.deepEqual(
+  (await calls("start_transfer"))
+    .map((call) => ({
+      source: call.args.source.logical_path,
+      destination: call.args.destination.logical_path,
+      policy: call.args.conflictPolicy,
+    }))
+    .sort((a, b) => a.source.localeCompare(b.source)),
+  [
+    { source: "flaky.txt", destination: "flaky.txt", policy: "rename" },
+    { source: "good.txt", destination: "good.txt", policy: "rename" },
+  ],
+  "Copy and paste in the same directory creates an automatically renamed copy",
+);
+await page.evaluate(() => {
+  window.calls = [];
+  window.jobs = [];
+  window.transferAttempts = {};
+});
 assert.deepEqual((await selected()).sort(), ["flaky.txt", "good.txt"]);
 await page.keyboard.press("ControlOrMeta+c");
 assert.match(
@@ -213,13 +288,31 @@ assert.match(
   await page.evaluate(
     () => document.querySelector(".paste-retry-bar").textContent,
   ),
-  /还有 1 项未完成/,
+  /1 项已完成，1 项未完成/,
+);
+assert.equal(
+  await page.evaluate(
+    () =>
+      document.querySelectorAll("#floating-notices .floating-notice").length,
+  ),
+  1,
+  "Partial paste uses one actionable notice",
+);
+assert.equal(
+  await page.evaluate(
+    () =>
+      document.querySelector(".paste-retry-bar").getBoundingClientRect()
+        .height < 50,
+  ),
+  true,
+  "Paste retry actions stay compact",
 );
 
-await page.selectOption("#conflict-policy", "overwrite");
 await page.click('button:text-is("重试未完成项")');
 await page.waitForFunction(() =>
-  document.querySelector("#floating-notices")?.textContent.includes("已完成复制 1 项"),
+  document
+    .querySelector("#floating-notices")
+    ?.textContent.includes("已完成复制 1 项"),
 );
 const pasteCalls = await calls("start_transfer");
 assert.equal(
@@ -236,8 +329,8 @@ assert.equal(
 );
 assert.equal(
   pasteCalls.at(-1).args.conflictPolicy,
-  "overwrite",
-  "Retry uses the chosen conflict policy",
+  "reject",
+  "Retry rechecks the destination before submitting",
 );
 
 await page.click('.volume-nav button[title="/source"]');
@@ -265,7 +358,9 @@ await page.waitForFunction(() =>
 );
 await page.keyboard.press("ControlOrMeta+v");
 await page.waitForFunction(() =>
-  document.querySelector("#floating-notices")?.textContent.includes("已完成移动 1 项"),
+  document
+    .querySelector("#floating-notices")
+    ?.textContent.includes("已完成移动 1 项"),
 );
 assert.equal(
   await page.evaluate(() =>
@@ -382,7 +477,7 @@ assert.equal(
 );
 
 console.log(
-  "PASS: Ctrl+C/X/V, input isolation, cross-volume paste, async partial failure, conflict retry without duplicate success, cut feedback and completion, self-folder guard, persistent browsing preferences, narrow layout and read-only remote upload/download gating",
+  "PASS: conflict choice before same-directory paste, Ctrl+C/X/V, input isolation, cross-volume paste, async partial failure, retry without duplicate success, cut feedback and completion, self-folder guard, persistent browsing preferences, narrow layout and read-only remote upload/download gating",
 );
 if (!globalThis.filoKeepBrowser && !globalThis.filoKeepSpace)
   await task.finish({ keep: [] });

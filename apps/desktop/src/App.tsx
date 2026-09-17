@@ -7,7 +7,6 @@ import { Info } from "lucide-react";
 import {
   useCallback,
   useEffect,
-  useEffectEvent,
   useRef,
   useState,
   type FormEvent,
@@ -22,7 +21,6 @@ import { LocationMenu, type LocationMenuTarget } from "./LocationMenu";
 import { RemoveLocationDialog } from "./RemoveLocationDialog";
 import { RemoteStorageDialog } from "./RemoteStorageDialog";
 import { S3StorageDialog } from "./S3StorageDialog";
-import { ConflictPolicyField } from "./ConflictPolicyField";
 import { useBrowser } from "./store";
 import { TransferDialog } from "./TransferDialog";
 import { TransfersPage } from "./TransfersPage";
@@ -110,6 +108,7 @@ export default function App() {
     signature: string;
     destination: Locator;
     entries: Entry[];
+    summary: string;
   };
   type PasteRun = {
     clipboard: FileClipboard;
@@ -121,14 +120,21 @@ export default function App() {
     completed: number;
     collecting: boolean;
   };
+  type PasteRequest = {
+    clipboard: FileClipboard;
+    destination: Locator;
+    items: Entry[];
+    conflicts: string[];
+  };
   const pasteJobs = useRef(new Map<string, TrackedPasteJob>());
   const pasteTerminalJobs = useRef(
     new Map<string, { job: TransferJob; entry: Entry; mode: ClipboardMode }>(),
   );
   const pasteRun = useRef<PasteRun | null>(null);
+  const pastePreparing = useRef(false);
   const [pastePending, setPastePending] = useState(false);
   const [pasteRetry, setPasteRetry] = useState<PasteRetry | null>(null);
-  const [pastePolicy, setPastePolicy] = useState<ConflictPolicy>("reject");
+  const [pasteRequest, setPasteRequest] = useState<PasteRequest | null>(null);
   useEffect(() => {
     const jobs = transfersQuery.data;
     if (!jobs) return;
@@ -225,18 +231,6 @@ export default function App() {
       useBrowser.getState().setClipboard(remaining, "cut");
       retryClipboard = useBrowser.getState().clipboard ?? run.clipboard;
     }
-    setPasteRetry(
-      remaining.length
-        ? {
-            clipboard: retryClipboard,
-            signature: clipboardSignature(retryClipboard),
-            destination: run.destination,
-            entries: remaining,
-          }
-        : null,
-    );
-    setPastePending(false);
-    pasteRun.current = null;
     if (remaining.length) {
       const failures = run.failures
         .filter(
@@ -250,14 +244,22 @@ export default function App() {
         .slice(0, 3)
         .map(({ item, error }) => `${item.name}：${errorMessage(error)}`)
         .join("；");
-      setNotice(
-        `${run.completed} 项已完成，${remaining.length} 项未完成。${failures ? `${failures}。` : ""}已完成项目不会重复提交。`,
-      );
+      setPasteRetry({
+        clipboard: retryClipboard,
+        signature: clipboardSignature(retryClipboard),
+        destination: run.destination,
+        entries: remaining,
+        summary: `${run.completed} 项已完成，${remaining.length} 项未完成${failures ? `：${failures}` : ""}`,
+      });
+      setNotice("");
     } else {
+      setPasteRetry(null);
       setNotice(
         `已完成${run.clipboard.mode === "cut" ? "移动" : "复制"} ${run.completed} 项。`,
       );
     }
+    setPastePending(false);
+    pasteRun.current = null;
   }
 
   function settlePasteJob(job: TransferJob) {
@@ -529,28 +531,32 @@ export default function App() {
       pasteRun.current = run;
       pasteTerminalJobs.current.clear();
       setPastePending(true);
-      const result = await runBatch(items, async (item) => {
-        const job = await api.startTransfer(
-          clipboard.mode === "cut" ? "move" : "copy",
-          item.locator,
-          destinationFor(item, destination),
-          (progress) => trackPasteProgress(progress, item, clipboard.mode),
-          conflictPolicy,
-        );
-        pasteJobs.current.set(job.id, { entry: item, mode: clipboard.mode });
-        run.started += 1;
-        const terminal = pasteTerminalJobs.current.get(job.id);
-        if (terminal && terminal.mode === clipboard.mode) {
-          pasteTerminalJobs.current.delete(job.id);
-          settlePasteJob(terminal.job);
-        } else if (!activeTransfer(job)) {
-          // Some providers can finish before the progress channel is
-          // delivered. Settle the returned terminal snapshot immediately so
-          // a fast copy or move cannot leave pastePending stuck forever.
-          settlePasteJob(job);
-        }
-        return job;
-      });
+      const result = await runBatch(
+        items,
+        async (item) => {
+          const job = await api.startTransfer(
+            clipboard.mode === "cut" ? "move" : "copy",
+            item.locator,
+            destinationFor(item, destination),
+            (progress) => trackPasteProgress(progress, item, clipboard.mode),
+            conflictPolicy,
+          );
+          pasteJobs.current.set(job.id, { entry: item, mode: clipboard.mode });
+          run.started += 1;
+          const terminal = pasteTerminalJobs.current.get(job.id);
+          if (terminal && terminal.mode === clipboard.mode) {
+            pasteTerminalJobs.current.delete(job.id);
+            settlePasteJob(terminal.job);
+          } else if (!activeTransfer(job)) {
+            // Some providers can finish before the progress channel is
+            // delivered. Settle the returned terminal snapshot immediately so
+            // a fast copy or move cannot leave pastePending stuck forever.
+            settlePasteJob(job);
+          }
+          return job;
+        },
+        3,
+      );
       run.failures.push(...result.failed);
       run.collecting = false;
       finalizePasteRun();
@@ -564,6 +570,64 @@ export default function App() {
       setNotice(errorMessage(error));
     },
   });
+  function startPaste(
+    request: Omit<PasteRequest, "conflicts">,
+    conflictPolicy: ConflictPolicy,
+  ) {
+    const actionableItems =
+      conflictPolicy === "overwrite"
+        ? request.items.filter(
+            (item) =>
+              !sameLocator(
+                item.locator,
+                destinationFor(item, request.destination),
+              ),
+          )
+        : request.items;
+    if (actionableItems.length === 0) {
+      setPasteRetry(null);
+      if (
+        request.clipboard.mode === "cut" &&
+        useBrowser.getState().clipboard === request.clipboard
+      )
+        useBrowser.getState().clearClipboard();
+      setNotice(
+        request.clipboard.mode === "cut"
+          ? "项目已在当前位置，无需移动"
+          : "已保留原项目，未创建副本",
+      );
+      return;
+    }
+    setNotice(
+      `正在${request.clipboard.mode === "cut" ? "移动" : "复制"} ${actionableItems.length} 项…`,
+    );
+    pasteMutation.mutate({
+      ...request,
+      items: actionableItems,
+      conflictPolicy,
+    });
+  }
+  const preparePaste = useMutation({
+    mutationFn: (request: Omit<PasteRequest, "conflicts">) =>
+      api.preflightTransferConflicts(
+        request.destination,
+        request.items.map((item) => item.locator),
+      ),
+    onSuccess: (conflicts, request) => {
+      if (conflicts.length) {
+        setNotice("");
+        setPasteRequest({ ...request, conflicts });
+      } else {
+        startPaste(request, "reject");
+      }
+    },
+    onError: (error) => setNotice(`无法检查同名项目：${errorMessage(error)}`),
+    onSettled: () => {
+      pastePreparing.current = false;
+    },
+  });
+  const pasteBusy =
+    pastePending || pasteMutation.isPending || preparePaste.isPending;
 
   function copySelection() {
     if (textInputFocused()) return;
@@ -574,7 +638,6 @@ export default function App() {
     }
     state.setClipboard(selectedEntries, "copy");
     setPasteRetry(null);
-    setPastePolicy("reject");
     setNotice(
       `已复制 ${selectedEntries.length} 项，按 ${shortcutLabel("V")} 粘贴`,
     );
@@ -599,7 +662,6 @@ export default function App() {
     }
     state.setClipboard(selectedEntries, "cut");
     setPasteRetry(null);
-    setPastePolicy("reject");
     setNotice(
       `已剪切 ${selectedEntries.length} 项，切换目录后按 ${shortcutLabel("V")} 粘贴`,
     );
@@ -612,7 +674,7 @@ export default function App() {
       setNotice("没有可粘贴的项目");
       return;
     }
-    if (!volume || pastePending || pasteMutation.isPending) return;
+    if (!volume || pastePreparing.current || pasteRequest || pasteBusy) return;
     const retryMatches =
       !!pasteRetry &&
       pasteRetry.clipboard === clipboard &&
@@ -629,14 +691,11 @@ export default function App() {
       setNotice(blockReason);
       return;
     }
-    setNotice(
-      `正在${clipboard.mode === "cut" ? "移动" : "复制"} ${items.length} 项…`,
-    );
-    pasteMutation.mutate({
+    pastePreparing.current = true;
+    preparePaste.mutate({
       clipboard,
       destination: parent,
       items,
-      conflictPolicy: pastePolicy,
     });
   }
 
@@ -645,6 +704,7 @@ export default function App() {
       if (
         event.defaultPrevented ||
         event.isComposing ||
+        event.repeat ||
         event.altKey ||
         !(event.metaKey || event.ctrlKey) ||
         state.page !== "browser" ||
@@ -662,36 +722,14 @@ export default function App() {
     document.addEventListener("keydown", handleGlobalShortcut);
     return () => document.removeEventListener("keydown", handleGlobalShortcut);
   }, [
-    pasteMutation.isPending,
-    pastePending,
-    pastePolicy,
+    pasteBusy,
+    pasteRequest,
     pasteRetry,
     selectedEntries,
+    state.clipboard,
     state.page,
     volume,
   ]);
-
-  const pasteFromBrowser = useEffectEvent((event: KeyboardEvent) => {
-    if (
-      event.defaultPrevented ||
-      event.isComposing ||
-      event.repeat ||
-      event.altKey ||
-      !(event.metaKey || event.ctrlKey) ||
-      event.key.toLowerCase() !== "v" ||
-      state.page !== "browser" ||
-      document.querySelector('dialog[open], [role="menu"]') ||
-      (event.target instanceof Element &&
-        event.target.closest("input, textarea, select, [contenteditable]"))
-    )
-      return;
-    event.preventDefault();
-    pasteSelection();
-  });
-  useEffect(() => {
-    window.addEventListener("keydown", pasteFromBrowser);
-    return () => window.removeEventListener("keydown", pasteFromBrowser);
-  }, []);
 
   function openEntry(entry: Entry) {
     if (isDirectory(entry) && volume)
@@ -759,7 +797,7 @@ export default function App() {
           navigate={navigate}
           openingPending={opening.isPending}
           transferPending={fileTransfer.isPending || prepareUpload.isPending}
-          pastePending={pastePending}
+          pastePending={pasteBusy}
           openEntry={openEntry}
           openDialog={openDialog}
           setTransferDialog={setTransferDialog}
@@ -845,21 +883,17 @@ export default function App() {
 
         {state.page === "browser" && volume && (
           <>
-            {retryAvailable && pasteRetry && (
+            {retryAvailable && pasteRetry && !pasteRequest && (
               <FloatingNotice duration={0}>
                 <div
                   className="paste-retry-bar"
                   role="group"
                   aria-label="粘贴重试选项"
                 >
-                  <span>还有 {pasteRetry.entries.length} 项未完成</span>
-                  <ConflictPolicyField
-                    value={pastePolicy}
-                    onChange={setPastePolicy}
-                  />
+                  <span>{pasteRetry.summary}</span>
                   <button
                     className="secondary"
-                    disabled={pastePending}
+                    disabled={pasteBusy}
                     onClick={pasteSelection}
                   >
                     重试未完成项
@@ -893,17 +927,14 @@ export default function App() {
                   ) ?? [],
                 )
               }
-              pastePending={pastePending}
+              pastePending={pasteBusy}
               onPreview={() =>
                 setPreview({ entries: selectedEntries, siblings: entries })
               }
-              onCopy={copySelection}
-              onCut={cutSelection}
               onPaste={pasteSelection}
               canPaste={
                 !!state.clipboard &&
-                !pastePending &&
-                !pasteMutation.isPending &&
+                !pasteBusy &&
                 !pasteBlockReason(state.clipboard, parent, volume)
               }
               onCreateFolder={() => openDialog({ type: "folder" })}
@@ -982,7 +1013,7 @@ export default function App() {
           onCut={cutSelection}
           onPaste={pasteSelection}
           hasClipboard={(state.clipboard?.entries.length ?? 0) > 0}
-          canPaste={canWriteVolume(volume) && !pastePending}
+          canPaste={canWriteVolume(volume) && !pasteBusy}
           onUpload={() => requestUpload(parent)}
           onDownload={() =>
             fileTransfer.mutate({
@@ -1031,6 +1062,21 @@ export default function App() {
               conflictPolicy,
             });
             setUploadRequest(null);
+          }}
+        />
+      )}
+      {pasteRequest && (
+        <UploadDialog
+          paths={pasteRequest.conflicts}
+          sources={[]}
+          total={pasteRequest.items.length}
+          destination={`${volumes.find((item) => item.id === pasteRequest.destination.volume_id)?.name ?? ""}${pasteRequest.destination.logical_path ? `/${pasteRequest.destination.logical_path}` : ""}`}
+          operation={pasteRequest.clipboard.mode === "cut" ? "move" : "copy"}
+          onClose={() => setPasteRequest(null)}
+          onStart={(conflictPolicy) => {
+            const request = pasteRequest;
+            setPasteRequest(null);
+            startPaste(request, conflictPolicy);
           }}
         />
       )}

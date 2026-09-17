@@ -96,15 +96,8 @@ impl StorageService {
         if policy != ConflictPolicy::Rename {
             plan(kind, &source, &destination)?;
         }
-        let mut transfers = self.transfers.lock().await;
-        if transfers.len() >= 100 {
-            return Err(StorageError::new(
-                StorageErrorCode::Conflict,
-                "等待中的任务过多，请稍后再试",
-            ));
-        }
-        // Queuing does not wait for an ongoing transfer's filesystem lock.
-        // Configuration and permission checks are repeated when execution begins.
+        // Remote metadata checks can be slow, so they must not hold the queue
+        // lock and serialize every item in a multi-selection.
         let source_backend = self.backend(source.volume_id).await?;
         let destination_backend = self.backend(destination.volume_id).await?;
         let entry = source_backend.stat(&source).await?;
@@ -137,6 +130,13 @@ impl StorageService {
             updated_at: now,
         };
         let token = CancellationToken::new();
+        let mut transfers = self.transfers.lock().await;
+        if transfers.len() >= 100 {
+            return Err(StorageError::new(
+                StorageErrorCode::Conflict,
+                "等待中的任务过多，请稍后再试",
+            ));
+        }
         self.repository.save_transfer(&job).await?;
         transfers.insert(
             job.id,
