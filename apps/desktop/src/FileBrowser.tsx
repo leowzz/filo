@@ -1,5 +1,6 @@
 import {
   ArrowUp,
+  ArrowDown,
   ChevronRight,
   CircleHelp,
   FolderOpen,
@@ -17,13 +18,22 @@ import { useFileSelection } from "./useFileSelection";
 import { useExternalFileDrop } from "./useExternalFileDrop";
 import { canWriteVolume, type ClipboardMode } from "./fileClipboard";
 
-import { useEffect, useLayoutEffect } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react";
 import type { useDirectoryQuery } from "./useDirectoryQuery";
 import { useVirtualRows } from "./useVirtualRows";
 import { DetailsPanel } from "./DetailsPanel";
 import { StorageTypeLabel } from "./StorageProvider";
 
-export type EntrySort = "name" | "size" | "modified";
+import type { EntrySort } from "./types";
+import { browserRows } from "./browserRows";
+import { DirectoryMenu, type MenuPosition } from "./DirectoryMenu";
+export type { EntrySort } from "./types";
 
 export function FileBrowser({
   volume,
@@ -43,6 +53,9 @@ export function FileBrowser({
   onCopy,
   onCut,
   onPaste,
+  canPaste,
+  onCreateFolder,
+  onViewOptions,
   uploadPending,
   onFileDrop,
   onDropError,
@@ -69,6 +82,9 @@ export function FileBrowser({
   onCopy: () => void;
   onCut: () => void;
   onPaste: () => void;
+  canPaste: boolean;
+  onCreateFolder: () => void;
+  onViewOptions: () => void;
   uploadPending: boolean;
   onFileDrop: (paths: string[]) => void;
   onDropError: (message: string) => void;
@@ -96,13 +112,24 @@ export function FileBrowser({
     onDrop: onFileDrop,
     onError: onDropError,
   });
-  const rows = useVirtualRows(selection.areaRef, entries.length);
+  const [directoryMenu, setDirectoryMenu] = useState<MenuPosition | null>(null);
+  const closeDirectoryMenu = useCallback(() => setDirectoryMenu(null), []);
+  const displayRows = useMemo(
+    () => browserRows(entries, state.useGroups),
+    [entries, state.useGroups],
+  );
+  const rows = useVirtualRows(selection.areaRef, displayRows.length);
+  const showDirectoryMenu = (x: number, y: number, trigger: HTMLElement) => {
+    setMenu(null);
+    selection.setSelection(null);
+    setDirectoryMenu({ x, y, trigger });
+  };
   useLayoutEffect(() => {
     selection.focusPendingRow();
   });
   useEffect(() => {
     if (
-      rows.end >= entries.length - 10 &&
+      rows.end >= displayRows.length - 10 &&
       entriesQuery.hasNextPage &&
       !entriesQuery.isFetching &&
       !entriesQuery.isError
@@ -111,7 +138,7 @@ export function FileBrowser({
     }
   }, [
     rows.end,
-    entries.length,
+    displayRows.length,
     entriesQuery.hasNextPage,
     entriesQuery.isFetching,
     entriesQuery.isError,
@@ -123,13 +150,41 @@ export function FileBrowser({
         <div
           className={`file-area${dropMessage ? " file-drop-active" : ""}`}
           ref={selection.areaRef}
-          tabIndex={-1}
+          tabIndex={0}
+          aria-label="文件列表"
+          onContextMenu={(event) => {
+            if (
+              event.target instanceof Element &&
+              event.target.closest("[data-entry-path], thead, button, input, a")
+            )
+              return;
+            event.preventDefault();
+            showDirectoryMenu(
+              event.clientX,
+              event.clientY,
+              event.currentTarget,
+            );
+          }}
           onPointerDown={(event) => {
             selection.onPointerDown(event);
             if (event.defaultPrevented) setMenu(null);
           }}
           onClickCapture={selection.onClickCapture}
           onKeyDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              ((event.shiftKey && event.key === "F10") ||
+                event.key === "ContextMenu")
+            ) {
+              event.preventDefault();
+              const rect = event.currentTarget.getBoundingClientRect();
+              showDirectoryMenu(
+                rect.left + 30,
+                rect.top + 40,
+                event.currentTarget,
+              );
+              return;
+            }
             const editingTarget =
               event.target instanceof Element &&
               event.target.closest(
@@ -201,12 +256,14 @@ export function FileBrowser({
                     </button>
                   </th>
                   <th>
-                    <button onClick={() => setSort("size")}>大小</button>
+                    <button onClick={() => setSort("size")}>
+                      大小 {sort === "size" && <ArrowDown size={12} />}
+                    </button>
                   </th>
                   <th>种类</th>
                   <th>
                     <button onClick={() => setSort("modified")}>
-                      修改时间
+                      修改时间 {sort === "modified" && <ArrowDown size={12} />}
                     </button>
                   </th>
                   <th aria-label="操作" />
@@ -218,85 +275,94 @@ export function FileBrowser({
                     <td colSpan={5} style={{ height: rows.before }} />
                   </tr>
                 )}
-                {entries.slice(rows.start, rows.end).map((entry, index) => (
-                  <tr
-                    key={entry.locator.logical_path}
-                    data-entry-path={entry.locator.logical_path}
-                    className={`${selectedPaths.has(entry.locator.logical_path) ? "selected" : (rows.start + index) % 2 === 0 ? "stripe" : ""}${clipboardMode === "cut" && clipboardPaths.has(entry.locator.logical_path) ? " cut" : ""}`}
-                    tabIndex={0}
-                    aria-selected={selectedPaths.has(
-                      entry.locator.logical_path,
-                    )}
-                    onClick={(event) => {
-                      selection.select(entry.locator.logical_path, event);
-                      setMenu(null);
-                    }}
-                    onDoubleClick={() => openEntry(entry)}
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      showEntryMenu(
-                        entry,
-                        event.clientX,
-                        event.clientY,
-                        event.currentTarget,
-                      );
-                    }}
-                    onKeyDown={(event) => {
-                      if (
-                        (event.shiftKey && event.key === "F10") ||
-                        event.key === "ContextMenu"
-                      ) {
+                {displayRows.slice(rows.start, rows.end).map((row, index) => {
+                  if (!row.entry)
+                    return (
+                      <tr className="file-group" key={`group-${row.label}`}>
+                        <td colSpan={5}>{row.label}</td>
+                      </tr>
+                    );
+                  const entry = row.entry;
+                  return (
+                    <tr
+                      key={entry.locator.logical_path}
+                      data-entry-path={entry.locator.logical_path}
+                      className={`${selectedPaths.has(entry.locator.logical_path) ? "selected" : (rows.start + index) % 2 === 0 ? "stripe" : ""}${clipboardMode === "cut" && clipboardPaths.has(entry.locator.logical_path) ? " cut" : ""}`}
+                      tabIndex={0}
+                      aria-selected={selectedPaths.has(
+                        entry.locator.logical_path,
+                      )}
+                      onClick={(event) => {
+                        selection.select(entry.locator.logical_path, event);
+                        setMenu(null);
+                      }}
+                      onDoubleClick={() => openEntry(entry)}
+                      onContextMenu={(event) => {
                         event.preventDefault();
-                        const rect =
-                          event.currentTarget.getBoundingClientRect();
                         showEntryMenu(
                           entry,
-                          rect.left + 30,
-                          rect.bottom,
+                          event.clientX,
+                          event.clientY,
                           event.currentTarget,
                         );
-                      }
-                      if (
-                        event.key === "Enter" &&
-                        event.target === event.currentTarget
-                      )
-                        openEntry(entry);
-                    }}
-                  >
-                    <td>
-                      <span className="file-name">
-                        <Thumbnail entry={entry} />
-                        <span title={entry.name}>{entry.name}</span>
-                      </span>
-                    </td>
-                    <td className="mono">{formatSize(entry.size)}</td>
-                    <td>{typeName(entry)}</td>
-                    <td>{formatDate(entry.modified_at)}</td>
-                    <td className="row-actions">
-                      <button
-                        className="icon-button"
-                        aria-label={`${entry.name} 操作菜单`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (menu === entry.locator.logical_path)
-                            setMenu(null);
-                          else {
-                            const rect =
-                              event.currentTarget.getBoundingClientRect();
-                            showEntryMenu(
-                              entry,
-                              rect.right - 200,
-                              rect.bottom,
-                              event.currentTarget,
-                            );
-                          }
-                        }}
-                      >
-                        <MoreHorizontal size={17} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      }}
+                      onKeyDown={(event) => {
+                        if (
+                          (event.shiftKey && event.key === "F10") ||
+                          event.key === "ContextMenu"
+                        ) {
+                          event.preventDefault();
+                          const rect =
+                            event.currentTarget.getBoundingClientRect();
+                          showEntryMenu(
+                            entry,
+                            rect.left + 30,
+                            rect.bottom,
+                            event.currentTarget,
+                          );
+                        }
+                        if (
+                          event.key === "Enter" &&
+                          event.target === event.currentTarget
+                        )
+                          openEntry(entry);
+                      }}
+                    >
+                      <td>
+                        <span className="file-name">
+                          <Thumbnail entry={entry} />
+                          <span title={entry.name}>{entry.name}</span>
+                        </span>
+                      </td>
+                      <td className="mono">{formatSize(entry.size)}</td>
+                      <td>{typeName(entry)}</td>
+                      <td>{formatDate(entry.modified_at)}</td>
+                      <td className="row-actions">
+                        <button
+                          className="icon-button"
+                          aria-label={`${entry.name} 操作菜单`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (menu === entry.locator.logical_path)
+                              setMenu(null);
+                            else {
+                              const rect =
+                                event.currentTarget.getBoundingClientRect();
+                              showEntryMenu(
+                                entry,
+                                rect.right - 200,
+                                rect.bottom,
+                                event.currentTarget,
+                              );
+                            }
+                          }}
+                        >
+                          <MoreHorizontal size={17} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {rows.after > 0 && (
                   <tr className="virtual-spacer" aria-hidden="true">
                     <td colSpan={5} style={{ height: rows.after }} />
@@ -362,6 +428,23 @@ export function FileBrowser({
           />
         )}
       </div>
+      {directoryMenu && (
+        <DirectoryMenu
+          position={directoryMenu}
+          onClose={closeDirectoryMenu}
+          canCreate={writable && volume.capabilities.create_directory}
+          canPaste={canPaste}
+          refreshing={entriesQuery.isFetching}
+          onCreate={onCreateFolder}
+          onPaste={onPaste}
+          onRefresh={() => void entriesQuery.refetch()}
+          onDetails={() => {
+            selection.setSelection(null);
+            if (!state.showDetails) state.toggleDetails();
+          }}
+          onOptions={onViewOptions}
+        />
+      )}
       <nav className="pathbar" aria-label="当前路径">
         <button
           onClick={() => navigate(volume.id, "")}

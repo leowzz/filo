@@ -46,7 +46,7 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
     window.remoteCalls.push({command,args});
     const id=args.volumeId||'remote-volume';
     const input=args.input;
-    const writable=!['ftp','ftps'].includes(input.protocol);
+    const writable=!input.read_only;
     const volume={id,connection_id:id,name:input.name,root:{type:'remote',path:input.path},read_only:input.read_only,capabilities:{hierarchy:'native_directory',rename:writable?'atomic':'unsupported',create_directory:true,write:writable,delete:true,trash:false,native_open:false,native_copy:false}};
     window.remoteVolumes=[volume];
     window.remoteConnections=[{id,name:input.name,provider:'remote',config:{protocol:input.protocol,host:input.host,port:input.port,share:input.share,known_hosts:input.known_hosts}}];
@@ -120,12 +120,23 @@ assert.deepEqual(
       ),
     ].map((e) => e.textContent),
   ),
-  ["FTP", "FTPS", "SFTP", "SMB / Samba"],
+  ["FTP", "SFTP", "SMB / Samba"],
 );
 
 await page.focus('button[data-provider="smb"]');
 await page.keyboard.press("Enter");
 await page.waitForSelector(visibleForm());
+assert.equal(
+  await page.evaluate(
+    (form) =>
+      [...document.querySelector(form).querySelectorAll("label")].some(
+        (e) => e.textContent.trim() === "启用 SSL",
+      ),
+    visibleForm(),
+  ),
+  false,
+  "SSL is an FTP option and must not appear on SMB",
+);
 await page.fill(field("连接名称"), "家庭 NAS");
 await page.fill(field("服务器地址"), "192.168.1.20");
 await page.fill(field("端口"), "445");
@@ -224,6 +235,17 @@ await openChooser();
 await page.focus('button[data-provider="sftp"]');
 await page.keyboard.press("Enter");
 await page.waitForSelector(visibleForm());
+assert.equal(
+  await page.evaluate(
+    (form) =>
+      [...document.querySelector(form).querySelectorAll("label")].some(
+        (e) => e.textContent.trim() === "启用 SSL",
+      ),
+    visibleForm(),
+  ),
+  false,
+  "SSL is an FTP option and must not appear on SFTP",
+);
 await page.fill(field("连接名称"), "开发机");
 await page.fill(field("服务器地址"), "[::1]");
 await page.fill(field("端口"), "22");
@@ -292,15 +314,71 @@ assert.equal(
   "host field rejects embedded ports",
 );
 await page.fill(field("服务器地址"), "files.example.com");
+assert.equal(
+  await page.evaluate(
+    () =>
+      [...document.querySelectorAll("label")]
+        .find((e) => e.textContent.trim() === "启用 SSL")
+        .querySelector("input").checked,
+  ),
+  false,
+  "new FTP connections start with SSL disabled",
+);
+await invokeRemoteAction("测试连接");
+assert.equal((await lastInput()).protocol, "ftp");
+await page.click(field("启用 SSL"));
+assert.equal(
+  await page.evaluate(() => !!document.querySelector(".remote-test-success")),
+  false,
+  "changing SSL invalidates the previous connection test",
+);
+await invokeRemoteAction("测试连接");
+assert.equal((await lastInput()).protocol, "ftps");
 await invokeRemoteAction("保存连接");
 await page.waitForFunction(() => !document.querySelector("dialog[open]"));
 assert.equal(
   await page.evaluate(
     () => document.querySelector('[aria-label="上传文件"]').disabled,
   ),
-  true,
-  "FTP upload respects the provider write capability",
+  false,
+  "FTP upload is available when the location is writable",
 );
+
+// Existing encrypted FTP connections open as FTP with SSL enabled.
+await page.evaluate(() => {
+  document
+    .querySelector(".volume-nav button")
+    .dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        clientX: 100,
+        clientY: 180,
+      }),
+    );
+});
+await page.click('[role=menuitem]:has-text("编辑连接")');
+await page.waitForSelector(visibleForm());
+assert.equal(
+  await page.evaluate(() => document.querySelector("dialog h2").textContent),
+  "编辑 FTP 连接",
+);
+assert.equal(
+  await page.evaluate(
+    () =>
+      [...document.querySelectorAll("label")]
+        .find((e) => e.textContent.trim() === "启用 SSL")
+        .querySelector("input").checked,
+  ),
+  true,
+);
+await invokeRemoteAction("测试连接");
+assert.equal((await lastInput()).protocol, "ftps");
+assert.equal((await lastInput()).credentials, null);
+await page.click(field("启用 SSL"));
+await invokeRemoteAction("保存连接");
+assert.equal((await lastInput()).protocol, "ftp");
+assert.equal((await lastInput()).credentials, null);
+await page.waitForFunction(() => !document.querySelector("dialog[open]"));
 
 // Both a normal and a narrow viewport keep the connection dialog usable.
 for (const [width, height] of [
@@ -314,7 +392,7 @@ for (const [width, height] of [
     mobile: false,
   });
   await openChooser();
-  await page.focus('button[data-provider="ftps"]');
+  await page.focus('button[data-provider="ftp"]');
   await page.keyboard.press("Enter");
   await page.waitForSelector(visibleForm());
   assert.equal(
@@ -368,11 +446,11 @@ for (const [width, height] of [
           .classList.contains("is-expanded"),
     );
     await page.waitForFunction(
-      () => document.activeElement.dataset.provider === "ftps",
+      () => document.activeElement.dataset.provider === "ftp",
     );
     assert.equal(
       await page.evaluate(() => document.activeElement.dataset.provider),
-      "ftps",
+      "ftp",
     );
   }
   await page.focus('button[aria-label="关闭"]');

@@ -126,7 +126,7 @@ pub struct StorageVolume {
     pub read_only: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StorageLocator {
     pub volume_id: Uuid,
     pub logical_path: String,
@@ -282,17 +282,15 @@ pub struct StorageCapabilities {
 
 impl StorageCapabilities {
     pub fn remote(protocol: RemoteProtocol, read_only: bool) -> Self {
-        let safe_write =
-            !read_only && !matches!(protocol, RemoteProtocol::Ftp | RemoteProtocol::Ftps);
         Self {
             hierarchy: HierarchySemantics::NativeDirectory,
-            rename: if read_only || !safe_write {
+            rename: if read_only {
                 RenameSemantics::Unsupported
             } else {
                 RenameSemantics::Atomic
             },
             create_directory: !read_only,
-            write: safe_write,
+            write: !read_only,
             range_read: matches!(protocol, RemoteProtocol::Sftp | RemoteProtocol::Smb),
             multipart_write: false,
             native_copy: false,
@@ -510,10 +508,10 @@ mod tests {
     #[test]
     fn remote_capabilities_reflect_safe_write_and_range_support() {
         let ftp = StorageCapabilities::remote(RemoteProtocol::Ftp, false);
-        assert!(!ftp.write);
+        assert!(ftp.write);
         assert!(!ftp.range_read);
         assert!(ftp.create_directory && ftp.delete);
-        assert!(matches!(ftp.rename, RenameSemantics::Unsupported));
+        assert!(matches!(ftp.rename, RenameSemantics::Atomic));
 
         let sftp = StorageCapabilities::remote(RemoteProtocol::Sftp, false);
         assert!(sftp.write && sftp.range_read);

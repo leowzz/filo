@@ -72,7 +72,7 @@ export type Capabilities = {
   hierarchy: "native_directory" | "virtual_prefix";
   rename: "atomic" | "copy_then_delete" | "unsupported";
   create_directory: boolean;
-  /** Some remote protocols are intentionally read-only until safe writes exist. */
+  /** False when the provider cannot accept writes. */
   write?: boolean;
   delete: boolean;
   trash: boolean;

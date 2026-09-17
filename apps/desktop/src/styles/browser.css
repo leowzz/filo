@@ -222,6 +222,47 @@
   background: #dedede;
   margin: 4px 6px;
 }
+.directory-menu {
+  width: 230px;
+  max-width: calc(100vw - 16px);
+}
+.directory-menu button {
+  min-height: 29px;
+  font-size: 13px;
+}
+.directory-menu .menu-check {
+  width: 14px;
+  flex-shrink: 0;
+  display: inline-flex;
+}
+.directory-menu .menu-chevron {
+  margin-left: auto;
+}
+.directory-menu button.directory-menu-separated {
+  border-top: 1px solid #dedede;
+  margin-top: 4px;
+  padding-top: 9px;
+}
+.file-table tbody tr.file-group,
+.file-table tbody tr.file-group:hover {
+  background: #eceef1;
+}
+.file-table .file-group td {
+  height: 29px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 0;
+}
+.browser-view-options {
+  display: grid;
+  gap: 14px;
+  margin: 22px 0;
+}
+.browser-view-options label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
 .danger-text {
   color: #d4372b;
 }

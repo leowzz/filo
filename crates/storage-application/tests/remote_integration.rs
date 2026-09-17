@@ -375,20 +375,31 @@ async fn remote_application_lifecycle_and_cross_storage_transfers() -> StorageRe
         let mut volume = service.save_remote_storage(None, base.clone()).await?;
         cleanup.track(volume.id);
         let mut configured = base;
-        if matches!(protocol, RemoteProtocol::Sftp | RemoteProtocol::Smb) {
-            let directory = format!("filo-app-{}-{}", protocol_name(protocol), Uuid::new_v4());
-            service
-                .create_directory(locator(&volume, ""), directory.clone())
-                .await?;
-            configured.path = directory;
-            configured.credentials = None;
-            volume = service
-                .save_remote_storage(Some(volume.id), configured.clone())
-                .await?;
-            service
-                .test_remote_connection(Some(volume.id), configured.clone())
-                .await?;
-        }
+        let seed_name = format!("{}-seed.bin", protocol_name(protocol));
+        let downloaded = transfer(
+            &service,
+            TransferKind::Copy,
+            locator(&volume, "seed.txt"),
+            locator(&local, &seed_name),
+        )
+        .await?;
+        assert_completed(&downloaded);
+        assert_eq!(
+            std::fs::read(local_dir.path().join(seed_name)).unwrap(),
+            b"Filo remote fixture\n"
+        );
+        let directory = format!("filo-app-{}-{}", protocol_name(protocol), Uuid::new_v4());
+        service
+            .create_directory(locator(&volume, ""), directory.clone())
+            .await?;
+        configured.path = directory;
+        configured.credentials = None;
+        volume = service
+            .save_remote_storage(Some(volume.id), configured.clone())
+            .await?;
+        service
+            .test_remote_connection(Some(volume.id), configured.clone())
+            .await?;
         cases.push(RemoteCase {
             protocol,
             input: configured,
@@ -403,63 +414,12 @@ async fn remote_application_lifecycle_and_cross_storage_transfers() -> StorageRe
             .iter()
             .find(|view| view.volume.id == case.volume.id)
             .expect("saved remote volume should be listed");
-        match case.protocol {
-            RemoteProtocol::Ftp | RemoteProtocol::Ftps => {
-                assert!(!view.capabilities.write);
-                assert!(matches!(
-                    view.capabilities.rename,
-                    RenameSemantics::Unsupported
-                ));
-            }
-            RemoteProtocol::Sftp | RemoteProtocol::Smb => {
-                assert!(view.capabilities.write);
-                assert!(view.capabilities.delete);
-            }
-        }
+        assert!(view.capabilities.write);
+        assert!(view.capabilities.delete);
+        assert!(matches!(view.capabilities.rename, RenameSemantics::Atomic));
     }
 
-    // FTP and FTPS deliberately expose safe directory deletion while refusing
-    // file publication. Verify both the read path and the declared boundary.
-    for case in cases
-        .iter()
-        .filter(|case| matches!(case.protocol, RemoteProtocol::Ftp | RemoteProtocol::Ftps))
-    {
-        let scratch = format!("filo-app-delete-{}", Uuid::new_v4());
-        service
-            .create_directory(locator(&case.volume, ""), scratch.clone())
-            .await?;
-        service
-            .delete_entry(locator(&case.volume, scratch), DeleteMode::Permanent, true)
-            .await?;
-        let destination_name = format!("{}-seed.bin", protocol_name(case.protocol));
-        let downloaded = transfer(
-            &service,
-            TransferKind::Copy,
-            locator(&case.volume, "seed.txt"),
-            locator(&local, &destination_name),
-        )
-        .await?;
-        assert_completed(&downloaded);
-        assert_eq!(
-            std::fs::read(local_dir.path().join(destination_name)).unwrap(),
-            b"Filo remote fixture\n"
-        );
-        let error = service
-            .start_transfer(
-                TransferKind::Copy,
-                locator(&local, "source.bin"),
-                locator(&case.volume, "new-file.bin"),
-                observer(),
-            )
-            .await
-            .expect_err("FTP file publication must be disabled");
-        assert_eq!(error.code, StorageErrorCode::AccessDenied);
-    }
-
-    for case in cases
-        .iter()
-        .filter(|case| matches!(case.protocol, RemoteProtocol::Sftp | RemoteProtocol::Smb))
-    {
+    for case in &cases {
         let copy_name = format!("copy-{}.bin", Uuid::new_v4());
         let download_name = format!("download-{}.bin", Uuid::new_v4());
         let move_name = format!("move-{}.bin", Uuid::new_v4());
@@ -514,6 +474,44 @@ async fn remote_application_lifecycle_and_cross_storage_transfers() -> StorageRe
             std::fs::read(local_dir.path().join(&move_back_name)).unwrap(),
             payload
         );
+
+        let overwritten = b"overwritten remote payload\n";
+        std::fs::write(local_dir.path().join("source.bin"), overwritten).unwrap();
+        let rejected = service
+            .start_transfer(
+                TransferKind::Copy,
+                locator(&local, "source.bin"),
+                locator(&case.volume, &copy_name),
+                observer(),
+            )
+            .await?;
+        let rejected = wait_for_job(&service, rejected).await?;
+        assert_eq!(rejected.state, TransferState::Failed);
+        assert_eq!(rejected.error_code, Some(StorageErrorCode::AlreadyExists));
+        let replaced = service
+            .start_transfer_with_policy(
+                TransferKind::Copy,
+                locator(&local, "source.bin"),
+                locator(&case.volume, &copy_name),
+                ConflictPolicy::Overwrite,
+                observer(),
+            )
+            .await?;
+        assert_completed(&wait_for_job(&service, replaced).await?);
+        let overwrite_name = format!("overwrite-{}.bin", Uuid::new_v4());
+        let downloaded_overwrite = transfer(
+            &service,
+            TransferKind::Copy,
+            locator(&case.volume, &copy_name),
+            locator(&local, &overwrite_name),
+        )
+        .await?;
+        assert_completed(&downloaded_overwrite);
+        assert_eq!(
+            std::fs::read(local_dir.path().join(overwrite_name)).unwrap(),
+            overwritten
+        );
+        std::fs::write(local_dir.path().join("source.bin"), &payload).unwrap();
 
         let mut read_only = case.input.clone();
         read_only.read_only = true;

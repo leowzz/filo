@@ -7,7 +7,7 @@ import {
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "./api";
-import { Modal } from "./components";
+import { Modal, RequiredMark } from "./components";
 import { useBrowser } from "./store";
 import { isRemoteProtocol, remoteProtocols } from "./StorageProvider";
 import type {
@@ -128,7 +128,10 @@ export function RemoteForm({
   onSaved: (volume: Omit<Volume, "capabilities">) => void;
 }) {
   const client = useQueryClient();
-  const preset = remoteProtocols[protocol];
+  const isFtp = protocol === "ftp" || protocol === "ftps";
+  const preset = remoteProtocols[protocol === "ftps" ? "ftp" : protocol];
+  // Keep the existing wire format so saved encrypted FTP connections retain TLS.
+  const [sslEnabled, setSslEnabled] = useState(protocol === "ftps");
   const [name, setName] = useState(volume?.name ?? "");
   const [host, setHost] = useState(connection?.config.host ?? "");
   const [port, setPort] = useState(
@@ -228,7 +231,7 @@ export function RemoteForm({
   );
   const input: RemoteInput = {
     name: name.trim(),
-    protocol,
+    protocol: isFtp ? (sslEnabled ? "ftps" : "ftp") : protocol,
     host: hostValue,
     port: portNumber,
     path: path.trim(),
@@ -566,7 +569,10 @@ export function RemoteForm({
         disabled={busy || hostKeyConfirmation}
       >
         <label className="field-label">
-          连接名称
+          <span>
+            连接名称
+            <RequiredMark />
+          </span>
           <input
             autoFocus={!embedded}
             className="text-input"
@@ -580,7 +586,10 @@ export function RemoteForm({
 
         <div className="remote-host-row">
           <label className="field-label remote-host-field">
-            服务器地址
+            <span>
+              服务器地址
+              <RequiredMark />
+            </span>
             <input
               className="text-input"
               value={host}
@@ -598,7 +607,10 @@ export function RemoteForm({
             </span>
           </label>
           <label className="field-label remote-port-field">
-            端口
+            <span>
+              端口
+              <RequiredMark />
+            </span>
             <input
               className="text-input"
               type="number"
@@ -629,9 +641,31 @@ export function RemoteForm({
           <p className="error-text">端口须为 1 到 65535 的整数。</p>
         )}
 
+        {isFtp && (
+          <div className="remote-ssl-option">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={sslEnabled}
+                onChange={(event) => {
+                  setSslEnabled(event.target.checked);
+                  resetConnectionStatus();
+                }}
+              />
+              启用 SSL
+            </label>
+            <span className="field-help remote-input-help">
+              使用显式 TLS 加密，并验证服务器证书。
+            </span>
+          </div>
+        )}
+
         {protocol === "smb" && (
           <label className="field-label">
-            SMB 共享名称
+            <span>
+              SMB 共享名称
+              <RequiredMark />
+            </span>
             <input
               className="text-input"
               value={share}
@@ -685,7 +719,10 @@ export function RemoteForm({
               <KeyRound size={15} aria-hidden="true" />
             </div>
             <label className="field-label">
-              用户名
+              <span>
+                用户名
+                <RequiredMark />
+              </span>
               <input
                 className="text-input"
                 value={username}
@@ -730,7 +767,10 @@ export function RemoteForm({
             {protocol === "sftp" && authMethod === "private_key" ? (
               <>
                 <div className="field-label remote-private-key-field">
-                  <span className="remote-private-key-label">SSH 私钥</span>
+                  <span className="remote-private-key-label">
+                    SSH 私钥
+                    <RequiredMark />
+                  </span>
                   <div className="remote-private-key-control">
                     {privateKeyLoading && (
                       <span
@@ -806,7 +846,10 @@ export function RemoteForm({
                     </div>
                     {privateKeySource === "paste" && (
                       <label className="field-label remote-textarea-label">
-                        SSH 私钥
+                        <span>
+                          SSH 私钥
+                          <RequiredMark />
+                        </span>
                         <textarea
                           className="text-input remote-textarea remote-private-key"
                           autoFocus
@@ -836,7 +879,10 @@ export function RemoteForm({
               </>
             ) : (
               <label className="field-label">
-                密码
+                <span>
+                  密码
+                  <RequiredMark />
+                </span>
                 <input
                   type="password"
                   className="text-input"
@@ -873,11 +919,6 @@ export function RemoteForm({
           />
           只读访问
         </label>
-        {(protocol === "ftp" || protocol === "ftps") && (
-          <p className="remote-capability-note" role="note">
-            当前 FTP / FTPS 连接支持浏览与下载；上传和重命名暂不可用。
-          </p>
-        )}
         <p className="field-help remote-credential-help">
           登录凭据保存在系统凭据存储。编辑连接时可保留已有凭据，只有勾选“更换登录凭据”才需要重新输入。
         </p>

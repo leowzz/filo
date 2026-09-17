@@ -6,6 +6,7 @@ type Location = { volumeId: string; path: string };
 type BrowserPreferences = {
   showHidden: boolean;
   showDetails: boolean;
+  useGroups: boolean;
   sort: EntrySort;
 };
 
@@ -13,6 +14,7 @@ const preferencesKey = "filo.browser-preferences";
 const defaultPreferences: BrowserPreferences = {
   showHidden: false,
   showDetails: false,
+  useGroups: false,
   sort: "name",
 };
 
@@ -33,6 +35,7 @@ function readPreferences(): BrowserPreferences {
         typeof input.showDetails === "boolean"
           ? input.showDetails
           : defaultPreferences.showDetails,
+      useGroups: input.useGroups === true,
       sort:
         input.sort === "name" ||
         input.sort === "size" ||
@@ -63,6 +66,7 @@ type State = {
   index: number;
   showHidden: boolean;
   showDetails: boolean;
+  useGroups: boolean;
   sort: EntrySort;
   clipboard: FileClipboard | null;
   navigate: (location: Location) => void;
@@ -70,6 +74,7 @@ type State = {
   setPage: (page: State["page"]) => void;
   toggleHidden: () => void;
   toggleDetails: () => void;
+  toggleGroups: () => void;
   setSort: (sort: EntrySort) => void;
   setClipboard: (entries: Entry[], mode: ClipboardMode) => void;
   clearClipboard: () => void;
@@ -82,6 +87,7 @@ export const useBrowser = create<State>((set) => ({
   index: -1,
   showHidden: initialPreferences.showHidden,
   showDetails: initialPreferences.showDetails,
+  useGroups: initialPreferences.useGroups,
   sort: initialPreferences.sort,
   clipboard: null,
   navigate: (location) =>
@@ -106,6 +112,7 @@ export const useBrowser = create<State>((set) => ({
         showHidden: next.showHidden,
         showDetails: next.showDetails,
         sort: next.sort,
+        useGroups: next.useGroups,
       });
       return { showHidden: next.showHidden };
     }),
@@ -116,6 +123,7 @@ export const useBrowser = create<State>((set) => ({
         showHidden: next.showHidden,
         showDetails: next.showDetails,
         sort: next.sort,
+        useGroups: next.useGroups,
       });
       return { showDetails: next.showDetails };
     }),
@@ -125,8 +133,20 @@ export const useBrowser = create<State>((set) => ({
         showHidden: state.showHidden,
         showDetails: state.showDetails,
         sort,
+        useGroups: state.useGroups,
       });
       return { sort };
+    }),
+  toggleGroups: () =>
+    set((state) => {
+      const useGroups = !state.useGroups;
+      writePreferences({
+        showHidden: state.showHidden,
+        showDetails: state.showDetails,
+        sort: state.sort,
+        useGroups,
+      });
+      return { useGroups };
     }),
   setClipboard: (entries, mode) =>
     set({

@@ -12,6 +12,14 @@ import {
 import type { Entry } from "./types";
 import { isDirectory } from "./types";
 
+export function RequiredMark() {
+  return (
+    <span className="required-mark" aria-hidden="true">
+      *
+    </span>
+  );
+}
+
 export function EntryIcon({
   entry,
   size = 18,

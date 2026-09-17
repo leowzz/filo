@@ -8,7 +8,8 @@
 //! a standard SFTP rename.
 
 use super::{
-    child_path, denied, invalid, join_root, locator_path, normalize_remote_root, unsupported,
+    already_exists, child_path, denied, invalid, join_root, locator_path, normalize_remote_root,
+    only_file_replace, replace_conflict, same_regular_file, sibling_hidden, unsupported,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -391,11 +392,7 @@ fn entry_from_metadata(
 }
 
 fn temporary_path(target: &str) -> String {
-    let name = format!(".filo-transfer-{}", Uuid::new_v4());
-    target
-        .rsplit_once('/')
-        .map(|(parent, _)| format!("{parent}/{name}"))
-        .unwrap_or(name)
+    sibling_hidden(target, ".filo-transfer-")
 }
 
 async fn remove_temporary(sftp: &SftpSession, path: &str) -> StorageResult<()> {
@@ -577,18 +574,25 @@ impl SftpBackend {
             .await?
             .is_some()
         {
-            return Err(StorageError::new(
-                StorageErrorCode::AlreadyExists,
-                "同名项目已存在，不会覆盖",
-            ));
+            return Err(already_exists());
         }
         Ok(())
     }
 
     async fn prepare_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>> {
+        self.prepare_write_mode(locator, None).await
+    }
+
+    async fn prepare_write_mode(
+        &self,
+        locator: &StorageLocator,
+        expected: Option<StorageEntry>,
+    ) -> StorageResult<Box<dyn StagedWrite>> {
         let logical = self.writable_path(locator)?;
         let target = self.remote_path(&logical);
-        self.ensure_absent(&target).await?;
+        if expected.is_none() {
+            self.ensure_absent(&target).await?;
+        }
         let temporary = temporary_path(&target);
         let file = timeout_sftp(self.connection.sftp.open_with_flags(
             temporary.clone(),
@@ -597,8 +601,10 @@ impl SftpBackend {
         .await?;
         Ok(Box::new(SftpStagedWrite {
             sftp: Arc::clone(&self.connection.sftp),
+            volume_id: self.volume_id,
             temporary,
             target,
+            expected,
             file: Some(file),
             published: false,
         }))
@@ -742,17 +748,24 @@ impl StorageBackend for SftpBackend {
     }
 
     async fn stage_replace(&self, expected: &StorageEntry) -> StorageResult<Box<dyn StagedWrite>> {
-        let _ = self.writable_path(&expected.locator)?;
-        Err(unsupported(
-            "SFTP 当前只支持安全的新文件发布，覆盖文件请先选择改名或跳过",
-        ))
+        if expected.kind != StorageEntryKind::File {
+            return Err(only_file_replace());
+        }
+        let current = self.stat(&expected.locator).await?;
+        if !same_regular_file(&current, expected) {
+            return Err(replace_conflict());
+        }
+        self.prepare_write_mode(&expected.locator, Some(expected.clone()))
+            .await
     }
 }
 
 struct SftpStagedWrite {
     sftp: Arc<SftpSession>,
+    volume_id: Uuid,
     temporary: String,
     target: String,
+    expected: Option<StorageEntry>,
     file: Option<SftpFile>,
     published: bool,
 }
@@ -806,20 +819,24 @@ impl StagedWrite for SftpStagedWrite {
                 "SFTP 临时文件不存在，无法发布",
             ));
         }
-        self.cleanup_target_check().await?;
-        let result = timeout_sftp(
-            self.sftp
-                .rename(self.temporary.clone(), self.target.clone()),
-        )
-        .await;
-        match result {
-            Ok(()) => {
-                self.published = true;
-                Ok(())
-            }
-            Err(error) => {
-                self.cleanup().await;
-                Err(error)
+        if self.expected.is_some() {
+            self.publish_replace().await
+        } else {
+            self.cleanup_target_check().await?;
+            let result = timeout_sftp(
+                self.sftp
+                    .rename(self.temporary.clone(), self.target.clone()),
+            )
+            .await;
+            match result {
+                Ok(()) => {
+                    self.published = true;
+                    Ok(())
+                }
+                Err(error) => {
+                    self.cleanup().await;
+                    Err(error)
+                }
             }
         }
     }
@@ -830,12 +847,46 @@ impl SftpStagedWrite {
         match lstat_no_symlink(&self.sftp, &self.target, true, false).await? {
             Some(_) => {
                 self.cleanup().await;
-                Err(StorageError::new(
-                    StorageErrorCode::AlreadyExists,
-                    "同名项目已存在，不会覆盖",
-                ))
+                Err(already_exists())
             }
             None => Ok(()),
+        }
+    }
+
+    async fn publish_replace(&mut self) -> StorageResult<()> {
+        let expected = self.expected.as_ref().expect("replace commit");
+        let Some(metadata) = lstat_no_symlink(&self.sftp, &self.target, true, false).await? else {
+            self.cleanup().await;
+            return Err(replace_conflict());
+        };
+        let current = entry_from_metadata(self.volume_id, "", &metadata)?;
+        if !same_regular_file(&current, expected) {
+            self.cleanup().await;
+            return Err(replace_conflict());
+        }
+        let backup = sibling_hidden(&self.target, ".filo-backup-");
+        if let Err(error) =
+            timeout_sftp(self.sftp.rename(self.target.clone(), backup.clone())).await
+        {
+            self.cleanup().await;
+            return Err(error);
+        }
+        match timeout_sftp(
+            self.sftp
+                .rename(self.temporary.clone(), self.target.clone()),
+        )
+        .await
+        {
+            Ok(()) => {
+                self.published = true;
+                let _ = remove_temporary(&self.sftp, &backup).await;
+                Ok(())
+            }
+            Err(error) => {
+                let _ = timeout_sftp(self.sftp.rename(backup, self.target.clone())).await;
+                self.cleanup().await;
+                Err(error)
+            }
         }
     }
 }
@@ -1062,6 +1113,17 @@ mod tests {
             assert_eq!(unchanged, keep_bytes);
 
             backend.rename(&payload, &renamed).await?;
+            let expected = backend.stat(&keep).await?;
+            let mut replaced = backend.stage_replace(&expected).await?;
+            replaced.write(b"replaced SFTP payload\n").await?;
+            drop(replaced.reader().await?);
+            replaced.commit().await?;
+            let mut replaced_reader = backend.open_read(&keep).await?;
+            let mut replaced_bytes = Vec::new();
+            tokio::io::AsyncReadExt::read_to_end(&mut replaced_reader, &mut replaced_bytes)
+                .await
+                .map_err(|_| fixture_io_error())?;
+            assert_eq!(replaced_bytes, b"replaced SFTP payload\n");
             backend.delete(&renamed).await?;
             backend.delete(&keep).await?;
 

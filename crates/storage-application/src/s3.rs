@@ -255,28 +255,74 @@ impl StorageService {
         let backend = self.backend(remote.volume_id).await?;
         let prefix = normalize_path(&remote.logical_path)?;
         let mut conflicts = Vec::new();
-        let mut names = std::collections::HashSet::new();
+        let mut seen = std::collections::HashMap::new();
         for path in paths {
+            let parent = path
+                .parent()
+                .ok_or_else(|| configuration("请选择本地文件或文件夹"))?;
             let name = path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .ok_or_else(|| configuration("文件名必须是有效 UTF-8"))?;
             validate_name(name)?;
-            let target = StorageLocator {
-                logical_path: if prefix.is_empty() {
-                    name.into()
-                } else {
-                    format!("{prefix}/{name}")
-                },
-                ..remote.clone()
+            let root = tokio::fs::canonicalize(parent)
+                .await
+                .map_err(|_| configuration("无法访问所选目录"))?;
+            let volume = StorageVolume {
+                id: Uuid::new_v4(),
+                connection_id: Uuid::new_v4(),
+                name: "上传预检测".into(),
+                root: VolumeRoot::Local { root_path: root },
+                read_only: true,
             };
-            let exists = match backend.stat(&target).await {
-                Ok(_) => true,
-                Err(error) if error.code == StorageErrorCode::NotFound => false,
-                Err(error) => return Err(error),
+            let local = OpenDalLocalBackend::new(&volume).await?;
+            let locator = StorageLocator {
+                volume_id: volume.id,
+                logical_path: name.into(),
+                version_id: None,
             };
-            if exists || !names.insert(name) {
-                conflicts.push(path.clone());
+            let entries = crate::tree::inventory(
+                &local,
+                &locator,
+                &tokio_util::sync::CancellationToken::new(),
+            )
+            .await?;
+            let mut blocked = Vec::<String>::new();
+            for entry in entries {
+                let logical = &entry.locator.logical_path;
+                // A file blocking a directory is itself the conflict; its descendants
+                // have no target yet. Still validate the entire local inventory above.
+                if blocked
+                    .iter()
+                    .any(|ancestor| logical.starts_with(&format!("{ancestor}/")))
+                {
+                    continue;
+                }
+                let target = StorageLocator {
+                    logical_path: if prefix.is_empty() {
+                        logical.clone()
+                    } else {
+                        format!("{prefix}/{logical}")
+                    },
+                    ..remote.clone()
+                };
+                let incoming_directory = crate::tree::directory(&entry);
+                let existing_directory = match backend.stat(&target).await {
+                    Ok(existing) => Some(crate::tree::directory(&existing)),
+                    Err(error) if error.code == StorageErrorCode::NotFound => None,
+                    Err(error) => return Err(error),
+                };
+                let prior = seen.insert(target.logical_path, incoming_directory);
+                if existing_directory
+                    .into_iter()
+                    .chain(prior)
+                    .any(|directory| !directory || !incoming_directory)
+                {
+                    conflicts.push(parent.join(logical));
+                    if incoming_directory {
+                        blocked.push(logical.clone());
+                    }
+                }
             }
         }
         Ok(conflicts)
@@ -309,6 +355,58 @@ impl StorageService {
         upload: bool,
         policy: ConflictPolicy,
         observer: TransferObserver,
+    ) -> StorageResult<TransferJob> {
+        self.transfer_selected_file_with_options(path, remote, upload, policy, observer, None)
+            .await
+    }
+
+    pub async fn upload_selected_path(
+        &self,
+        path: PathBuf,
+        remote: StorageLocator,
+        policy: ConflictPolicy,
+        conflicts: &[PathBuf],
+        observer: TransferObserver,
+    ) -> StorageResult<TransferJob> {
+        let parent = path
+            .parent()
+            .ok_or_else(|| configuration("请选择本地文件或文件夹"))?;
+        let approved = conflicts
+            .iter()
+            .filter(|conflict| conflict.starts_with(&path))
+            .map(|conflict| {
+                conflict
+                    .strip_prefix(parent)
+                    .unwrap()
+                    .components()
+                    .map(|part| {
+                        part.as_os_str()
+                            .to_str()
+                            .ok_or_else(|| configuration("文件名必须是有效 UTF-8"))
+                    })
+                    .collect::<StorageResult<Vec<_>>>()
+                    .map(|parts| parts.join("/"))
+            })
+            .collect::<StorageResult<std::collections::HashSet<_>>>()?;
+        self.transfer_selected_file_with_options(
+            path,
+            remote,
+            true,
+            policy,
+            observer,
+            Some(approved),
+        )
+        .await
+    }
+
+    async fn transfer_selected_file_with_options(
+        &self,
+        path: PathBuf,
+        remote: StorageLocator,
+        upload: bool,
+        policy: ConflictPolicy,
+        observer: TransferObserver,
+        upload_conflicts: Option<std::collections::HashSet<String>>,
     ) -> StorageResult<TransferJob> {
         if !upload && policy == ConflictPolicy::Rename {
             return Err(configuration("下载自动改名请在保存窗口中选择新的文件名"));
@@ -366,7 +464,14 @@ impl StorageService {
             .await
             .insert(volume.id, backend);
         let result = self
-            .start_transfer_with_policy(TransferKind::Copy, source, destination, policy, observer)
+            .start_transfer_with_options(
+                TransferKind::Copy,
+                source,
+                destination,
+                policy,
+                observer,
+                upload_conflicts,
+            )
             .await;
         if result.is_err() {
             self.temporary_backends.lock().await.remove(&volume.id);

@@ -2,7 +2,7 @@ import { CheckCircle2, ChevronDown, Link2 } from "lucide-react";
 import { useEffect, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, errorMessage } from "./api";
-import { Modal } from "./components";
+import { Modal, RequiredMark } from "./components";
 import { useBrowser } from "./store";
 import type { Connection, S3Input, S3Provider, Volume } from "./types";
 import {
@@ -179,7 +179,10 @@ export function S3Form({
     >
       <fieldset className="connection-fields s3-fields" disabled={busy}>
         <label className="field-label">
-          连接名称
+          <span>
+            连接名称
+            <RequiredMark />
+          </span>
           <input
             autoFocus={!embedded}
             className="text-input"
@@ -195,7 +198,10 @@ export function S3Form({
             <div className="s3-region-access-row">
               <div>
                 <label className="field-label">
-                  地域
+                  <span>
+                    地域
+                    <RequiredMark />
+                  </span>
                   <span className="s3-select-control">
                     <select
                       className="text-input"
@@ -218,7 +224,10 @@ export function S3Form({
                 </label>
                 {customRegion && (
                   <label className="field-label">
-                    地域 ID
+                    <span>
+                      地域 ID
+                      <RequiredMark />
+                    </span>
                     <input
                       className="text-input"
                       value={region}
@@ -256,7 +265,8 @@ export function S3Form({
         <label className="field-label">
           <span className="s3-endpoint-label">
             <span>
-              访问地址（Endpoint）{provider === "generic" ? "（可选）" : ""}
+              访问地址（Endpoint）
+              {provider === "generic" ? "（可选）" : <RequiredMark />}
             </span>
             {cloud && addressMode !== "custom" && (
               <span className="s3-auto-badge">自动生成</span>
@@ -295,7 +305,10 @@ export function S3Form({
         )}
         {provider === "generic" && (
           <label className="field-label">
-            地域（Region）
+            <span>
+              地域（Region）
+              <RequiredMark />
+            </span>
             <input
               className="text-input"
               value={region}
@@ -305,7 +318,10 @@ export function S3Form({
           </label>
         )}
         <label className="field-label">
-          存储桶（Bucket）
+          <span>
+            存储桶（Bucket）
+            <RequiredMark />
+          </span>
           <input
             className="text-input"
             value={bucket}
@@ -327,7 +343,10 @@ export function S3Form({
         {replaceCredentials && (
           <>
             <label className="field-label">
-              Access Key ID
+              <span>
+                Access Key ID
+                <RequiredMark />
+              </span>
               <input
                 className="text-input"
                 autoComplete="off"
@@ -337,7 +356,10 @@ export function S3Form({
               />
             </label>
             <label className="field-label">
-              {provider === "oss" ? "AccessKey Secret" : "Secret Access Key"}
+              <span>
+                {provider === "oss" ? "AccessKey Secret" : "Secret Access Key"}
+                <RequiredMark />
+              </span>
               <input
                 type="password"
                 className="text-input"
@@ -384,7 +406,10 @@ export function S3Form({
             <summary>高级设置</summary>
             {provider === "rustfs" && (
               <label className="field-label">
-                地域（Region）
+                <span>
+                  地域（Region）
+                  <RequiredMark />
+                </span>
                 <input
                   className="text-input"
                   value={region}

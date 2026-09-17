@@ -17,19 +17,9 @@ export function ConflictPolicyField({
       description: string;
     }[] = [
       {
-        value: "reject",
-        title: "提示冲突",
-        description: "保留两边内容，停止同名项，其他项目继续。",
-      },
-      {
         value: "overwrite",
         title: "覆盖同名文件",
         description: "用上传的文件替换已有文件，文件夹合并。",
-      },
-      {
-        value: "skip",
-        title: "跳过已有项目",
-        description: "不处理目标中已经存在的同名项目。",
       },
       {
         value: "rename",

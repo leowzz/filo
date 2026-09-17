@@ -21,7 +21,13 @@ impl StorageService {
         token: &CancellationToken,
         observer: &TransferObserver,
         policy: ConflictPolicy,
+        upload_conflicts: Option<&std::collections::HashSet<String>>,
     ) -> StorageResult<()> {
+        if let Some(conflicts) = upload_conflicts {
+            return self
+                .execute_upload(job, token, observer, policy, conflicts)
+                .await;
+        }
         if token.is_cancelled() {
             return Err(cancelled());
         }
@@ -128,6 +134,103 @@ impl StorageService {
         }
         Ok(())
     }
+    /// Merge directory containers, applying the user's choice only to the exact
+    /// source entries reported by preflight. Every other file uses no-clobber writes.
+    async fn execute_upload(
+        &self,
+        job: &mut TransferJob,
+        token: &CancellationToken,
+        observer: &TransferObserver,
+        policy: ConflictPolicy,
+        conflicts: &std::collections::HashSet<String>,
+    ) -> StorageResult<()> {
+        let source = self.backend(job.source.volume_id).await?;
+        let destination = self.backend(job.destination.volume_id).await?;
+        let entries = tree::inventory(source.as_ref(), &job.source, token).await?;
+        check_permissions(job.kind, &entries[0], source.as_ref(), destination.as_ref())?;
+        tree::check_overlap(
+            source.as_ref(),
+            destination.as_ref(),
+            &job.source,
+            &job.destination,
+        )?;
+        job.bytes_total = Some(entries.iter().filter_map(|entry| entry.size).sum());
+        job.state = TransferState::Running;
+        self.report(job, observer).await?;
+        let mut directories = std::collections::HashMap::<String, StorageLocator>::new();
+        for (index, entry) in entries.iter().enumerate() {
+            tree::check_cancel(token)?;
+            let mut target = if index == 0 {
+                job.destination.clone()
+            } else {
+                let (parent, name) = entry.locator.logical_path.rsplit_once('/').unwrap();
+                let parent = &directories[parent];
+                StorageLocator {
+                    logical_path: format!("{}/{name}", parent.logical_path),
+                    ..parent.clone()
+                }
+            };
+            let directory = tree::directory(entry);
+            let existing = super::conflicts::existing(destination.as_ref(), &target).await?;
+            let merge = directory && existing.as_ref().is_some_and(tree::directory);
+            let choice = if conflicts.contains(&entry.locator.logical_path) {
+                policy
+            } else {
+                ConflictPolicy::Reject
+            };
+            if let Some(existing) = existing.as_ref().filter(|_| !merge) {
+                if choice == ConflictPolicy::Rename {
+                    target =
+                        super::conflicts::available_name(destination.as_ref(), &target, directory)
+                            .await?;
+                } else if choice != ConflictPolicy::Overwrite
+                    || directory
+                    || existing.kind != StorageEntryKind::File
+                {
+                    return Err(StorageError::new(
+                        StorageErrorCode::AlreadyExists,
+                        format!(
+                            "{}：目标已有同名项目，未覆盖，请重新检查并选择处理方式",
+                            target.logical_path
+                        ),
+                    ));
+                }
+            }
+            if index == 0 && job.destination != target {
+                job.destination = target.clone();
+                self.report(job, observer).await?;
+            }
+            if directory {
+                if !merge {
+                    destination.create_dir(&target).await?;
+                }
+                directories.insert(entry.locator.logical_path.clone(), target);
+            } else {
+                self.copy_file(
+                    job,
+                    token,
+                    observer,
+                    source.as_ref(),
+                    destination.as_ref(),
+                    entry,
+                    &target,
+                    choice,
+                )
+                .await
+                .map_err(|error| {
+                    StorageError::new(
+                        error.code,
+                        format!(
+                            "{}：{}；已完成的文件会保留",
+                            target.logical_path, error.message
+                        ),
+                    )
+                })?;
+            }
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn copy_file(
         &self,

@@ -5,8 +5,13 @@
 //! mutex; readers and staged writers then own cloned SMB connections and can
 //! make progress without holding that mutex.  Staged writes always publish by
 //! `Tree::rename`, whose `ReplaceIfExists` field is deliberately false in
-//! `smb2`, so a late destination can never be silently clobbered.
+//! `smb2`. New files therefore never clobber a late destination. Replacing a
+//! verified file moves that destination aside, then uses the same no-clobber
+//! rename so a changed target is not overwritten.
 
+use super::{
+    already_exists, only_file_replace, replace_conflict, same_regular_file, sibling_hidden,
+};
 use std::{future::Future, net::IpAddr, sync::Arc, time::Duration};
 use storage_domain::*;
 use storage_provider_api::{StagedWrite, StorageBackend, StorageReader};
@@ -598,25 +603,27 @@ impl SmbBackend {
 
     async fn absent(&self, path: &str) -> StorageResult<()> {
         match self.stat_path(path).await {
-            Ok(_) => Err(StorageError::new(
-                StorageErrorCode::AlreadyExists,
-                "同名项目已存在，不会覆盖",
-            )),
+            Ok(_) => Err(already_exists()),
             Err(error) if error.code == StorageErrorCode::NotFound => Ok(()),
             Err(error) => Err(error),
         }
     }
 
     async fn prepare_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>> {
+        self.prepare_write_mode(locator, None).await
+    }
+
+    async fn prepare_write_mode(
+        &self,
+        locator: &StorageLocator,
+        expected: Option<StorageEntry>,
+    ) -> StorageResult<Box<dyn StagedWrite>> {
         let logical = self.writable_path(locator)?;
         let target = self.path(&logical);
-        self.absent(&target).await?;
-        let (parent, _) = target.rsplit_once('/').unwrap_or(("", target.as_str()));
-        let temporary = if parent.is_empty() {
-            format!(".filo-transfer-{}", Uuid::new_v4())
-        } else {
-            format!("{parent}/.filo-transfer-{}", Uuid::new_v4())
-        };
+        if expected.is_none() {
+            self.absent(&target).await?;
+        }
+        let temporary = sibling_hidden(&target, ".filo-transfer-");
         ensure_no_reparse(&self.session, &target).await?;
         let mut session_guard = self.session.lock().await;
         let SmbSession { client, tree } = &mut *session_guard;
@@ -629,8 +636,10 @@ impl SmbBackend {
         .await?;
         Ok(Box::new(SmbStagedWrite {
             session: Arc::clone(&self.session),
+            volume_id: self.volume_id,
             temporary,
             target,
+            expected,
             writer: Some(writer),
             published: false,
         }))
@@ -783,18 +792,24 @@ impl StorageBackend for SmbBackend {
     }
 
     async fn stage_replace(&self, expected: &StorageEntry) -> StorageResult<Box<dyn StagedWrite>> {
-        let _ = self.writable_path(&expected.locator)?;
-        Err(StorageError::new(
-            StorageErrorCode::Unsupported,
-            "SMB 当前只支持安全的新文件发布，覆盖文件请先选择改名或跳过",
-        ))
+        if expected.kind != StorageEntryKind::File {
+            return Err(only_file_replace());
+        }
+        let current = self.stat(&expected.locator).await?;
+        if !same_regular_file(&current, expected) {
+            return Err(replace_conflict());
+        }
+        self.prepare_write_mode(&expected.locator, Some(expected.clone()))
+            .await
     }
 }
 
 struct SmbStagedWrite {
     session: Arc<Mutex<SmbSession>>,
+    volume_id: Uuid,
     temporary: String,
     target: String,
+    expected: Option<StorageEntry>,
     writer: Option<smb2::FileWriter>,
     published: bool,
 }
@@ -845,23 +860,72 @@ impl StagedWrite for SmbStagedWrite {
         // probe covers a parent that was replaced while the upload ran.
         ensure_no_reparse(&self.session, &self.temporary).await?;
         ensure_no_reparse(&self.session, &self.target).await?;
-        let rename_result = {
-            let mut session_guard = self.session.lock().await;
-            let SmbSession { client, tree } = &mut *session_guard;
-            with_timeout(async {
-                client
-                    .rename(tree, &self.temporary, &self.target)
-                    .await
-                    .map_err(smb_error)
-            })
-            .await
-        };
+        if self.expected.is_some() {
+            return self.publish_replace().await;
+        }
+        let temporary = self.temporary.clone();
+        let target = self.target.clone();
+        let rename_result = self.rename_path(&temporary, &target).await;
         if let Err(error) = rename_result {
             self.cleanup().await;
             return Err(error);
         }
         self.published = true;
         Ok(())
+    }
+}
+
+impl SmbStagedWrite {
+    async fn rename_path(&mut self, from: &str, to: &str) -> StorageResult<()> {
+        let mut session_guard = self.session.lock().await;
+        let SmbSession { client, tree } = &mut *session_guard;
+        with_timeout(async { client.rename(tree, from, to).await.map_err(smb_error) }).await
+    }
+
+    async fn publish_replace(&mut self) -> StorageResult<()> {
+        let expected = self.expected.clone().expect("replace commit");
+        let info = match self.stat_target().await {
+            Ok(info) => info,
+            Err(error) => {
+                self.cleanup().await;
+                return Err(if error.code == StorageErrorCode::NotFound {
+                    replace_conflict()
+                } else {
+                    error
+                });
+            }
+        };
+        let current = entry_from_info(self.volume_id, "", &info);
+        if !same_regular_file(&current, &expected) {
+            self.cleanup().await;
+            return Err(replace_conflict());
+        }
+        let target = self.target.clone();
+        let temporary = self.temporary.clone();
+        let backup = sibling_hidden(&target, ".filo-backup-");
+        if let Err(error) = self.rename_path(&target, &backup).await {
+            self.cleanup().await;
+            return Err(error);
+        }
+        match self.rename_path(&temporary, &target).await {
+            Ok(()) => {
+                self.published = true;
+                let _ = delete_temporary(&self.session, &backup).await;
+                Ok(())
+            }
+            Err(error) => {
+                let _ = self.rename_path(&backup, &target).await;
+                self.cleanup().await;
+                Err(error)
+            }
+        }
+    }
+
+    async fn stat_target(&mut self) -> StorageResult<smb2::FileInfo> {
+        ensure_no_reparse(&self.session, &self.target).await?;
+        let mut session_guard = self.session.lock().await;
+        let SmbSession { client, tree } = &mut *session_guard;
+        with_timeout(async { client.stat(tree, &self.target).await.map_err(smb_error) }).await
     }
 }
 
@@ -1046,6 +1110,17 @@ mod tests {
             assert_eq!(unchanged, keep_bytes);
 
             backend.rename(&payload, &renamed).await?;
+            let expected = backend.stat(&keep).await?;
+            let mut replaced = backend.stage_replace(&expected).await?;
+            replaced.write(b"replaced SMB payload\n").await?;
+            drop(replaced.reader().await?);
+            replaced.commit().await?;
+            let mut replaced_reader = backend.open_read(&keep).await?;
+            let mut replaced_bytes = Vec::new();
+            tokio::io::AsyncReadExt::read_to_end(&mut replaced_reader, &mut replaced_bytes)
+                .await
+                .map_err(|_| fixture_io_error())?;
+            assert_eq!(replaced_bytes, b"replaced SMB payload\n");
             backend.delete(&renamed).await?;
             backend.delete(&keep).await?;
             backend.delete(&directory).await?;

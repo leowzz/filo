@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Cloud, Globe2, KeyRound, Network, Server } from "lucide-react";
+import { Cloud, Globe2, KeyRound, Network } from "lucide-react";
 import { api } from "./api";
 import { s3Providers } from "./s3Providers";
 import type { RemoteProtocol, S3Provider, Volume } from "./types";
@@ -10,17 +10,12 @@ import ossIcon from "./assets/providers/oss.ico";
 const icons = { rustfs: rustfsIcon, tos: tosIcon, oss: ossIcon };
 
 export const remoteProtocols: Record<
-  RemoteProtocol,
+  Exclude<RemoteProtocol, "ftps">,
   { name: string; description: string; defaultPort: number }
 > = {
   ftp: {
     name: "FTP",
-    description: "连接传统 FTP 文件服务器",
-    defaultPort: 21,
-  },
-  ftps: {
-    name: "FTPS",
-    description: "通过 TLS 加密连接 FTP 服务器",
+    description: "连接 FTP 文件服务器，可启用 SSL 加密",
     defaultPort: 21,
   },
   sftp: {
@@ -36,18 +31,15 @@ export const remoteProtocols: Record<
 };
 
 export function isRemoteProtocol(value: string): value is RemoteProtocol {
-  return Object.prototype.hasOwnProperty.call(remoteProtocols, value);
+  return (
+    value === "ftps" ||
+    Object.prototype.hasOwnProperty.call(remoteProtocols, value)
+  );
 }
 
 export function RemoteProviderIcon({ protocol }: { protocol: RemoteProtocol }) {
   const Icon =
-    protocol === "sftp"
-      ? KeyRound
-      : protocol === "smb"
-        ? Network
-        : protocol === "ftps"
-          ? Server
-          : Globe2;
+    protocol === "sftp" ? KeyRound : protocol === "smb" ? Network : Globe2;
   return (
     <span
       className="storage-provider-icon remote-provider-icon"
@@ -88,7 +80,7 @@ export function StorageTypeLabel({ volume }: { volume: Volume }) {
     return (
       <>
         {protocol && isRemoteProtocol(protocol)
-          ? remoteProtocols[protocol].name
+          ? remoteProtocols[protocol === "ftps" ? "ftp" : protocol].name
           : "远程存储"}
       </>
     );

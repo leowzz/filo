@@ -1,4 +1,4 @@
-import { Copy, HardDrive, Info, ShieldCheck } from "lucide-react";
+import { Copy, Folder, HardDrive, Info, ShieldCheck } from "lucide-react";
 import { EntryIcon, formatDate, formatSize, typeName } from "./components";
 import { type Entry, type Volume } from "./types";
 import { S3StorageOverview } from "./S3StorageOverview";
@@ -18,10 +18,17 @@ export function DetailsPanel({
   const selected =
     selectedEntries.length === 1 ? selectedEntries[0] : undefined;
   const multipleSelected = selectedEntries.length > 1;
+  const currentDirectory = path.split("/").filter(Boolean).at(-1);
   return (
     <aside className="details-panel">
       <div className="details-heading">
-        {multipleSelected ? "所选项目" : selected ? "项目详情" : "存储详情"}
+        {multipleSelected
+          ? "所选项目"
+          : selected
+            ? "项目详情"
+            : currentDirectory
+              ? "文件夹详情"
+              : "存储详情"}
         <Info size={15} />
       </div>
       <div className={`detail-icon ${selected ? "" : "drive"}`}>
@@ -29,6 +36,8 @@ export function DetailsPanel({
           <Copy size={48} strokeWidth={1.2} />
         ) : selected ? (
           <EntryIcon entry={selected} size={54} />
+        ) : currentDirectory ? (
+          <Folder size={48} strokeWidth={1.2} />
         ) : (
           <HardDrive size={48} strokeWidth={1.2} />
         )}
@@ -36,20 +45,22 @@ export function DetailsPanel({
       <h3>
         {multipleSelected
           ? `已选择 ${selectedEntries.length} 项`
-          : (selected?.name ?? volume.name)}
+          : (selected?.name ?? currentDirectory ?? volume.name)}
       </h3>
       <span className="pill">
         {multipleSelected ? (
           "多个项目"
         ) : selected ? (
           typeName(selected)
+        ) : currentDirectory ? (
+          "文件夹"
         ) : (
           <StorageTypeLabel volume={volume} />
         )}
       </span>
-      {selectedEntries.length === 0 && volume.root.type === "s3" && (
-        <S3StorageOverview volume={volume} />
-      )}
+      {selectedEntries.length === 0 &&
+        !currentDirectory &&
+        volume.root.type === "s3" && <S3StorageOverview volume={volume} />}
       <dl>
         <dt>位置</dt>
         <dd>

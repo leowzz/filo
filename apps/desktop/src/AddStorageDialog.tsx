@@ -20,7 +20,8 @@ import {
 } from "./StorageProvider";
 import type { RemoteProtocol, S3Provider, Volume } from "./types";
 
-type StorageChoice = S3Provider | RemoteProtocol;
+type RemoteChoice = Exclude<RemoteProtocol, "ftps">;
+type StorageChoice = S3Provider | RemoteChoice;
 
 export function AddStorageDialog({
   mutation,
@@ -150,7 +151,7 @@ export function AddStorageDialog({
                 远程文件协议
               </h3>
               <div className="remote-provider-list storage-provider-grid">
-                {(Object.keys(remoteProtocols) as RemoteProtocol[]).map(
+                {(Object.keys(remoteProtocols) as RemoteChoice[]).map(
                   (protocol) => (
                     <button
                       key={protocol}

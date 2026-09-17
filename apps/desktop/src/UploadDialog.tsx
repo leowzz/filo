@@ -5,18 +5,20 @@ import { ConflictPolicyField } from "./ConflictPolicyField";
 import type { ConflictPolicy } from "./types";
 export function UploadDialog({
   paths,
+  sources,
   total,
   destination,
   onClose,
   onStart,
 }: {
   paths: string[];
+  sources: string[];
   total: number;
   destination?: string;
   onClose: () => void;
   onStart: (policy: ConflictPolicy) => void;
 }) {
-  const [policy, setPolicy] = useState<ConflictPolicy>("reject");
+  const [policy, setPolicy] = useState<ConflictPolicy>("overwrite");
   return (
     <Modal
       title="发现同名文件或文件夹"
@@ -29,7 +31,12 @@ export function UploadDialog({
       </p>
       <ul className="batch-items">
         {paths.map((path, index) => (
-          <li key={`${index}:${path}`}>{path.split(/[\\/]/).pop()}</li>
+          <li key={`${index}:${path}`}>{(() => {
+            const normalized = path.replaceAll("\\", "/");
+            const root = sources.map((source) => source.replaceAll("\\", "/"))
+              .find((source) => normalized === source || normalized.startsWith(`${source}/`));
+            return root ? normalized.slice(root.lastIndexOf("/") + 1) : normalized.split("/").pop();
+          })()}</li>
         ))}
       </ul>
       <ConflictPolicyField

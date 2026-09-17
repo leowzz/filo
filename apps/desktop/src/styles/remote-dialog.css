@@ -95,6 +95,15 @@
   overflow-wrap: anywhere;
 }
 
+.remote-ssl-option .checkbox-label {
+  margin-bottom: 0;
+}
+
+.remote-ssl-option .field-help {
+  margin-top: 2px;
+  margin-left: 23px;
+}
+
 .remote-select-control {
   position: relative;
   display: block;

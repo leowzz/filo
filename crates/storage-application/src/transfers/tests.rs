@@ -39,27 +39,100 @@ async fn saved_limits_update_existing_backend_budgets_and_restore_on_restart() {
     assert_eq!(limits.upload.acquire(100_000).await, 100_000);
 }
 
+fn sorted_paths(mut paths: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
+    paths.sort();
+    paths
+}
+
 #[tokio::test]
-async fn upload_preflight_finds_existing_and_duplicate_names_and_propagates_errors() {
+async fn upload_preflight_recurses_into_folders_and_propagates_errors() {
     let fixture = Fixture::new().await;
     let remote = StorageLocator {
         volume_id: fixture.destination_id,
         logical_path: "".into(),
         version_id: None,
     };
-    std::fs::write(fixture.destination.path().join("exists"), b"keep").unwrap();
+    let local = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(local.path().join("firmware/nested")).unwrap();
+    std::fs::create_dir_all(local.path().join("folder")).unwrap();
+    std::fs::create_dir_all(local.path().join("blocked/inside")).unwrap();
+    std::fs::create_dir(local.path().join("a")).unwrap();
+    std::fs::create_dir(local.path().join("b")).unwrap();
+    std::fs::write(local.path().join("unique.txt"), b"unique").unwrap();
+    std::fs::write(local.path().join("exists"), b"upload").unwrap();
+    std::fs::write(local.path().join("a/clean"), b"a").unwrap();
+    std::fs::write(local.path().join("b/clean"), b"b").unwrap();
+    std::fs::write(local.path().join("firmware/keep-local.hex"), b"local-only").unwrap();
+    std::fs::write(local.path().join("firmware/conflict.hex"), b"new-conflict").unwrap();
+    std::fs::write(
+        local.path().join("firmware/nested/conflict.hex"),
+        b"new-nested",
+    )
+    .unwrap();
+    std::fs::write(local.path().join("firmware/nested/new.hex"), b"new-file").unwrap();
+    std::fs::write(local.path().join("folder/only-local.txt"), b"folder-local").unwrap();
+    std::fs::write(local.path().join("blocked/inside/file"), b"blocked-child").unwrap();
+    std::fs::create_dir_all(fixture.destination.path().join("firmware/nested")).unwrap();
     std::fs::create_dir(fixture.destination.path().join("folder")).unwrap();
-    let paths: Vec<std::path::PathBuf> = ["/a/clean", "/a/exists", "/a/folder", "/b/clean"]
-        .into_iter()
-        .map(Into::into)
-        .collect();
-    assert_eq!(
+    std::fs::write(fixture.destination.path().join("exists"), b"keep").unwrap();
+    std::fs::write(
+        fixture.destination.path().join("firmware/conflict.hex"),
+        b"old",
+    )
+    .unwrap();
+    std::fs::write(
         fixture
-            .service
-            .preflight_upload(&remote, &paths)
-            .await
-            .unwrap(),
-        paths[1..]
+            .destination
+            .path()
+            .join("firmware/nested/conflict.hex"),
+        b"old-nested",
+    )
+    .unwrap();
+    std::fs::write(
+        fixture
+            .destination
+            .path()
+            .join("firmware/nested/remote-only.hex"),
+        b"keep-nested",
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.destination.path().join("firmware/remote-only.hex"),
+        b"keep-root",
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.destination.path().join("blocked"),
+        b"file-in-the-way",
+    )
+    .unwrap();
+    let paths = [
+        "unique.txt",
+        "exists",
+        "firmware",
+        "a/clean",
+        "b/clean",
+        "folder",
+        "blocked",
+    ]
+    .into_iter()
+    .map(|path| local.path().join(path))
+    .collect::<Vec<_>>();
+    assert_eq!(
+        sorted_paths(
+            fixture
+                .service
+                .preflight_upload(&remote, &paths)
+                .await
+                .unwrap()
+        ),
+        sorted_paths(vec![
+            local.path().join("exists"),
+            local.path().join("firmware/conflict.hex"),
+            local.path().join("firmware/nested/conflict.hex"),
+            local.path().join("b/clean"),
+            local.path().join("blocked"),
+        ])
     );
     let invalid = StorageLocator {
         volume_id: Uuid::new_v4(),
@@ -70,6 +143,109 @@ async fn upload_preflight_finds_existing_and_duplicate_names_and_propagates_erro
         .preflight_upload(&invalid, &paths)
         .await
         .is_err());
+}
+
+#[tokio::test]
+async fn folder_upload_overwrite_applies_only_to_preflight_conflicts() {
+    let fixture = Fixture::new().await;
+    let remote = StorageLocator {
+        volume_id: fixture.destination_id,
+        logical_path: "".into(),
+        version_id: None,
+    };
+    let local = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(local.path().join("firmware/nested")).unwrap();
+    std::fs::write(local.path().join("firmware/keep-local.hex"), b"local-only").unwrap();
+    std::fs::write(local.path().join("firmware/conflict.hex"), b"new-conflict").unwrap();
+    std::fs::write(
+        local.path().join("firmware/nested/conflict.hex"),
+        b"new-nested",
+    )
+    .unwrap();
+    std::fs::write(local.path().join("firmware/nested/new.hex"), b"new-file").unwrap();
+    std::fs::create_dir_all(fixture.destination.path().join("firmware/nested")).unwrap();
+    std::fs::write(
+        fixture.destination.path().join("firmware/conflict.hex"),
+        b"old",
+    )
+    .unwrap();
+    std::fs::write(
+        fixture
+            .destination
+            .path()
+            .join("firmware/nested/conflict.hex"),
+        b"old-nested",
+    )
+    .unwrap();
+    std::fs::write(
+        fixture
+            .destination
+            .path()
+            .join("firmware/nested/remote-only.hex"),
+        b"keep-nested",
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.destination.path().join("firmware/remote-only.hex"),
+        b"keep-root",
+    )
+    .unwrap();
+    let firmware = local.path().join("firmware");
+    let conflicts = fixture
+        .service
+        .preflight_upload(&remote, std::slice::from_ref(&firmware))
+        .await
+        .unwrap();
+    assert_eq!(
+        sorted_paths(conflicts.clone()),
+        sorted_paths(vec![
+            local.path().join("firmware/conflict.hex"),
+            local.path().join("firmware/nested/conflict.hex"),
+        ])
+    );
+    let job = fixture
+        .service
+        .upload_selected_path(
+            firmware,
+            remote,
+            ConflictPolicy::Overwrite,
+            &conflicts,
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+    let result = fixture.result(job.id).await;
+    assert_eq!(
+        result.state,
+        TransferState::Completed,
+        "{:?}",
+        result.error_message
+    );
+    let uploaded = fixture.destination.path().join("firmware");
+    assert_eq!(
+        std::fs::read(uploaded.join("conflict.hex")).unwrap(),
+        b"new-conflict"
+    );
+    assert_eq!(
+        std::fs::read(uploaded.join("nested/conflict.hex")).unwrap(),
+        b"new-nested"
+    );
+    assert_eq!(
+        std::fs::read(uploaded.join("keep-local.hex")).unwrap(),
+        b"local-only"
+    );
+    assert_eq!(
+        std::fs::read(uploaded.join("nested/new.hex")).unwrap(),
+        b"new-file"
+    );
+    assert_eq!(
+        std::fs::read(uploaded.join("remote-only.hex")).unwrap(),
+        b"keep-root"
+    );
+    assert_eq!(
+        std::fs::read(uploaded.join("nested/remote-only.hex")).unwrap(),
+        b"keep-nested"
+    );
 }
 
 #[tokio::test]

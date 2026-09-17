@@ -52,6 +52,8 @@ import {
 
 import { AppHeader } from "./AppHeader";
 import { FileBrowser } from "./FileBrowser";
+import { browserRows } from "./browserRows";
+import { BrowserViewOptions } from "./DirectoryMenu";
 import { OverviewPage } from "./OverviewPage";
 import { SettingsPage } from "./SettingsPage";
 import { useAppUpdater } from "./useAppUpdater";
@@ -160,6 +162,7 @@ export default function App() {
     version_id: null,
   };
   const [search, setSearch] = useState("");
+  const [viewOptions, setViewOptions] = useState(false);
   const [preview, setPreview] = useState<Entry[] | null>(null);
   const [contentSearch, setContentSearch] = useState(false);
   const [s3Manager, setS3Manager] = useState<{
@@ -321,6 +324,9 @@ export default function App() {
       state.sort,
     ]),
     entries.map((entry) => entry.locator.logical_path),
+    browserRows(entries, state.useGroups).map(
+      (row) => row.entry?.locator.logical_path ?? null,
+    ),
   );
   const { setSelection, selectedPaths } = selection;
   const selectedEntries = entries.filter((entry) =>
@@ -886,6 +892,14 @@ export default function App() {
               onCopy={copySelection}
               onCut={cutSelection}
               onPaste={pasteSelection}
+              canPaste={
+                !!state.clipboard &&
+                !pastePending &&
+                !pasteMutation.isPending &&
+                !pasteBlockReason(state.clipboard, parent, volume)
+              }
+              onCreateFolder={() => openDialog({ type: "folder" })}
+              onViewOptions={() => setViewOptions(true)}
               uploadPending={fileTransfer.isPending || prepareUpload.isPending}
               onFileDrop={(paths) => {
                 setMenu(null);
@@ -905,6 +919,9 @@ export default function App() {
         {state.page === "settings" && <SettingsPage updater={updater} />}
       </main>
 
+      {viewOptions && (
+        <BrowserViewOptions onClose={() => setViewOptions(false)} />
+      )}
       {preview && (
         <PreviewDialog entries={preview} onClose={() => setPreview(null)} />
       )}
@@ -973,6 +990,7 @@ export default function App() {
       {uploadRequest && (
         <UploadDialog
           paths={uploadRequest.conflicts}
+          sources={uploadRequest.paths}
           total={uploadRequest.paths.length}
           destination={`${volumes.find((item) => item.id === uploadRequest.remote.volume_id)?.name ?? ""}/${uploadRequest.remote.logical_path}`}
           onClose={() => setUploadRequest(null)}

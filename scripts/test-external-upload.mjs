@@ -155,6 +155,13 @@ assert.deepEqual(
   ),
   ["a.txt", "folder"],
 );
+assert.equal(
+  await page.evaluate(
+    () => document.querySelector('input[value="overwrite"]').checked,
+  ),
+  true,
+  "Upload conflicts default to overwrite",
+);
 await page.evaluate(() =>
   window.emitDropEvent("drop", true, ["/external/other.txt"]),
 );
@@ -174,6 +181,32 @@ assert.equal(
   ),
   0,
 );
+
+await page.evaluate(() => {
+  window.conflictPaths = ["/external/folder/nested/file.hex"];
+  window.emitDropEvent("drop", true, ["/external/folder"]);
+});
+await page.waitForSelector(".upload-dialog");
+assert.deepEqual(
+  await page.evaluate(() =>
+    Array.from(
+      document.querySelectorAll(".batch-items li"),
+      (node) => node.textContent,
+    ),
+  ),
+  ["folder/nested/file.hex"],
+);
+assert.equal(
+  await page.evaluate(
+    () => document.querySelector('input[value="overwrite"]').checked,
+  ),
+  true,
+  "Directory uploads keep overwrite selected for nested conflicts",
+);
+await page.click('button:text-is("取消")');
+await page.evaluate(() => {
+  window.conflictPaths = undefined;
+});
 
 await page.evaluate(() => window.emitDropEvent("drop"));
 await page.waitForSelector(".upload-dialog");

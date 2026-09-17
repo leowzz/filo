@@ -253,9 +253,41 @@ pub(crate) fn child_path(parent: &str, name: &str) -> String {
     }
 }
 
+/// Hidden sibling used for exclusive temporary files and replace backups.
+pub(crate) fn sibling_hidden(target: &str, prefix: &str) -> String {
+    let name = format!("{prefix}{}", Uuid::new_v4());
+    match target.rsplit_once('/') {
+        Some((parent, _)) if !parent.is_empty() => format!("{parent}/{name}"),
+        _ => name,
+    }
+}
+
+pub(crate) fn same_regular_file(current: &StorageEntry, expected: &StorageEntry) -> bool {
+    current.kind == StorageEntryKind::File
+        && expected.kind == StorageEntryKind::File
+        && current.size == expected.size
+        && current.modified_at == expected.modified_at
+}
+
+pub(crate) fn already_exists() -> StorageError {
+    StorageError::new(StorageErrorCode::AlreadyExists, "同名项目已存在，不会覆盖")
+}
+
+pub(crate) fn replace_conflict() -> StorageError {
+    StorageError::new(
+        StorageErrorCode::Conflict,
+        "目标文件已变化，未覆盖，请重新确认",
+    )
+}
+
+pub(crate) fn only_file_replace() -> StorageError {
+    StorageError::new(StorageErrorCode::Conflict, "仅能用文件覆盖同名文件")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn remote_root_rejects_parent_and_absolute_smb_paths() {
@@ -269,5 +301,47 @@ mod tests {
         assert_eq!(join_root("/srv/data", "a/b"), "/srv/data/a/b");
         assert_eq!(join_root("", "a/b"), "a/b");
         assert_eq!(join_root("/", "a"), "/a");
+    }
+
+    #[test]
+    fn hidden_siblings_stay_in_the_target_directory() {
+        let temporary = sibling_hidden("root/folder/file.bin", ".filo-transfer-");
+        assert!(temporary.starts_with("root/folder/.filo-transfer-"));
+        assert!(!temporary.contains(".."));
+        assert_eq!(
+            sibling_hidden("file.bin", ".filo-backup-")
+                .strip_prefix(".filo-backup-")
+                .unwrap()
+                .len(),
+            Uuid::nil().to_string().len()
+        );
+    }
+
+    #[test]
+    fn regular_file_replace_requires_unchanged_size_and_mtime() {
+        let file = |size, modified: Option<&str>| StorageEntry {
+            locator: StorageLocator {
+                volume_id: Uuid::nil(),
+                logical_path: "a.bin".into(),
+                version_id: None,
+            },
+            name: "a.bin".into(),
+            kind: StorageEntryKind::File,
+            size: Some(size),
+            modified_at: modified.map(str::to_owned),
+            etag: None,
+            content_type: None,
+            metadata: serde_json::json!({}),
+        };
+        let expected = file(8, Some("2026-01-01T00:00:00Z"));
+        assert!(same_regular_file(&expected, &expected));
+        assert!(!same_regular_file(
+            &file(9, Some("2026-01-01T00:00:00Z")),
+            &expected
+        ));
+        let mut directory = expected.clone();
+        directory.kind = StorageEntryKind::Directory;
+        directory.size = None;
+        assert!(!same_regular_file(&directory, &expected));
     }
 }

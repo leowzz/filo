@@ -146,20 +146,13 @@ pub async fn upload_dropped_files(
                 continue;
             }
         }
-        // A choice about existing items must not authorize replacing a clean item
-        // that appears after the preflight (including while waiting in the queue).
-        let policy = if conflict_paths.as_ref().is_some_and(|conflicts| !conflicts.contains(&path)) {
-            ConflictPolicy::Reject
-        } else {
-            conflict_policy
-        };
         let progress = on_progress.clone();
         match service
-            .transfer_selected_file_with_policy(
+            .upload_selected_path(
                 path,
                 remote.clone(),
-                true,
-                policy,
+                conflict_policy,
+                conflict_paths.as_deref().unwrap_or(&[]),
                 std::sync::Arc::new(move |job| {
                     let _ = progress.send(job);
                 }),

@@ -14,7 +14,11 @@ type Point = { x: number; y: number };
 type Rectangle = Point & { width: number; height: number };
 type Selection = { scope: string; paths: Set<string>; anchor: string | null };
 
-export function useFileSelection(scope: string, paths: string[]) {
+export function useFileSelection(
+  scope: string,
+  paths: string[],
+  rowPaths: (string | null)[] = paths,
+) {
   const [state, setState] = useState<Selection>({
     scope,
     paths: new Set(),
@@ -31,7 +35,7 @@ export function useFileSelection(scope: string, paths: string[]) {
   const selectedPaths = new Set(
     paths.filter((path) => state.scope === scope && state.paths.has(path)),
   );
-  const pathsKey = JSON.stringify(paths);
+  const pathsKey = JSON.stringify(rowPaths);
 
   useEffect(
     () => () => {
@@ -152,12 +156,14 @@ export function useFileSelection(scope: string, paths: string[]) {
         Math.floor((box.y - HEADER_HEIGHT) / ROW_HEIGHT),
       );
       const lastIndex = Math.min(
-        paths.length - 1,
+        rowPaths.length - 1,
         Math.floor((box.y + box.height - HEADER_HEIGHT) / ROW_HEIGHT),
       );
       for (let index = firstIndex; index <= lastIndex; index++) {
-        next.add(paths[index]);
-        first ??= paths[index];
+        const path = rowPaths[index];
+        if (path == null) continue;
+        next.add(path);
+        first ??= path;
       }
       setRectangle(box);
       setState({ scope, paths: next, anchor: row?.dataset.entryPath ?? first });
@@ -280,7 +286,7 @@ export function useFileSelection(scope: string, paths: string[]) {
       const area = event.currentTarget;
       // Keep focus inside the list while a virtual row is being mounted.
       area.focus({ preventScroll: true });
-      const top = HEADER_HEIGHT + index * ROW_HEIGHT;
+      const top = HEADER_HEIGHT + rowPaths.indexOf(path) * ROW_HEIGHT;
       if (top < area.scrollTop + HEADER_HEIGHT) {
         area.scrollTop = top - HEADER_HEIGHT;
       } else if (top + ROW_HEIGHT > area.scrollTop + area.clientHeight) {

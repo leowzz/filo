@@ -67,10 +67,23 @@ impl StorageService {
     pub async fn start_transfer_with_policy(
         &self,
         kind: TransferKind,
+        source: StorageLocator,
+        destination: StorageLocator,
+        policy: ConflictPolicy,
+        observer: TransferObserver,
+    ) -> StorageResult<TransferJob> {
+        self.start_transfer_with_options(kind, source, destination, policy, observer, None)
+            .await
+    }
+
+    pub(crate) async fn start_transfer_with_options(
+        &self,
+        kind: TransferKind,
         mut source: StorageLocator,
         mut destination: StorageLocator,
         policy: ConflictPolicy,
         observer: TransferObserver,
+        upload_conflicts: Option<std::collections::HashSet<String>>,
     ) -> StorageResult<TransferJob> {
         source.logical_path = normalize_path(&source.logical_path)?;
         destination.logical_path = normalize_path(&destination.logical_path)?;
@@ -139,7 +152,7 @@ impl StorageService {
         let queued = job.clone();
         tokio::spawn(async move {
             service
-                .run_transfer_with_policy(queued, token, observer, policy)
+                .run_transfer_with_options(queued, token, observer, policy, upload_conflicts)
                 .await;
         });
         Ok(job)
@@ -167,12 +180,25 @@ impl StorageService {
             .await;
     }
 
+    #[cfg(test)]
     async fn run_transfer_with_policy(
+        &self,
+        job: TransferJob,
+        token: CancellationToken,
+        observer: TransferObserver,
+        policy: ConflictPolicy,
+    ) {
+        self.run_transfer_with_options(job, token, observer, policy, None)
+            .await;
+    }
+
+    async fn run_transfer_with_options(
         &self,
         mut job: TransferJob,
         token: CancellationToken,
         observer: TransferObserver,
         policy: ConflictPolicy,
+        upload_conflicts: Option<std::collections::HashSet<String>>,
     ) {
         // Shared mutation access allows independent transfers; ordinary mutations
         // retain exclusive access. Cancellation only interrupts preparation here:
@@ -212,8 +238,14 @@ impl StorageService {
             };
             match prepared {
                 Ok((_guard, _permit)) => {
-                    self.execute_transfer(&mut job, &token, &observer, policy)
-                        .await
+                    self.execute_transfer(
+                        &mut job,
+                        &token,
+                        &observer,
+                        policy,
+                        upload_conflicts.as_ref(),
+                    )
+                    .await
                 }
                 Err(error) => Err(error),
             }

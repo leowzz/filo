@@ -1,5 +1,6 @@
 use super::{
-    child_path, denied, invalid, join_root, locator_path, normalize_remote_root, unsupported,
+    already_exists, child_path, denied, invalid, join_root, locator_path, normalize_remote_root,
+    only_file_replace, replace_conflict, same_regular_file, sibling_hidden, unsupported,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -18,7 +19,7 @@ use suppaftp::{
     tokio::{AsyncDataStream, AsyncFtpStream, AsyncRustlsConnector, AsyncRustlsFtpStream},
     FtpError, FtpResult, Status,
 };
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use uuid::Uuid;
 
 type PlainDataStream = AsyncDataStream<suppaftp::tokio::AsyncNoTlsStream>;
@@ -225,6 +226,44 @@ impl FtpSession {
             }
             _ => Err(FtpError::BadResponse),
         }
+    }
+
+    async fn put(&mut self, path: &str) -> FtpResult<FtpDataStream> {
+        ftp_timeout(async {
+            match self {
+                Self::Plain(session) => session
+                    .put_with_stream(path)
+                    .await
+                    .map(FtpDataStream::Plain),
+                Self::Secure(session) => session
+                    .put_with_stream(path)
+                    .await
+                    .map(FtpDataStream::Secure),
+            }
+        })
+        .await
+    }
+
+    async fn finalize_put(&mut self, stream: FtpDataStream) -> FtpResult<()> {
+        match (self, stream) {
+            (Self::Plain(session), FtpDataStream::Plain(stream)) => {
+                ftp_timeout(session.finalize_put_stream(stream)).await
+            }
+            (Self::Secure(session), FtpDataStream::Secure(stream)) => {
+                ftp_timeout(session.finalize_put_stream(stream)).await
+            }
+            _ => Err(FtpError::BadResponse),
+        }
+    }
+
+    async fn rename(&mut self, from: &str, to: &str) -> FtpResult<()> {
+        ftp_timeout(async {
+            match self {
+                Self::Plain(session) => session.rename(from, to).await,
+                Self::Secure(session) => session.rename(from, to).await,
+            }
+        })
+        .await
     }
 }
 
@@ -592,12 +631,30 @@ impl StorageBackend for FtpBackend {
         }
     }
 
-    async fn rename(
-        &self,
-        _source: &StorageLocator,
-        _target: &StorageLocator,
-    ) -> StorageResult<()> {
-        Err(unsupported("FTP 不支持安全重命名"))
+    async fn rename(&self, source: &StorageLocator, target: &StorageLocator) -> StorageResult<()> {
+        let from = self.path(source, true)?;
+        let to = self.path(target, true)?;
+        if from == to {
+            return Err(StorageError::new(
+                StorageErrorCode::Conflict,
+                "源对象和目标对象相同",
+            ));
+        }
+        let mut session = self.connect().await?;
+        let source_file = self.safe_leaf(&mut session, &from).await?;
+        if source_file.is_symlink() {
+            return Err(denied("远程符号链接不能访问"));
+        }
+        if !source_file.is_file() && !source_file.is_directory() {
+            return Err(unsupported("FTP 不支持重命名此项目"));
+        }
+        match self.safe_leaf(&mut session, &to).await {
+            Ok(_) => Err(already_exists()),
+            Err(error) if error.code == StorageErrorCode::NotFound => {
+                session.rename(&from, &to).await.map_err(ftp_error)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     async fn delete(&self, locator: &StorageLocator) -> StorageResult<()> {
@@ -630,12 +687,206 @@ impl StorageBackend for FtpBackend {
         Ok(Box::pin(FtpReader::new(session, stream)))
     }
 
-    async fn stage_write(&self, _locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>> {
-        Err(unsupported("FTP 不支持安全发布文件"))
+    async fn stage_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>> {
+        self.prepare_write(locator, None).await
     }
 
-    async fn stage_replace(&self, _expected: &StorageEntry) -> StorageResult<Box<dyn StagedWrite>> {
-        Err(unsupported("FTP 不支持安全覆盖文件"))
+    async fn stage_replace(&self, expected: &StorageEntry) -> StorageResult<Box<dyn StagedWrite>> {
+        if expected.kind != StorageEntryKind::File {
+            return Err(only_file_replace());
+        }
+        self.prepare_write(&expected.locator, Some(expected.clone()))
+            .await
+    }
+}
+
+impl FtpBackend {
+    async fn prepare_write(
+        &self,
+        locator: &StorageLocator,
+        expected: Option<StorageEntry>,
+    ) -> StorageResult<Box<dyn StagedWrite>> {
+        let logical = self.path(locator, true)?;
+        let mut session = self.connect().await?;
+        let parent = logical
+            .rsplit_once('/')
+            .map(|(parent, _)| parent)
+            .unwrap_or("");
+        self.ensure_safe_path(&mut session, parent, false).await?;
+        if let Some(expected) = &expected {
+            let current = self.leaf_entry(&mut session, &logical).await?;
+            if !same_regular_file(&current, expected) {
+                return Err(replace_conflict());
+            }
+        } else {
+            self.ensure_absent(&mut session, &logical).await?;
+        }
+        let temporary = sibling_hidden(&logical, ".filo-transfer-");
+        self.ensure_absent(&mut session, &temporary).await?;
+        let stream = session.put(&temporary).await.map_err(ftp_error)?;
+        Ok(Box::new(FtpStagedWrite {
+            backend: self.clone(),
+            temporary,
+            target: logical,
+            expected,
+            session: Some(session),
+            stream: Some(stream),
+            published: false,
+        }))
+    }
+
+    async fn leaf_entry(
+        &self,
+        session: &mut FtpSession,
+        logical: &str,
+    ) -> StorageResult<StorageEntry> {
+        let file = self.safe_leaf(session, logical).await?;
+        if file.is_symlink() {
+            return Err(denied("远程符号链接不能访问"));
+        }
+        let parent = logical
+            .rsplit_once('/')
+            .map(|(parent, _)| parent)
+            .unwrap_or("");
+        let mut entry = self.entry(parent, &file)?;
+        entry.locator.logical_path = logical.to_owned();
+        Ok(entry)
+    }
+
+    async fn ensure_absent(&self, session: &mut FtpSession, logical: &str) -> StorageResult<()> {
+        match self.safe_leaf(session, logical).await {
+            Ok(_) => Err(already_exists()),
+            Err(error) if error.code == StorageErrorCode::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn publish(
+        &self,
+        session: &mut FtpSession,
+        temporary: &str,
+        target: &str,
+        expected: Option<&StorageEntry>,
+    ) -> StorageResult<()> {
+        if let Some(expected) = expected {
+            let current = self.leaf_entry(session, target).await?;
+            if !same_regular_file(&current, expected) {
+                let _ = session.rm(temporary).await;
+                return Err(replace_conflict());
+            }
+            let backup = sibling_hidden(target, ".filo-backup-");
+            if let Err(error) = session.rename(target, &backup).await {
+                let _ = session.rm(temporary).await;
+                return Err(ftp_error(error));
+            }
+            match session.rename(temporary, target).await {
+                Ok(()) => {
+                    let _ = session.rm(&backup).await;
+                    Ok(())
+                }
+                Err(error) => {
+                    let _ = session.rename(&backup, target).await;
+                    let _ = session.rm(temporary).await;
+                    Err(ftp_error(error))
+                }
+            }
+        } else {
+            match self.ensure_absent(session, target).await {
+                Ok(()) => session.rename(temporary, target).await.map_err(ftp_error),
+                Err(error) => {
+                    let _ = session.rm(temporary).await;
+                    Err(error)
+                }
+            }
+        }
+    }
+}
+
+struct FtpStagedWrite {
+    backend: FtpBackend,
+    temporary: String,
+    target: String,
+    expected: Option<StorageEntry>,
+    session: Option<FtpSession>,
+    stream: Option<FtpDataStream>,
+    published: bool,
+}
+
+impl FtpStagedWrite {
+    async fn finish_stream(&mut self) -> StorageResult<()> {
+        if let Some(stream) = self.stream.take() {
+            let session = self
+                .session
+                .as_mut()
+                .ok_or_else(|| invalid("FTP 写入已经结束"))?;
+            session.finalize_put(stream).await.map_err(ftp_error)?;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl StagedWrite for FtpStagedWrite {
+    async fn write(&mut self, bytes: &[u8]) -> StorageResult<()> {
+        let stream = self
+            .stream
+            .as_mut()
+            .ok_or_else(|| invalid("FTP 写入已经结束"))?;
+        tokio::time::timeout(FTP_OPERATION_TIMEOUT, stream.write_all(bytes))
+            .await
+            .map_err(|_| timeout_error())?
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::TimedOut {
+                    timeout_error()
+                } else {
+                    StorageError::new(StorageErrorCode::Io, "FTP 写入失败")
+                }
+            })
+    }
+
+    async fn reader(&mut self) -> StorageResult<StorageReader> {
+        self.finish_stream().await?;
+        let mut session = self
+            .session
+            .take()
+            .ok_or_else(|| invalid("FTP 写入已经结束"))?;
+        let stream = session.retr(&self.temporary).await.map_err(ftp_error)?;
+        Ok(Box::pin(FtpReader::new(session, stream)))
+    }
+
+    async fn commit(mut self: Box<Self>) -> StorageResult<()> {
+        self.finish_stream().await?;
+        self.session.take();
+        let mut session = self.backend.connect().await?;
+        self.backend
+            .publish(
+                &mut session,
+                &self.temporary,
+                &self.target,
+                self.expected.as_ref(),
+            )
+            .await?;
+        self.published = true;
+        Ok(())
+    }
+}
+
+impl Drop for FtpStagedWrite {
+    fn drop(&mut self) {
+        if self.published {
+            return;
+        }
+        self.stream.take();
+        self.session.take();
+        let backend = self.backend.clone();
+        let temporary = self.temporary.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                if let Ok(mut session) = backend.connect().await {
+                    let _ = session.rm(&temporary).await;
+                }
+            });
+        }
     }
 }
 
@@ -885,6 +1136,83 @@ mod tests {
         let symlink_backend = FtpBackend::new(&symlink_root, &config, &credentials).unwrap();
         assert_eq!(
             symlink_backend.test_connection().await.unwrap_err().code,
+            StorageErrorCode::AccessDenied
+        );
+
+        assert!(backend.capabilities().write);
+        assert!(matches!(
+            backend.capabilities().rename,
+            RenameSemantics::Atomic
+        ));
+        let directory_name = format!("filo-ftp-{}", Uuid::new_v4());
+        let directory = fixture_locator(volume.id, &directory_name);
+        let payload = fixture_locator(volume.id, &format!("{directory_name}/payload.bin"));
+        let keep = fixture_locator(volume.id, &format!("{directory_name}/keep.bin"));
+        let renamed = fixture_locator(volume.id, &format!("{directory_name}/renamed.bin"));
+        let payload_bytes = b"FTP staged fixture bytes\nwith a second line\n";
+        let keep_bytes = b"keep this destination\n";
+        let replaced_bytes = b"replaced FTP payload\n";
+        backend.create_dir(&directory).await.unwrap();
+
+        let mut staged = backend.stage_write(&payload).await.unwrap();
+        staged.write(payload_bytes).await.unwrap();
+        let mut staged_reader = staged.reader().await.unwrap();
+        let mut staged_bytes = Vec::new();
+        staged_reader.read_to_end(&mut staged_bytes).await.unwrap();
+        assert_eq!(staged_bytes, payload_bytes);
+        staged.commit().await.unwrap();
+        let mut reader = backend.open_read(&payload).await.unwrap();
+        let mut read_bytes = Vec::new();
+        reader.read_to_end(&mut read_bytes).await.unwrap();
+        assert_eq!(read_bytes, payload_bytes);
+
+        let mut keep_staged = backend.stage_write(&keep).await.unwrap();
+        keep_staged.write(keep_bytes).await.unwrap();
+        keep_staged.commit().await.unwrap();
+        let conflict = backend
+            .rename(&payload, &keep)
+            .await
+            .expect_err("FTP rename must not replace an existing target");
+        assert_eq!(conflict.code, StorageErrorCode::AlreadyExists);
+        backend.rename(&payload, &renamed).await.unwrap();
+
+        let expected = backend.stat(&keep).await.unwrap();
+        let mut replaced = backend.stage_replace(&expected).await.unwrap();
+        replaced.write(replaced_bytes).await.unwrap();
+        drop(replaced.reader().await.unwrap());
+        replaced.commit().await.unwrap();
+        let mut replaced_reader = backend.open_read(&keep).await.unwrap();
+        let mut replaced_read = Vec::new();
+        replaced_reader
+            .read_to_end(&mut replaced_read)
+            .await
+            .unwrap();
+        assert_eq!(replaced_read, replaced_bytes);
+
+        let stale = backend.stat(&keep).await.unwrap();
+        let current = backend.stat(&keep).await.unwrap();
+        let mut newer = backend.stage_replace(&current).await.unwrap();
+        newer.write(b"newer FTP payload").await.unwrap();
+        drop(newer.reader().await.unwrap());
+        newer.commit().await.unwrap();
+        let stale_error = match backend.stage_replace(&stale).await {
+            Ok(_) => panic!("stale FTP replace must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(stale_error.code, StorageErrorCode::Conflict);
+
+        backend.delete(&renamed).await.unwrap();
+        backend.delete(&keep).await.unwrap();
+        backend.delete(&directory).await.unwrap();
+
+        let readonly_volume = StorageVolume {
+            read_only: true,
+            ..volume.clone()
+        };
+        let readonly = FtpBackend::new(&readonly_volume, &config, &credentials).unwrap();
+        let blocked = fixture_locator(volume.id, &format!("{directory_name}-readonly"));
+        assert_eq!(
+            readonly.create_dir(&blocked).await.unwrap_err().code,
             StorageErrorCode::AccessDenied
         );
     }
