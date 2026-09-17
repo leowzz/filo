@@ -111,10 +111,6 @@ export function Sidebar({
             {item.read_only && <LockKeyhole size={12} className="muted" />}
           </button>
         ))}
-        <button className="add-location" onClick={() => onAdd()}>
-          <Plus size={15} />
-          添加存储空间
-        </button>
       </nav>
       <div className="sidebar-bottom">
         <button

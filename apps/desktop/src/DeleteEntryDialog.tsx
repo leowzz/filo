@@ -93,29 +93,39 @@ export function DeleteEntryDialog({
   return (
     <Modal
       title={toTrash ? "移入回收站" : "永久删除"}
+      className="delete-dialog"
       onClose={onClose}
       busy={mutation.isPending}
     >
-      <div className="delete-icon">
-        <Trash2 size={25} />
+      <div className="delete-summary">
+        <div className="delete-icon">
+          <Trash2 size={22} />
+        </div>
+        <div className="delete-copy">
+          <p className="modal-description">
+            {toTrash ? "将" : "确定删除"}{" "}
+            <strong>
+              {targets.length === 1
+                ? targets[0].name
+                : `选中的 ${targets.length} 个项目`}
+            </strong>
+            {targets.length === 1 && isDirectory(targets[0])
+              ? "（含全部文件及子文件夹）"
+              : ""}
+            {toTrash ? "移入系统回收站？" : "？"}
+          </p>
+          {targets.length > 1 && (
+            <ul className="batch-items">
+              {targets.map((entry) => (
+                <li key={entry.locator.logical_path}>
+                  {entry.name}
+                  {isDirectory(entry) ? "（含全部文件及子文件夹）" : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
-      <p className="modal-description">
-        {toTrash ? "将" : "永久删除"}{" "}
-        <strong>
-          {targets.length === 1
-            ? targets[0].name
-            : `选中的 ${targets.length} 个项目`}
-        </strong>
-        {toTrash ? "移入系统回收站？" : "？"}
-      </p>
-      <ul className="batch-items">
-        {targets.map((entry) => (
-          <li key={entry.locator.logical_path}>
-            {entry.name}
-            {isDirectory(entry) ? "（含全部文件及子文件夹）" : ""}
-          </li>
-        ))}
-      </ul>
       <p className="delete-warning">
         {toTrash
           ? "文件夹会连同全部内容一起移入回收站，可以在系统回收站中找回。"

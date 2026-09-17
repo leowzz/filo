@@ -36,7 +36,7 @@ git push origin v0.2.0
 
 ## GitHub Actions
 
-`.github/workflows/release.yml` 响应 `main` 分支和 `v*` tag push，不响应其他分支/PR，也没有手动发布入口。`main` 运行验证并预热编译缓存，不签名、上传安装包或发布 Release。tag 的 metadata job 先重新获取远端版本 tag，避免 checkout 的回退 fetch 将 runner 内的 annotated tag 替换为提交引用；随后核对 tag 指向本次检出提交、版本格式、annotated tag、远端分支归属及所有版本来源。两种触发都会运行发布脚本测试。
+`.github/workflows/release.yml` 仅响应 `v*` tag push，不响应分支/PR，也没有手动发布入口。metadata job 先重新获取远端版本 tag，避免 checkout 的回退 fetch 将 runner 内的 annotated tag 替换为提交引用；随后核对 tag 指向本次检出提交、版本格式、annotated tag、远端分支归属及所有版本来源，并运行发布脚本测试。
 
 每个平台的 validate job 执行 TypeScript、ESLint、rustfmt、Clippy 和 Rust 测试；独立的 build job 与它并行，tag 构建以下安装包：
 
@@ -47,11 +47,11 @@ git push origin v0.2.0
 
 两个平台的 validate 和 build 共四个 job 在 metadata 成功后并行运行，`fail-fast: false` 保证单个平台失败不会取消另一平台；publish 仅在 tag 触发且全部验证、构建成功后执行。macOS 只安装和编译 `aarch64-apple-darwin` 目标，不再构建 Intel 或 Universal，产物名称使用 `_aarch64` 后缀。
 
-Rust 缓存按 validate/release 和目标平台分开，只有 `main` 写入；tag 读取默认分支缓存，避免每个新 tag 都冷编译并重复上传大缓存。`main` 的 build 使用与发布相同的 target、release profile 和 updater 配置，通过 Tauri `--no-bundle` 只编译，不需要签名 Secrets。首次启用或依赖/工具链更新后，先等 `main` 的预热完成再推 tag，才能使用新缓存；同时推分支和 tag 不会等待预热，仍可能冷编译。并行执行缩短发布等待时间，但会增加并发 runner 数量，`main` 预热也会消耗构建时间。
+Rust 缓存按 validate/release 和目标平台分开。两个平台的验证与构建并行执行，缩短发布等待时间，但会增加并发 runner 数量。
 
 每个文件（含签名文件）都有 `.sha256`，共 10 个上传文件；正式版另加 `latest.json`。CI 中间产物保存 30 天，位于 `target/release-assets/<target>/`，本地普通构建位于 `target/release/bundle/`。普通构建不需要 updater 私钥；发布构建额外叠加 `tauri.updater.conf.json`，缺更新签名私钥直接失败。
 
-工作流只有 publish job 获得 `contents: write`。tag 发布序列按仓库串行，防止较旧版本覆盖 Latest；`main` 使用独立并发组，新提交取消旧的预热，不阻塞发布。GitHub concurrency 只保留一个等待中的 run；不要连续快速推多个发布 tag，需要时从 Actions 重跑被取消的版本。
+工作流只有 publish job 获得 `contents: write`。tag 发布序列按仓库串行，防止较旧版本覆盖 Latest。GitHub concurrency 只保留一个等待中的 run；不要连续快速推多个发布 tag，需要时从 Actions 重跑被取消的版本。
 
 发布先校验完整产物与 SHA-256，再创建 draft、上传并核对 GitHub 返回的资产 digest，最后公开。重跑失败的 publish job 可续传 draft；保留原正文。已公开的版本只能在文件集合和字节完全一致时作为成功重试，拒绝不同字节覆盖同名资产；重新构建可能产生不同签名/时间戳，应发布新版本。已有 Release 若启用了 GitHub 资产不可变策略，仍按平台规则处理。
 

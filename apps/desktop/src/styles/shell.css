@@ -64,8 +64,7 @@
 .nav-item svg {
   color: var(--accent);
 }
-.nav-item:hover,
-.add-location:hover {
+.nav-item:hover {
   background: #d9dbdf99;
 }
 .nav-item.active {
@@ -82,17 +81,6 @@
 .soon {
   font-size: 10px;
   color: #8b8b8d;
-}
-.add-location {
-  justify-content: flex-start;
-  padding: 7px 10px;
-  margin-top: 5px;
-  color: #73777e;
-  border-radius: 6px;
-  font-size: 12px;
-}
-.add-location svg {
-  color: var(--accent);
 }
 .sidebar-bottom {
   margin-top: auto;

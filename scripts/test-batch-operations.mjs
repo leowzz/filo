@@ -167,6 +167,25 @@ assert.match(
   await page.evaluate(() => document.querySelector("dialog").textContent),
   /全部文件及子文件夹/,
 );
+const deleteLayout = await page.evaluate(() => {
+  const dialog = document.querySelector(".delete-dialog");
+  const icon = document.querySelector(".delete-icon");
+  const copy = document.querySelector(".delete-copy");
+  const list = document.querySelector(".delete-copy .batch-items");
+  const d = dialog.getBoundingClientRect();
+  const i = icon.getBoundingClientRect();
+  const c = copy.getBoundingClientRect();
+  return {
+    sideBySide: i.right <= c.left + 1 && Math.abs(i.top - c.top) < 8,
+    hasList: !!list,
+    compact: d.height < 360,
+  };
+});
+assert.deepEqual(
+  deleteLayout,
+  { sideBySide: true, hasList: true, compact: true },
+  "Delete confirmation keeps the icon beside the copy",
+);
 await page.click('dialog button:text-is("移入回收站")');
 await page.waitForFunction(() =>
   document.querySelector("dialog").textContent.includes("2 项未完成"),

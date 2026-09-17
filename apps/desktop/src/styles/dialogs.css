@@ -158,21 +158,51 @@
   margin-top: 8px;
   line-height: 1.7;
 }
+.delete-dialog {
+  width: 400px;
+}
+.delete-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
 .delete-icon {
   display: flex;
+  flex: 0 0 40px;
   align-items: center;
   justify-content: center;
-  width: 47px;
-  height: 47px;
-  border-radius: 10px;
+  width: 40px;
+  height: 40px;
+  border-radius: 9px;
   background: #ffebe7;
   color: #dc6554;
-  margin-bottom: 15px;
+}
+.delete-copy {
+  min-width: 0;
+  flex: 1;
+}
+.delete-dialog .modal-description {
+  margin-bottom: 0;
+  color: #4a4a4a;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.delete-dialog .batch-items {
+  max-height: 120px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.55;
 }
 .delete-warning {
   color: #9d7565;
   font-size: 12px;
-  line-height: 1.8;
+  line-height: 1.55;
+  margin-top: 10px;
+}
+.delete-dialog .modal-footer {
+  margin-top: 12px;
+  padding-top: 10px;
 }
 .location-context-menu {
   position: fixed;

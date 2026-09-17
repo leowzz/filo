@@ -2,16 +2,15 @@ name: Build and release Filo
 
 on:
   push:
-    branches: ["main"]
     tags: ["v*"]
 
 permissions:
   contents: read
 
-# Keep tag releases serialized; main cache warming must not queue behind them.
+# Serialize publication across versions so an older run cannot replace Latest.
 concurrency:
-  group: ${{ startsWith(github.ref, 'refs/tags/') && 'filo-release' || 'filo-ci-main' }}
-  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
+  group: filo-release
+  cancel-in-progress: false
 
 jobs:
   metadata:
@@ -65,8 +64,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: validate-${{ matrix.target }}
-          # Tags can read main's cache, but cannot share their own with later tags.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: pnpm install --frozen-lockfile
       - name: Validate and test
         env:
@@ -108,18 +105,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-${{ matrix.target }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: pnpm install --frozen-lockfile
       - name: Prepare version configuration
         run: |
           cp .env.example .env
           node scripts/release/repo-version.mjs check
-      - name: Warm release compilation cache
-        if: github.ref == 'refs/heads/main'
-        env:
-          RELEASE_TARGET: ${{ matrix.target }}
-        # Match the release target/profile/config, without signing or packaging.
-        run: pnpm --filter @filo/desktop tauri build --target "$RELEASE_TARGET" --config src-tauri/tauri.updater.conf.json --no-bundle -- --locked
       - name: Build installers and signed updater archives
         if: startsWith(github.ref, 'refs/tags/')
         env:
