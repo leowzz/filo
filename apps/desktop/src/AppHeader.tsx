@@ -63,10 +63,11 @@ export function AppHeader({
   isFetching,
   transfers,
   uploadIds,
-  recentUpload,
+  recentTransfer,
   transfersLoading,
   transfersError,
   onRetryTransfers,
+  onOpenTransferDirectory,
 }: {
   volume?: Volume;
   path: string;
@@ -93,9 +94,10 @@ export function AppHeader({
   onManage: (object: boolean) => void;
   onRefresh: () => void;
   isFetching: boolean;
+  onOpenTransferDirectory: (job: TransferJob) => Promise<void>;
   transfers: TransferJob[];
   uploadIds: Set<string>;
-  recentUpload: { id: number; jobIds: string[] } | null;
+  recentTransfer: { id: number; jobIds: string[] } | null;
   transfersLoading: boolean;
   transfersError: boolean;
   onRetryTransfers: () => void;
@@ -377,11 +379,12 @@ export function AppHeader({
         <TransferTasksMenu
           jobs={transfers}
           uploadIds={uploadIds}
-          recentUpload={recentUpload}
+          recentTransfer={recentTransfer}
           loading={transfersLoading}
           error={transfersError}
           onRetry={onRetryTransfers}
           onViewAll={() => state.setPage("transfers")}
+          onOpenDirectory={onOpenTransferDirectory}
         />
       </header>
       {browsing && refresh.error && (

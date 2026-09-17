@@ -1,4 +1,4 @@
-use crate::{file_operations, StorageService};
+use crate::{file_operations, OpenDalLocalBackend, StorageService};
 use storage_domain::*;
 
 impl StorageService {
@@ -146,6 +146,43 @@ impl StorageService {
             return Ok(DeleteOutcome::PermanentlyDeleted);
         }
         file_operations::delete(backend.as_ref(), &locator, mode).await
+    }
+
+    pub async fn open_transfer_file(
+        &self,
+        job_id: uuid::Uuid,
+        directory: bool,
+    ) -> StorageResult<()> {
+        let job = self
+            .repository
+            .list_transfers()
+            .await?
+            .into_iter()
+            .find(|job| job.id == job_id && job.state == TransferState::Completed)
+            .ok_or_else(|| {
+                StorageError::new(StorageErrorCode::NotFound, "未找到已完成的传输记录")
+            })?;
+        let volumes = self.repository.list_volumes().await?;
+        for locator in [&job.destination, &job.source] {
+            let selected = self
+                .selected_volumes
+                .lock()
+                .await
+                .get(&locator.volume_id)
+                .cloned();
+            let volume =
+                selected.or_else(|| volumes.iter().find(|v| v.id == locator.volume_id).cloned());
+            if let Some(volume) = volume.filter(|v| matches!(v.root, VolumeRoot::Local { .. })) {
+                return OpenDalLocalBackend::new(&volume)
+                    .await?
+                    .open_transfer_path(locator, directory)
+                    .await;
+            }
+        }
+        Err(StorageError::new(
+            StorageErrorCode::NotFound,
+            "本地文件位置已不可用，请从文件管理器打开；远程文件可在所在目录中查看",
+        ))
     }
 
     pub async fn open_entry(&self, locator: StorageLocator) -> StorageResult<()> {

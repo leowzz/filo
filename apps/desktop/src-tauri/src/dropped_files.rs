@@ -3,8 +3,9 @@ use std::{collections::HashMap, path::PathBuf, sync::Mutex};
 use storage_application::StorageService;
 use storage_domain::*;
 use tauri::State;
+use tauri_plugin_dialog::DialogExt;
 
-/// Only native drop events can grant access to external files.
+/// Only native drop events and file pickers can grant access to external files.
 #[derive(Default)]
 pub struct DroppedFiles(Mutex<HashMap<String, Vec<Vec<PathBuf>>>>);
 
@@ -20,6 +21,24 @@ impl DroppedFiles {
                     batches.remove(0);
                 }
             }
+        }
+    }
+
+    fn validate(&self, window: &str, paths: &[PathBuf]) -> StorageResult<()> {
+        let pending = self.0.lock().map_err(|_| {
+            StorageError::new(StorageErrorCode::Internal, "无法读取上传文件，请重新选择")
+        })?;
+        if !paths.is_empty()
+            && pending
+                .get(window)
+                .is_some_and(|batches| batches.iter().any(|batch| batch == paths))
+        {
+            Ok(())
+        } else {
+            Err(StorageError::new(
+                StorageErrorCode::AccessDenied,
+                "上传文件已失效，请重新选择",
+            ))
         }
     }
 
@@ -41,7 +60,46 @@ impl DroppedFiles {
     }
 }
 
+#[derive(serde::Serialize)]
+pub struct UploadPreflight {
+    paths: Vec<PathBuf>,
+    conflicts: Vec<PathBuf>,
+}
+
 crate::errors::commands! {
+pub async fn preflight_upload(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    dropped: State<'_, DroppedFiles>,
+    service: State<'_, StorageService>,
+    remote: StorageLocator,
+    paths: Option<Vec<PathBuf>>,
+) -> StorageResult<Option<UploadPreflight>> {
+    let destination = service.stat_entry(remote.clone()).await?;
+    if !matches!(destination.kind, StorageEntryKind::Directory | StorageEntryKind::VirtualPrefix) {
+        return Err(StorageError::new(StorageErrorCode::InvalidPath, "请选择目标文件夹"));
+    }
+    let paths = match paths {
+        Some(paths) => {
+            dropped.validate(window.label(), &paths)?;
+            paths
+        }
+        None => {
+            let selected = tauri::async_runtime::spawn_blocking(move || {
+                app.dialog().file().set_title("选择上传文件").blocking_pick_files()
+            }).await.map_err(|_| StorageError::new(StorageErrorCode::Internal, "无法打开文件选择器"))?;
+            let Some(selected) = selected else { return Ok(None); };
+            let paths = selected.into_iter().map(|file| file.into_path().map_err(|_| {
+                StorageError::new(StorageErrorCode::InvalidPath, "无法读取所选文件路径")
+            })).collect::<StorageResult<Vec<_>>>()?;
+            dropped.record(window.label(), &paths);
+            paths
+        }
+    };
+    let conflicts = service.preflight_upload(&remote, &paths).await?;
+    Ok(Some(UploadPreflight { paths, conflicts }))
+}
+
 pub async fn upload_dropped_files(
     window: tauri::Window,
     dropped: State<'_, DroppedFiles>,
@@ -49,6 +107,7 @@ pub async fn upload_dropped_files(
     remote: StorageLocator,
     paths: Vec<PathBuf>,
     conflict_policy: ConflictPolicy,
+    conflict_paths: Option<Vec<PathBuf>>,
     on_progress: tauri::ipc::Channel<TransferJob>,
 ) -> StorageResult<super::FileTransferBatch> {
     let paths = dropped.take(window.label(), &paths)?;
@@ -87,13 +146,20 @@ pub async fn upload_dropped_files(
                 continue;
             }
         }
+        // A choice about existing items must not authorize replacing a clean item
+        // that appears after the preflight (including while waiting in the queue).
+        let policy = if conflict_paths.as_ref().is_some_and(|conflicts| !conflicts.contains(&path)) {
+            ConflictPolicy::Reject
+        } else {
+            conflict_policy
+        };
         let progress = on_progress.clone();
         match service
             .transfer_selected_file_with_policy(
                 path,
                 remote.clone(),
                 true,
-                conflict_policy,
+                policy,
                 std::sync::Arc::new(move |job| {
                     let _ = progress.send(job);
                 }),
@@ -121,6 +187,12 @@ mod tests {
         ];
         assert!(dropped.take("main", &paths).is_err());
         dropped.record("main", &paths);
+        assert!(dropped.validate("main", &paths).is_ok());
+        assert!(dropped.validate("main", &paths).is_ok());
+        assert!(dropped.validate("other", &paths).is_err());
+        assert!(dropped
+            .validate("main", &[PathBuf::from("/private/secret")])
+            .is_err());
         assert!(dropped.take("other", &paths).is_err());
         assert!(dropped
             .take("main", &[PathBuf::from("/private/secret")])

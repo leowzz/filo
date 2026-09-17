@@ -53,6 +53,11 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
       if (command === 'list_entries_page') return { entries: [{ name: 'nested', kind: 'directory', size: null, modified_at: null,
         locator: { ...args.parent, logical_path: 'nested' } }], total: 1, next_cursor: null };
       if (command === 'list_transfers') return window.jobs;
+      if (command === 'preflight_upload') {
+        if (window.preflightError) throw new Error('无法访问目标');
+        if (!args.paths) return window.pickerResult ?? null;
+        return { paths: args.paths, conflicts: window.noConflict ? [] : (window.conflictPaths ?? args.paths) };
+      }
       if (command === 'upload_dropped_files') {
         const jobs = args.paths.map((path, i) => ({ id: String(window.jobs.length + i), kind: 'copy', state: 'running',
           source: { volume_id: 'external', logical_path: path.split('/').pop(), version_id: null },
@@ -61,6 +66,11 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
           error_code: null, error_message: null }));
         window.jobs.push(...jobs);
         jobs.forEach(job => args.onProgress.onmessage(job));
+        if (window.lateConflict) {
+          const job = jobs[0];
+          job.state = 'failed'; job.error_code = 'already_exists'; job.error_message = '目标已存在';
+          args.onProgress.onmessage(job);
+        }
         return { jobs, failures: window.partialFailure ? ['folder：无法读取项目，请检查是否存在及访问权限'] : [] };
       }
       if (command === 'transfer_local_file') return null;
@@ -134,7 +144,7 @@ assert.match(
   await page.evaluate(
     () => document.querySelector(".upload-dialog").textContent,
   ),
-  /将 2 个项目上传到 Writable\/nested，文件夹将保留目录结构/,
+  /将 2 个项目上传到 Writable\/nested，以下 2 个项目存在同名/,
 );
 assert.deepEqual(
   await page.evaluate(() =>
@@ -197,7 +207,7 @@ const layout = await page.evaluate(() => {
 assert.deepEqual(layout, { fits: true, aligned: true });
 if (globalThis.filoCaptureScreenshot)
   await page.screenshot({ path: "/tmp/filo-external-upload.png" });
-await page.click('button:text-is("开始上传")');
+await page.click('button:text-is("继续上传")');
 await page.waitForSelector(".transfer-tasks-popover");
 const uploads = await page.evaluate(() =>
   window.calls
@@ -236,7 +246,7 @@ await page.evaluate(() => {
   window.emitDropEvent("drop");
 });
 await page.waitForSelector(".upload-dialog");
-await page.click('button:text-is("开始上传")');
+await page.click('button:text-is("继续上传")');
 await page.waitForFunction(() =>
   document.querySelector(".notice")?.textContent.includes("1 项未开始"),
 );
@@ -275,11 +285,123 @@ assert.equal(
 
 await page.click('.volume-nav button[title="Writable"]');
 await page.click('button[aria-label="上传文件"]');
-await page.click('button:text-is("选择文件…")');
 await page.waitForFunction(() =>
-  window.calls.some((call) => call.command === "transfer_local_file"),
+  window.calls.some(
+    (call) => call.command === "preflight_upload" && call.args.paths === null,
+  ),
+);
+assert.equal(
+  await page.evaluate(() => !!document.querySelector(".upload-dialog")),
+  false,
+);
+// No conflict: drop goes straight to transfer, always with reject policy.
+await page.evaluate(() => {
+  window.noConflict = true;
+  window.partialFailure = false;
+  window.emitDropEvent("drop");
+});
+await page.waitForFunction(
+  () =>
+    window.calls.filter((call) => call.command === "upload_dropped_files")
+      .length === 3,
+);
+assert.equal(
+  await page.evaluate(() => !!document.querySelector(".upload-dialog")),
+  false,
+);
+assert.deepEqual(
+  await page.evaluate(() => {
+    const args = window.calls
+      .filter((call) => call.command === "upload_dropped_files")
+      .at(-1).args;
+    return { policy: args.conflictPolicy, conflicts: args.conflictPaths };
+  }),
+  { policy: "reject", conflicts: [] },
+);
+await page.keyboard.press("Escape");
+// Failure to inspect the destination must not be treated as an empty directory.
+await page.evaluate(() => {
+  window.preflightError = true;
+  window.emitDropEvent("drop");
+});
+await page.waitForFunction(() =>
+  document.querySelector(".notice")?.textContent.includes("上传预检测失败"),
+);
+assert.equal(
+  await page.evaluate(
+    () =>
+      window.calls.filter((call) => call.command === "upload_dropped_files")
+        .length,
+  ),
+  3,
+);
+// Picker selection uses the same preflight and safe automatic upload path.
+await page.evaluate(() => {
+  window.preflightError = false;
+  window.pickerResult = { paths: ["/external/picked.txt"], conflicts: [] };
+});
+await page.click('button[aria-label="上传文件"]');
+await page.waitForFunction(
+  () =>
+    window.calls.filter((call) => call.command === "upload_dropped_files")
+      .length === 4,
+);
+assert.equal(
+  await page.evaluate(() => !!document.querySelector(".upload-dialog")),
+  false,
+);
+await page.keyboard.press("Escape");
+// A conflict delivered after streaming must surface in the main window.
+await page.evaluate(() => {
+  window.lateConflict = true;
+  window.emitDropEvent("drop");
+});
+await page.waitForFunction(() =>
+  document.querySelector(".notice")?.textContent.includes("上传发生冲突"),
+);
+assert.equal(
+  await page.evaluate(() => !!document.querySelector(".upload-dialog")),
+  false,
+);
+// In a mixed batch the choice is scoped only to preflight conflicts.
+await page.keyboard.press("Escape");
+await page.evaluate(() => {
+  window.lateConflict = false;
+  window.noConflict = false;
+  window.conflictPaths = ["/external/a.txt"];
+  window.emitDropEvent("drop");
+});
+await page.waitForSelector(".upload-dialog");
+assert.deepEqual(
+  await page.evaluate(() =>
+    Array.from(
+      document.querySelectorAll(".batch-items li"),
+      (node) => node.textContent,
+    ),
+  ),
+  ["a.txt"],
+);
+await page.click('input[value="overwrite"]');
+await page.click('button:text-is("继续上传")');
+await page.waitForFunction(
+  () =>
+    window.calls.filter((call) => call.command === "upload_dropped_files")
+      .length === 6,
+);
+assert.deepEqual(
+  await page.evaluate(() => {
+    const args = window.calls
+      .filter((call) => call.command === "upload_dropped_files")
+      .at(-1).args;
+    return {
+      policy: args.conflictPolicy,
+      conflicts: args.conflictPaths,
+      count: args.paths.length,
+    };
+  }),
+  { policy: "overwrite", conflicts: ["/external/a.txt"], count: 2 },
 );
 console.log(
-  "PASS: native event bridge, HiDPI hit testing, enter/leave/outside/modal guards, multi-file drop, cancellation, nested destination, conflict policy, picker bypass, progress, partial failure, read-only guard, listener cleanup and original picker flow",
+  "PASS: native event bridge, HiDPI hit testing, enter/leave/outside/modal guards, multi-file drop, cancellation, nested destination, conflict policy, picker bypass, progress, partial failure, read-only guard, listener cleanup, preflight errors, conflict-free drop/picker upload, late conflict notification and mixed-batch overwrite scope",
 );
 if (!globalThis.filoKeepBrowser) await task.finish({ keep: [] });

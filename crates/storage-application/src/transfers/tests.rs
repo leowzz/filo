@@ -39,6 +39,90 @@ async fn saved_limits_update_existing_backend_budgets_and_restore_on_restart() {
     assert_eq!(limits.upload.acquire(100_000).await, 100_000);
 }
 
+#[tokio::test]
+async fn upload_preflight_finds_existing_and_duplicate_names_and_propagates_errors() {
+    let fixture = Fixture::new().await;
+    let remote = StorageLocator {
+        volume_id: fixture.destination_id,
+        logical_path: "".into(),
+        version_id: None,
+    };
+    std::fs::write(fixture.destination.path().join("exists"), b"keep").unwrap();
+    std::fs::create_dir(fixture.destination.path().join("folder")).unwrap();
+    let paths: Vec<std::path::PathBuf> = ["/a/clean", "/a/exists", "/a/folder", "/b/clean"]
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    assert_eq!(
+        fixture
+            .service
+            .preflight_upload(&remote, &paths)
+            .await
+            .unwrap(),
+        paths[1..]
+    );
+    let invalid = StorageLocator {
+        volume_id: Uuid::new_v4(),
+        ..remote
+    };
+    assert!(fixture
+        .service
+        .preflight_upload(&invalid, &paths)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn upload_rejects_conflicts_after_preflight_and_after_streaming() {
+    for late_commit in [false, true] {
+        let fixture = Fixture::new().await;
+        let external = tempfile::tempdir().unwrap();
+        let source = external.path().join("file");
+        std::fs::write(&source, b"uploaded data").unwrap();
+        let target = fixture.destination.path().join("file");
+        let remote = StorageLocator {
+            volume_id: fixture.destination_id,
+            logical_path: "".into(),
+            version_id: None,
+        };
+        assert!(fixture
+            .service
+            .preflight_upload(&remote, std::slice::from_ref(&source))
+            .await
+            .unwrap()
+            .is_empty());
+        if !late_commit {
+            std::fs::write(&target, b"external data").unwrap();
+        }
+        let target_at_commit = target.clone();
+        let job = fixture
+            .service
+            .transfer_selected_file(
+                source.clone(),
+                remote,
+                true,
+                Arc::new(move |job| {
+                    if late_commit && job.state == TransferState::Verifying {
+                        std::fs::write(&target_at_commit, b"external data").unwrap();
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+        let result = fixture.result(job.id).await;
+        assert_eq!(result.state, TransferState::Failed);
+        assert_eq!(result.error_code, Some(StorageErrorCode::AlreadyExists));
+        assert_eq!(std::fs::read(&target).unwrap(), b"external data");
+        assert_eq!(std::fs::read(&source).unwrap(), b"uploaded data");
+        assert_eq!(
+            std::fs::read_dir(fixture.destination.path())
+                .unwrap()
+                .count(),
+            1
+        );
+    }
+}
+
 struct GatedSource {
     inner: Arc<dyn StorageBackend>,
     gate: Arc<tokio::sync::Semaphore>,
@@ -85,6 +169,31 @@ async fn selected_folder_upload_preserves_tree_and_applies_conflict_policies() {
             .lock()
             .await
             .contains_key(&job.source.volume_id));
+        // Retain only the location for completed-record actions; general file
+        // access must remain revoked after the temporary transfer ends.
+        assert!(fixture
+            .service
+            .selected_volumes
+            .lock()
+            .await
+            .contains_key(&job.source.volume_id));
+        assert!(fixture
+            .service
+            .stat_entry(job.source.clone())
+            .await
+            .is_err());
+        if state != TransferState::Completed {
+            assert!(fixture
+                .service
+                .open_transfer_file(job.id, false)
+                .await
+                .is_err());
+            assert!(fixture
+                .service
+                .open_transfer_file(job.id, true)
+                .await
+                .is_err());
+        }
         if state == TransferState::Completed {
             assert_eq!(result.bytes_total, Some(13));
             assert_eq!(result.bytes_transferred, 13);

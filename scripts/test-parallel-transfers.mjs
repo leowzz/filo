@@ -36,6 +36,14 @@ window.__TAURI_INTERNALS__ = {
     if (cmd === 'transfer_local_file') {
       if (window.cancelPicker) return null;
       observer = args.onProgress.onmessage;
+      if (!args.upload) {
+        const job = { id:'download', kind:'copy', state:'running', source:args.remote,
+          destination:{volume_id:'download-local', logical_path:'renamed.pdf',version_id:null},
+          bytes_total:1000,bytes_transferred:250,created_at:timestamp(),updated_at:timestamp(),error_code:null,error_message:null };
+        window.jobs.unshift(job);
+        observer({...job});
+        return {jobs:[{...job}],failures:[]};
+      }
       const start = window.jobs.length;
       const batch = Array.from({length: 5}, (_, i) => ({
         id: String(start + i), kind: 'copy', state: i < 3 ? 'running' : 'queued',
@@ -48,6 +56,7 @@ window.__TAURI_INTERNALS__ = {
       batch.forEach(job => observer({...job}));
       return {jobs: batch.map(job => ({...job})), failures: ['denied.pdf：无法读取文件']};
     }
+    if (cmd === 'open_transfer_file') { window.openedTransfer = args; if (window.openFailure) throw new Error('文件已不存在'); return; }
     if (cmd === 'cancel_transfer') { window.advance(args.jobId, 'cancelled', 0); return; }
     throw new Error('Unexpected IPC: '+cmd);
   }
@@ -71,12 +80,18 @@ assert.match(await page.evaluate(() => document.querySelector('.transfer-tasks-h
 assert.equal(await page.evaluate(() => document.querySelectorAll('.transfer-tasks-list article').length), 5);
 assert.equal(await page.evaluate(() => document.querySelector('progress[aria-label="upload-0.pdf 传输进度"]').value), 20);
 assert.equal(await page.evaluate(() => document.querySelector('progress[aria-label="upload-2.pdf 传输进度"]').hasAttribute('value')), false);
+assert.equal(await page.evaluate(() => !!document.querySelector('[data-transfer-id="4"] .transfer-speed')), false, 'queued jobs do not show speed');
 const order = await page.evaluate(() => [...document.querySelectorAll('.transfer-tasks-list strong')].map(node => node.textContent));
 await page.evaluate(() => window.advance('0', 'running', 650));
 await page.waitForFunction(() => document.querySelector('progress[aria-label="upload-0.pdf 传输进度"]').value === 65);
 assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('.transfer-tasks-list strong')].map(node => node.textContent)), order);
+await page.waitForFunction(() => parseFloat(document.querySelector('[data-transfer-id="0"] .transfer-speed').textContent) > 0);
+await page.waitForFunction(() => document.querySelector('[data-transfer-id="0"] .transfer-speed').textContent === '0 B/s');
+await page.evaluate(() => window.advance('2', 'running', 300));
+await page.waitForFunction(() => parseFloat(document.querySelector('[data-transfer-id="2"] .transfer-speed').textContent) > 0);
 await page.evaluate(() => window.advance('0', 'verifying', 1000));
 await page.waitForSelector('progress[aria-label="upload-0.pdf 校验进度"]');
+assert.equal(await page.evaluate(() => !!document.querySelector('[data-transfer-id="0"] .transfer-speed')), false, 'verification does not show transfer speed');
 assert.equal(await page.evaluate(() => document.querySelector('progress[aria-label="upload-0.pdf 校验进度"]').hasAttribute('value')), false, 'verification must not pretend to be complete');
 assert.match(await page.evaluate(() => document.querySelector('[data-transfer-id="0"] .transfer-percent').textContent), /正在校验/);
 await page.evaluate(() => window.advance('0', 'completed', 1000));
@@ -130,4 +145,38 @@ assert.equal(await page.evaluate(() => {
   return panel.height <= 440 && panel.bottom <= innerHeight && panel.right <= innerWidth;
 }), true, 'compact list fits minimum desktop size');
 console.log('PASS: automatic reveal, compact size, latest-batch priority, temporary highlights, manual dismissal, cancelled picker, stable progress and completion refresh');
+await page.click('button[aria-label="关闭任务列表"]');
+await page.evaluate(() => window.cancelPicker = false);
+await page.click('tr[data-entry-path="upload-0.pdf"]');
+await page.click('button[aria-label="下载文件"]');
+await page.waitForSelector('[data-transfer-id="download"]');
+assert.equal(await page.evaluate(() => !!document.querySelector('.file-table')), true, 'download stays in files');
+assert.equal(await page.evaluate(() => document.querySelector('[data-transfer-id="download"] progress').value), 25);
+assert.equal(await page.evaluate(() => document.querySelectorAll('[data-transfer-id="download"] .transfer-item-actions button').length), 0);
+await page.evaluate(() => window.advance('download', 'running', 750));
+await page.waitForFunction(() => parseFloat(document.querySelector('[data-transfer-id="download"] .transfer-speed').textContent) > 0);
+await page.evaluate(() => window.advance('download', 'completed', 1000));
+await page.waitForSelector('[data-transfer-id="download"] .transfer-item-actions');
+assert.equal(await page.evaluate(() => !!document.querySelector('[data-transfer-id="download"] .transfer-speed')), false, 'completed jobs do not show speed');
+await page.click('[data-transfer-id="download"] button:text-is("打开文件")');
+assert.deepEqual(await page.evaluate(() => window.openedTransfer), {jobId:'download',directory:false});
+await page.click('[data-transfer-id="download"] button:text-is("所在目录")');
+assert.deepEqual(await page.evaluate(() => window.openedTransfer), {jobId:'download',directory:true});
+await page.evaluate(() => window.openFailure = true);
+await page.click('[data-transfer-id="download"] button:text-is("打开文件")');
+await page.waitForSelector('.transfer-tasks-message[role="alert"]');
+assert.match(await page.evaluate(() => document.querySelector('.transfer-tasks-message[role="alert"]').textContent), /文件已不存在/);
+for (const width of [1280, 960]) {
+  await page.cdp('Emulation.setDeviceMetricsOverride', {width,height:720,deviceScaleFactor:1,mobile:false});
+  const layout = await page.evaluate(() => {
+    const p=document.querySelector('.transfer-tasks-popover').getBoundingClientRect();
+    const list=document.querySelector('.transfer-tasks-list');
+    return {width:innerWidth,height:innerHeight,panelHeight:p.height,bottom:p.bottom,right:p.right,listHeight:list.clientHeight,overflow:list.scrollWidth>list.clientWidth};
+  });
+  console.log({layout});
+  assert.equal(layout.overflow,false);
+  assert.ok(layout.listHeight > 100, 'list remains readable');
+  assert.ok(layout.bottom <= layout.height);
+}
+console.log('PASS: download stays in place, live progress, completion-only file actions, containing folder and errors');
 if (!globalThis.filoKeepBrowser) await task.finish({ keep: [] });

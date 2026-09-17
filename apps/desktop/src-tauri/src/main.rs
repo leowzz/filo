@@ -268,6 +268,13 @@ async fn rename_entry(
         .rename_entry_with_policy(source, name, conflict_policy.unwrap_or_default())
         .await
 }
+async fn open_transfer_file(
+    service: State<'_, StorageService>,
+    job_id: uuid::Uuid,
+    directory: bool,
+) -> StorageResult<()> {
+    service.open_transfer_file(job_id, directory).await
+}
 async fn open_entry(
     service: State<'_, StorageService>,
     locator: StorageLocator,
@@ -379,6 +386,7 @@ fn main() {
             test_remote_connection,
             transfer_local_file,
             dropped_files::upload_dropped_files,
+            dropped_files::preflight_upload,
             list_connections,
             list_volumes,
             create_local_storage,
@@ -394,6 +402,7 @@ fn main() {
             rename_entry,
             delete_entry,
             open_entry,
+            open_transfer_file,
             ssh_keys::load_default_sftp_private_key,
             ssh_keys::pick_sftp_private_key,
             ssh_hosts::inspect_sftp_host_key

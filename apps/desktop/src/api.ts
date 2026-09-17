@@ -119,17 +119,27 @@ export const api = {
       },
     );
   },
+  preflightUpload: (remote: Locator, paths?: string[]) =>
+    invoke<{ paths: string[]; conflicts: string[] } | null>(
+      "preflight_upload",
+      {
+        remote,
+        paths: paths ?? null,
+      },
+    ),
   uploadDroppedFiles: (
     remote: Locator,
     paths: string[],
     onProgress: (job: TransferJob) => void,
     conflictPolicy: ConflictPolicy,
+    conflictPaths?: string[],
   ) => {
     const channel = new Channel<TransferJob>();
     channel.onmessage = onProgress;
     return invoke<{ jobs: TransferJob[]; failures: string[] }>(
       "upload_dropped_files",
       {
+        conflictPaths,
         remote,
         paths,
         conflictPolicy,
@@ -195,6 +205,8 @@ export const api = {
       name,
       conflictPolicy,
     }),
+  openTransferFile: (jobId: string, directory: boolean) =>
+    invoke<void>("open_transfer_file", { jobId, directory }),
   open: (locator: Locator) => invoke<void>("open_entry", { locator }),
   delete: (locator: Locator, mode: DeleteMode, recursive = false) =>
     invoke<DeleteOutcome>("delete_entry", {

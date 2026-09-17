@@ -92,8 +92,8 @@ export default function App() {
   const pendingTransfers =
     transfersQuery.data?.filter(activeTransfer).length ?? 0;
   const [uploadIds, setUploadIds] = useState<Set<string>>(() => new Set());
-  const uploadSequence = useRef(0);
-  const [recentUpload, setRecentUpload] = useState<{
+  const transferSequence = useRef(0);
+  const [recentTransfer, setRecentTransfer] = useState<{
     id: number;
     jobIds: string[];
   } | null>(null);
@@ -380,7 +380,8 @@ export default function App() {
   }
   const [uploadRequest, setUploadRequest] = useState<{
     remote: Locator;
-    paths?: string[];
+    paths: string[];
+    conflicts: string[];
   } | null>(null);
   const fileTransfer = useMutation({
     mutationFn: async ({
@@ -388,27 +389,42 @@ export default function App() {
       upload,
       paths,
       conflictPolicy = "reject",
+      conflictPaths,
     }: {
       remote: Locator;
       upload: boolean;
       paths?: string[];
       conflictPolicy?: ConflictPolicy;
+      conflictPaths?: string[];
     }) => {
-      const id = ++uploadSequence.current;
+      const id = ++transferSequence.current;
       const jobIds = new Set<string>();
-      const revealUpload = (job: TransferJob) => {
-        if (upload && !jobIds.has(job.id)) {
+      const revealTransfer = (job: TransferJob) => {
+        if (!jobIds.has(job.id)) {
           jobIds.add(job.id);
-          setRecentUpload((current) =>
+          setRecentTransfer((current) =>
             current && current.id > id ? current : { id, jobIds: [...jobIds] },
           );
-          setUploadIds((current) =>
-            current.has(job.id) ? current : new Set([...current, job.id]),
-          );
+          if (upload)
+            setUploadIds((current) =>
+              current.has(job.id) ? current : new Set([...current, job.id]),
+            );
         }
       };
+      const notifiedFailures = new Set<string>();
       const onProgress = (job: TransferJob) => {
-        revealUpload(job);
+        if (upload && job.state === "failed" && !notifiedFailures.has(job.id)) {
+          notifiedFailures.add(job.id);
+          const conflict =
+            job.error_code === "already_exists" ||
+            job.error_code === "conflict";
+          setNotice(
+            conflict
+              ? `“${job.destination.logical_path}”上传发生冲突，未完成。${job.error_message ?? "目标已有同名项目"}。请检查后重新上传并选择处理方式。`
+              : `“${job.destination.logical_path}”上传失败：${job.error_message ?? "请检查后重试"}`,
+          );
+        }
+        revealTransfer(job);
         client.setQueryData<TransferJob[]>(["transfers"], (current) =>
           updateTransfer(current, job),
         );
@@ -419,6 +435,7 @@ export default function App() {
             paths,
             onProgress,
             conflictPolicy,
+            conflictPaths,
           )
         : await api.transferLocalFile(
             remote,
@@ -428,10 +445,7 @@ export default function App() {
           );
       // Fast tasks may finish before their progress channel is delivered.
       for (const job of batch?.jobs ?? []) {
-        revealUpload(job);
-        client.setQueryData<TransferJob[]>(["transfers"], (current) =>
-          updateTransfer(current, job),
-        );
+        onProgress(job);
       }
       return batch;
     },
@@ -447,11 +461,39 @@ export default function App() {
           setNotice(
             `已提交 ${batch.jobs.length} 项，${batch.failures.length} 项未开始：${batch.failures.join("；")}`,
           );
-        else if (!upload && batch.jobs.length) state.setPage("transfers");
       }
     },
     onError: (error) => setNotice(errorMessage(error)),
   });
+  const uploadPreparing = useRef(false);
+  const prepareUpload = useMutation({
+    mutationFn: ({ remote, paths }: { remote: Locator; paths?: string[] }) =>
+      api.preflightUpload(remote, paths),
+    onSuccess: (result, { remote }) => {
+      if (!result) return;
+      if (result.conflicts.length) {
+        setUploadRequest({ remote, ...result });
+      } else {
+        fileTransfer.mutate({
+          remote,
+          paths: result.paths,
+          upload: true,
+          conflictPolicy: "reject",
+          conflictPaths: [],
+        });
+      }
+    },
+    onError: (error) => setNotice(`上传预检测失败：${errorMessage(error)}`),
+    onSettled: () => {
+      uploadPreparing.current = false;
+    },
+  });
+  function requestUpload(remote: Locator, paths?: string[]) {
+    if (uploadPreparing.current || uploadRequest || fileTransfer.isPending)
+      return;
+    uploadPreparing.current = true;
+    prepareUpload.mutate({ remote, paths });
+  }
   const pasteMutation = useMutation({
     mutationFn: async ({
       clipboard,
@@ -705,7 +747,7 @@ export default function App() {
           }}
           navigate={navigate}
           openingPending={opening.isPending}
-          transferPending={fileTransfer.isPending}
+          transferPending={fileTransfer.isPending || prepareUpload.isPending}
           pastePending={pastePending}
           openEntry={openEntry}
           openDialog={openDialog}
@@ -713,7 +755,7 @@ export default function App() {
           setDeleteDialog={setDeleteDialog}
           onFileTransfer={(request) =>
             request.upload
-              ? setUploadRequest({ remote: request.remote })
+              ? requestUpload(request.remote)
               : fileTransfer.mutate({ ...request, conflictPolicy: "overwrite" })
           }
           onPreview={() => setPreview(selectedEntries)}
@@ -732,9 +774,22 @@ export default function App() {
             void client.invalidateQueries({ queryKey: ["preview"] });
           }}
           isFetching={entriesQuery.isFetching}
+          onOpenTransferDirectory={async (job) => {
+            const target = volumes.find(
+              (item) => item.id === job.destination.volume_id,
+            );
+            if (target && target.root.type !== "local") {
+              navigate(
+                target.id,
+                job.destination.logical_path.split("/").slice(0, -1).join("/"),
+              );
+            } else {
+              await api.openTransferFile(job.id, true);
+            }
+          }}
           transfers={transfersQuery.data ?? []}
           uploadIds={uploadIds}
-          recentUpload={recentUpload}
+          recentTransfer={recentTransfer}
           transfersLoading={transfersQuery.isPending}
           transfersError={transfersQuery.isError}
           onRetryTransfers={() => void transfersQuery.refetch()}
@@ -832,10 +887,10 @@ export default function App() {
               onCopy={copySelection}
               onCut={cutSelection}
               onPaste={pasteSelection}
-              uploadPending={fileTransfer.isPending}
+              uploadPending={fileTransfer.isPending || prepareUpload.isPending}
               onFileDrop={(paths) => {
                 setMenu(null);
-                setUploadRequest({ remote: parent, paths });
+                requestUpload(parent, paths);
               }}
               onDropError={setNotice}
               menu={menu}
@@ -884,7 +939,7 @@ export default function App() {
           onPaste={pasteSelection}
           hasClipboard={(state.clipboard?.entries.length ?? 0) > 0}
           canPaste={canWriteVolume(volume) && !pastePending}
-          onUpload={() => setUploadRequest({ remote: parent })}
+          onUpload={() => requestUpload(parent)}
           onDownload={() =>
             fileTransfer.mutate({
               remote: menuEntry.locator,
@@ -918,13 +973,15 @@ export default function App() {
       )}
       {uploadRequest && (
         <UploadDialog
-          paths={uploadRequest.paths}
+          paths={uploadRequest.conflicts}
+          total={uploadRequest.paths.length}
           destination={`${volumes.find((item) => item.id === uploadRequest.remote.volume_id)?.name ?? ""}/${uploadRequest.remote.logical_path}`}
           onClose={() => setUploadRequest(null)}
           onStart={(conflictPolicy) => {
             fileTransfer.mutate({
               remote: uploadRequest.remote,
               paths: uploadRequest.paths,
+              conflictPaths: uploadRequest.conflicts,
               upload: true,
               conflictPolicy,
             });

@@ -48,6 +48,48 @@ fn provider_error(error: opendal::Error) -> StorageError {
 }
 
 impl OpenDalLocalBackend {
+    /// Open an authorized transfer result or its containing folder.
+    pub async fn open_transfer_path(
+        &self,
+        locator: &StorageLocator,
+        directory: bool,
+    ) -> StorageResult<()> {
+        let logical = self.check_locator(locator)?;
+        if logical.is_empty() {
+            return Err(StorageError::new(
+                StorageErrorCode::InvalidPath,
+                "请选择传输的文件或文件夹",
+            ));
+        }
+        let path = self.checked_path(&logical, false).await?;
+        let kind = self.stat(locator).await?.kind;
+        if !matches!(kind, StorageEntryKind::File | StorageEntryKind::Directory) {
+            return Err(StorageError::new(
+                StorageErrorCode::Unsupported,
+                "无法打开此类型的文件",
+            ));
+        }
+        let path = if directory {
+            path.parent()
+                .ok_or_else(|| {
+                    StorageError::new(StorageErrorCode::InvalidPath, "无法打开所在目录")
+                })?
+                .to_path_buf()
+        } else {
+            path
+        };
+        tokio::task::spawn_blocking(move || {
+            open::that(path).map_err(|_| {
+                StorageError::new(
+                    StorageErrorCode::Io,
+                    "无法打开文件或目录，请检查文件关联和系统权限",
+                )
+            })
+        })
+        .await
+        .map_err(|_| StorageError::new(StorageErrorCode::Internal, "打开文件任务意外中断"))?
+    }
+
     async fn open_path(&self, locator: &StorageLocator) -> StorageResult<PathBuf> {
         let logical = self.check_locator(locator)?;
         let path = self.checked_path(&logical, false).await?;

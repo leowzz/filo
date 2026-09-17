@@ -10,30 +10,41 @@
   font-size: 13px;
   margin-bottom: 8px;
 }
-.storage-section .modal-description {
-  margin-bottom: 8px;
+.local-storage-readonly {
+  margin-top: 10px;
 }
-.local-storage-button {
-  margin-top: 12px;
-}
-.s3-provider-list {
+.storage-picker .storage-provider-grid {
   display: grid;
-  gap: 6px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
 }
-.s3-provider-list .provider-choice {
+.storage-picker .storage-provider-grid .provider-choice {
   width: 100%;
-  justify-content: space-between;
-  text-align: left;
+  min-width: 0;
+  aspect-ratio: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
   border-color: #dedede;
   background: #fff;
 }
-.s3-provider-list .provider-choice:hover:not(:disabled) {
+.storage-picker .storage-provider-grid .provider-choice strong {
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.storage-picker .storage-provider-grid .provider-choice:hover:not(:disabled),
+.storage-picker .storage-provider-grid .provider-choice[aria-pressed="true"] {
   background: #edf5ff;
   border-color: #8abcf0;
 }
-.s3-provider-list .provider-choice p {
-  color: #72777d;
-  line-height: 1.5;
+.is-expanded .storage-picker .storage-provider-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (max-width: 480px) {
+  .storage-picker .storage-provider-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 .storage-provider-icon {
   display: flex;
@@ -164,7 +175,7 @@
 }
 
 .storage-add-modal {
-  width: 438px;
+  width: 560px;
   transition: width 240ms ease;
 }
 .storage-add-modal.is-expanded {

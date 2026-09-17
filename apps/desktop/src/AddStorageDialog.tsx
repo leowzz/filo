@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   ChevronLeft,
-  ChevronRight,
   Cloud,
   FolderOpen,
   HardDrive,
@@ -89,10 +88,25 @@ export function AddStorageDialog({
                 <HardDrive size={17} />
                 本地文件系统
               </h3>
-              <p className="modal-description">
-                连接这台电脑上的已有目录，文件留在原来的位置。
-              </p>
-              <label className="checkbox-label">
+              <div className="storage-provider-grid">
+                <button
+                  type="submit"
+                  className="provider-choice"
+                  disabled={!desktop || busy}
+                >
+                  <span className="storage-provider-icon" aria-hidden="true">
+                    {mutation.isPending ? (
+                      <LoaderCircle size={28} className="spin" />
+                    ) : (
+                      <FolderOpen size={28} />
+                    )}
+                  </span>
+                  <strong>
+                    {mutation.isPending ? "正在处理…" : "选择本地目录"}
+                  </strong>
+                </button>
+              </div>
+              <label className="checkbox-label local-storage-readonly">
                 <input
                   type="checkbox"
                   checked={readOnly}
@@ -100,18 +114,6 @@ export function AddStorageDialog({
                 />
                 以只读方式添加
               </label>
-              <button
-                type="submit"
-                className="secondary local-storage-button"
-                disabled={!desktop || busy}
-              >
-                {mutation.isPending ? (
-                  <LoaderCircle size={16} className="spin" />
-                ) : (
-                  <FolderOpen size={16} />
-                )}
-                {mutation.isPending ? "正在处理…" : "选择本地目录"}
-              </button>
             </section>
             <section
               className="storage-section"
@@ -121,7 +123,7 @@ export function AddStorageDialog({
                 <Cloud size={17} />
                 S3 存储
               </h3>
-              <div className="s3-provider-list">
+              <div className="s3-provider-list storage-provider-grid">
                 {(Object.keys(s3Providers) as S3Provider[]).map((provider) => (
                   <button
                     key={provider}
@@ -134,11 +136,7 @@ export function AddStorageDialog({
                     onClick={() => select(provider)}
                   >
                     <S3ProviderIcon provider={provider} />
-                    <div className="provider-choice-copy">
-                      <strong>{s3Providers[provider].name}</strong>
-                      <p>{s3Providers[provider].description}</p>
-                    </div>
-                    <ChevronRight size={17} />
+                    <strong>{s3Providers[provider].name}</strong>
                   </button>
                 ))}
               </div>
@@ -151,10 +149,7 @@ export function AddStorageDialog({
                 <Network size={17} />
                 远程文件协议
               </h3>
-              <p className="modal-description">
-                连接 FTP、SFTP 或局域网中的 SMB / Samba 共享目录。
-              </p>
-              <div className="remote-provider-list">
+              <div className="remote-provider-list storage-provider-grid">
                 {(Object.keys(remoteProtocols) as RemoteProtocol[]).map(
                   (protocol) => (
                     <button
@@ -168,11 +163,7 @@ export function AddStorageDialog({
                       onClick={() => select(protocol)}
                     >
                       <RemoteProviderIcon protocol={protocol} />
-                      <div className="provider-choice-copy">
-                        <strong>{remoteProtocols[protocol].name}</strong>
-                        <p>{remoteProtocols[protocol].description}</p>
-                      </div>
-                      <ChevronRight size={17} />
+                      <strong>{remoteProtocols[protocol].name}</strong>
                     </button>
                   ),
                 )}

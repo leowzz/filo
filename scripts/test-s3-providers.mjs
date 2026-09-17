@@ -71,28 +71,31 @@ await page.waitForFunction(() => {
     icons.every((image) => image.complete && image.naturalWidth > 0)
   );
 });
-const iconGeometry = await page.evaluate(() => {
-  const choices = [...document.querySelectorAll(".provider-choice")];
-  return choices.map((choice) => ({
-    iconLeft: choice
-      .querySelector(".storage-provider-icon")
-      .getBoundingClientRect().left,
-    textLeft: choice
-      .querySelector(".provider-choice-copy")
-      .getBoundingClientRect().left,
-  }));
-});
+const cardGeometry = await page.evaluate(() =>
+  [...document.querySelectorAll(".s3-provider-list .provider-choice")].map(
+    (card) => {
+      const { width, height, top } = card.getBoundingClientRect();
+      return {
+        width,
+        height,
+        top,
+        descriptions: card.querySelectorAll("p").length,
+      };
+    },
+  ),
+);
 assert.ok(
-  iconGeometry.every(
-    (item) =>
-      item.iconLeft === iconGeometry[0].iconLeft &&
-      item.textLeft === iconGeometry[0].textLeft,
+  cardGeometry.every(
+    (card) =>
+      Math.abs(card.width - card.height) < 1 &&
+      card.top === cardGeometry[0].top &&
+      card.descriptions === 0,
   ),
 );
 if (!globalThis.filoSkipScreenshot)
   await page.screenshot({ path: "/tmp/filo-provider-icons.png" });
 await page.click(".storage-section input[type=checkbox]");
-await page.click('button:text-is("选择本地目录")');
+await page.click('button.provider-choice:has-text("选择本地目录")');
 await page.waitForFunction(() => window.localReadOnly === true);
 if (await page.evaluate(() => !!document.querySelector("dialog[open]")))
   await page.click('button[aria-label="关闭"]');

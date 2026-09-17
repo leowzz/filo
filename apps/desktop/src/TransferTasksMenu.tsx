@@ -3,9 +3,12 @@ import {
   CircleCheck,
   CircleX,
   LoaderCircle,
+  FileSymlink,
+  FolderOpen,
   X,
 } from "lucide-react";
 import { Fragment, useEffect, useId, useRef, useState } from "react";
+import { api, errorMessage } from "./api";
 import { activeTransfer, type TransferJob } from "./types";
 import { TransferProgress } from "./TransferProgress";
 import {
@@ -17,25 +20,41 @@ import {
 export function TransferTasksMenu({
   jobs,
   uploadIds,
-  recentUpload,
+  recentTransfer,
   loading,
   error,
   onRetry,
   onViewAll,
+  onOpenDirectory,
 }: {
   jobs: TransferJob[];
   uploadIds: Set<string>;
-  recentUpload: { id: number; jobIds: string[] } | null;
+  recentTransfer: { id: number; jobIds: string[] } | null;
   loading: boolean;
   error: boolean;
   onRetry: () => void;
   onViewAll: () => void;
+  onOpenDirectory: (job: TransferJob) => Promise<void>;
 }) {
+  const [actionError, setActionError] = useState("");
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  async function openResult(job: TransferJob, directory: boolean) {
+    setActionError("");
+    setPendingAction(job.id);
+    try {
+      if (directory) await onOpenDirectory(job);
+      else await api.openTransferFile(job.id, false);
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setPendingAction(null);
+    }
+  }
   const [open, setOpen] = useState(false);
-  const [highlightedUpload, setHighlightedUpload] = useState<number | null>(
+  const [highlightedTransfer, setHighlightedTransfer] = useState<number | null>(
     null,
   );
-  const revealedUpload = useRef<number | null>(null);
+  const revealedTransfer = useRef<number | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const ref = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -53,7 +72,7 @@ export function TransferTasksMenu({
         : `传输中 ${running}`
     : "传输任务";
   const recent = sortTransfers(jobs);
-  const batchIds = new Set(recentUpload?.jobIds ?? []);
+  const batchIds = new Set(recentTransfer?.jobIds ?? []);
   const batchJobs = recent
     .filter((job) => batchIds.has(job.id))
     .sort(
@@ -62,7 +81,7 @@ export function TransferTasksMenu({
     );
   const otherJobs = recent.filter((job) => !batchIds.has(job.id));
   const highlighting =
-    recentUpload !== null && highlightedUpload === recentUpload.id;
+    recentTransfer !== null && highlightedTransfer === recentTransfer.id;
   const visible = [
     ...batchJobs,
     ...otherJobs.filter(activeTransfer),
@@ -70,16 +89,16 @@ export function TransferTasksMenu({
   ];
 
   useEffect(() => {
-    if (!recentUpload) return;
-    if (revealedUpload.current !== recentUpload.id) {
-      revealedUpload.current = recentUpload.id;
+    if (!recentTransfer) return;
+    if (revealedTransfer.current !== recentTransfer.id) {
+      revealedTransfer.current = recentTransfer.id;
       setOpen(true);
       if (list.current) list.current.scrollTop = 0;
     }
-    setHighlightedUpload(recentUpload.id);
-    const timer = window.setTimeout(() => setHighlightedUpload(null), 6000);
+    setHighlightedTransfer(recentTransfer.id);
+    const timer = window.setTimeout(() => setHighlightedTransfer(null), 6000);
     return () => window.clearTimeout(timer);
-  }, [recentUpload]);
+  }, [recentTransfer]);
 
   useEffect(() => {
     if (!open) return;
@@ -108,7 +127,13 @@ export function TransferTasksMenu({
       className="transfer-tasks"
       ref={ref}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+        // Internal text and mouse-clicked buttons in macOS WebKit can blur
+        // without a new focus target. Outside pointer clicks are handled above.
+        if (
+          event.relatedTarget instanceof Node &&
+          !event.currentTarget.contains(event.relatedTarget)
+        )
+          setOpen(false);
       }}
     >
       <button
@@ -136,7 +161,7 @@ export function TransferTasksMenu({
           aria-label="传输任务列表"
         >
           <div className="transfer-tasks-header">
-            <h2>传输任务</h2>
+            <h2>传输记录</h2>
             <span className="muted">
               {active.length ? summary : "最近任务"}
             </span>
@@ -152,6 +177,11 @@ export function TransferTasksMenu({
               <X size={16} />
             </button>
           </div>
+          {actionError && (
+            <p className="transfer-tasks-message error-text" role="alert">
+              {actionError}
+            </p>
+          )}
           {error && (
             <p className="transfer-tasks-message error-text" role="alert">
               无法刷新任务列表 <button onClick={onRetry}>重试</button>
@@ -162,7 +192,7 @@ export function TransferTasksMenu({
           )}
           {!loading && !error && jobs.length === 0 && (
             <p className="transfer-tasks-message muted">
-              暂无传输任务，上传后可在这里查看进度。
+              暂无传输任务，上传或下载后可在这里查看进度。
             </p>
           )}
           <div className="transfer-tasks-list" ref={list}>
@@ -171,7 +201,7 @@ export function TransferTasksMenu({
                 className={`transfer-batch-label ${highlighting ? "is-highlighted" : ""}`}
                 role="status"
               >
-                本次上传 · {batchJobs.length} 项
+                本次传输 · {batchJobs.length} 项
               </p>
             )}
             {visible.map((job, index) => {
@@ -202,11 +232,30 @@ export function TransferTasksMenu({
                       </span>
                     </div>
                     <TransferProgress
+                      showSpeed
                       job={job}
                       operation={
                         upload ? "上传" : job.kind === "move" ? "移动" : "传输"
                       }
                     />
+                    {job.state === "completed" && (
+                      <div className="transfer-item-actions">
+                        <button
+                          disabled={pendingAction !== null}
+                          onClick={() => void openResult(job, false)}
+                        >
+                          <FileSymlink size={14} />
+                          打开文件
+                        </button>
+                        <button
+                          disabled={pendingAction !== null}
+                          onClick={() => void openResult(job, true)}
+                        >
+                          <FolderOpen size={14} />
+                          所在目录
+                        </button>
+                      </div>
+                    )}
                     {job.error_message && (
                       <p
                         className="error-text transfer-tasks-error"

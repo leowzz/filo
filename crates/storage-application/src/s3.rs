@@ -246,6 +246,42 @@ impl StorageService {
         }
     }
 
+    /// Check actual destination metadata, never a cached or paginated directory listing.
+    pub async fn preflight_upload(
+        &self,
+        remote: &StorageLocator,
+        paths: &[PathBuf],
+    ) -> StorageResult<Vec<PathBuf>> {
+        let backend = self.backend(remote.volume_id).await?;
+        let prefix = normalize_path(&remote.logical_path)?;
+        let mut conflicts = Vec::new();
+        let mut names = std::collections::HashSet::new();
+        for path in paths {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| configuration("文件名必须是有效 UTF-8"))?;
+            validate_name(name)?;
+            let target = StorageLocator {
+                logical_path: if prefix.is_empty() {
+                    name.into()
+                } else {
+                    format!("{prefix}/{name}")
+                },
+                ..remote.clone()
+            };
+            let exists = match backend.stat(&target).await {
+                Ok(_) => true,
+                Err(error) if error.code == StorageErrorCode::NotFound => false,
+                Err(error) => return Err(error),
+            };
+            if exists || !names.insert(name) {
+                conflicts.push(path.clone());
+            }
+        }
+        Ok(conflicts)
+    }
+
     /// `path` is authorized by a native file picker or drop event in the Tauri command.
     /// Uploads accept files and folders; downloads retain single-file authorization.
     /// Its authorization expires with this task; it is never added as a saved location.
@@ -326,10 +362,15 @@ impl StorageService {
             .lock()
             .await
             .insert(volume.id, backend);
+        self.selected_volumes
+            .lock()
+            .await
+            .insert(volume.id, volume.clone());
         let result = self
             .start_transfer_with_policy(TransferKind::Copy, source, destination, policy, observer)
             .await;
         if result.is_err() {
+            self.selected_volumes.lock().await.remove(&volume.id);
             self.temporary_backends.lock().await.remove(&volume.id);
         }
         result

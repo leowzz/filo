@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { formatSize } from "./components";
 import { transferPercent } from "./transferPresentation";
 import { activeTransfer, type TransferJob } from "./types";
@@ -5,9 +6,11 @@ import { activeTransfer, type TransferJob } from "./types";
 export function TransferProgress({
   job,
   operation,
+  showSpeed = false,
 }: {
   job: TransferJob;
   operation?: string;
+  showSpeed?: boolean;
 }) {
   const percent = transferPercent(job);
   if (job.state === "skipped") {
@@ -30,6 +33,9 @@ export function TransferProgress({
           {formatSize(job.bytes_transferred)}
           {job.bytes_total !== null && ` / ${formatSize(job.bytes_total)}`}
         </span>
+        {showSpeed && job.state === "running" && (
+          <TransferSpeed key={job.id} bytes={job.bytes_transferred} />
+        )}
         <span className="transfer-percent">
           {job.state === "verifying"
             ? "正在校验"
@@ -43,5 +49,34 @@ export function TransferProgress({
         </span>
       </div>
     </div>
+  );
+}
+
+/** Sample byte deltas over real elapsed time; waiting and verification are excluded. */
+function TransferSpeed({ bytes }: { bytes: number }) {
+  const latestBytes = useRef(bytes);
+  const [speed, setSpeed] = useState<number | null>(null);
+  useEffect(() => {
+    latestBytes.current = bytes;
+  }, [bytes]);
+  useEffect(() => {
+    let previousBytes = latestBytes.current;
+    let previousTime = performance.now();
+    const timer = window.setInterval(() => {
+      const now = performance.now();
+      const elapsed = now - previousTime;
+      if (elapsed <= 0) return;
+      setSpeed(
+        (Math.max(0, latestBytes.current - previousBytes) * 1000) / elapsed,
+      );
+      previousBytes = latestBytes.current;
+      previousTime = now;
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <span className="transfer-speed" aria-label="传输速度">
+      {speed === null ? "测速中…" : `${formatSize(Math.round(speed))}/s`}
+    </span>
   );
 }

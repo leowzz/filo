@@ -163,6 +163,12 @@ async fn opening_resolves_only_authorized_regular_files_even_when_readonly() {
     );
     for path in ["", "../outside", "/etc/passwd", "missing"] {
         assert!(backend.open_path(&locator(&backend, path)).await.is_err());
+        for directory in [false, true] {
+            assert!(backend
+                .open_transfer_path(&locator(&backend, path), directory)
+                .await
+                .is_err());
+        }
     }
     let mut wrong_volume = locator(&backend, filename);
     wrong_volume.volume_id = Uuid::new_v4();
@@ -175,6 +181,12 @@ async fn opening_resolves_only_authorized_regular_files_even_when_readonly() {
         )
         .unwrap();
         assert!(backend.open_path(&locator(&backend, "link")).await.is_err());
+        for directory in [false, true] {
+            assert!(backend
+                .open_transfer_path(&locator(&backend, "link"), directory)
+                .await
+                .is_err());
+        }
         assert!(backend
             .trash_with(&locator(&backend, "link"), |_| panic!(
                 "must not call trash"

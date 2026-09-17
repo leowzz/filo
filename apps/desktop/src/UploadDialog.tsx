@@ -5,11 +5,13 @@ import { ConflictPolicyField } from "./ConflictPolicyField";
 import type { ConflictPolicy } from "./types";
 export function UploadDialog({
   paths,
+  total,
   destination,
   onClose,
   onStart,
 }: {
-  paths?: string[];
+  paths: string[];
+  total: number;
   destination?: string;
   onClose: () => void;
   onStart: (policy: ConflictPolicy) => void;
@@ -17,22 +19,19 @@ export function UploadDialog({
   const [policy, setPolicy] = useState<ConflictPolicy>("reject");
   return (
     <Modal
-      title={paths ? "上传文件或文件夹" : "上传文件"}
+      title="发现同名文件或文件夹"
       className="upload-dialog"
       onClose={onClose}
     >
-      {paths && (
-        <>
-          <p className="modal-description">
-            将 {paths.length} 个项目上传到 {destination}，文件夹将保留目录结构
-          </p>
-          <ul className="batch-items">
-            {paths.map((path, index) => (
-              <li key={`${index}:${path}`}>{path.split(/[\\/]/).pop()}</li>
-            ))}
-          </ul>
-        </>
-      )}
+      <p className="modal-description">
+        将 {total} 个项目上传到 {destination}，以下 {paths.length}{" "}
+        个项目存在同名，请选择处理方式。
+      </p>
+      <ul className="batch-items">
+        {paths.map((path, index) => (
+          <li key={`${index}:${path}`}>{path.split(/[\\/]/).pop()}</li>
+        ))}
+      </ul>
       <ConflictPolicyField
         presentation="choices"
         value={policy}
@@ -44,7 +43,7 @@ export function UploadDialog({
         </button>
         <button className="primary" onClick={() => onStart(policy)}>
           <Upload size={15} aria-hidden="true" />
-          {paths ? "开始上传" : "选择文件…"}
+          继续上传
         </button>
       </div>
     </Modal>
