@@ -1,6 +1,6 @@
 # Filo 开发指导
 
-`init.md` 保留为原始需求。以下文档按职责拆分，完整覆盖原文 22 节。原始任务书描述 LocalFS + S3 的完整 Demo；LocalFS 与 S3 现已接通，当前实现与限制以最新实施记录为准。
+`init.md` 保留为原始需求。以下文档按职责拆分，完整覆盖原文 22 节。原始任务书描述 LocalFS + S3 的完整 Demo；当前桌面端已接通 LocalFS、S3 兼容存储以及 FTP / SFTP / SMB，实现与限制以最新实施记录和仓库 README 为准。
 
 - [产品定位与版本范围](01-product-scope.md)
 - [技术架构与工程组织](02-architecture.md)
@@ -22,3 +22,5 @@
 - [浏览与 S3 高级管理](14-browsing-and-s3-management.md)：预览、缩略图、内容搜索、自动刷新，以及 Bucket、版本和对象属性。
 
 - [远程存储与文件操作](15-remote-storage-and-file-workflow.md)：FTP、SFTP、SMB 连接、文件剪贴板、持久化浏览偏好与验收记录。
+
+- [文本预览语法高亮](16-text-syntax-preview.md)：highlight.js Worker、按扩展名识别语言、超限回退原文。
