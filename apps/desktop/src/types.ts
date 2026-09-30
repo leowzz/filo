@@ -102,7 +102,7 @@ export const isDirectory = (entry: Entry) =>
   entry.kind === "directory" || entry.kind === "virtual_prefix";
 
 export type ConflictPolicy = "reject" | "overwrite" | "skip" | "rename";
-export type EntrySort = "name" | "size" | "modified";
+export type EntrySort = "provider" | "name" | "size" | "modified";
 export type ListOptions = {
   search: string;
   show_hidden: boolean;
@@ -112,6 +112,7 @@ export type ListOptions = {
 export type EntryPage = {
   entries: Entry[];
   total: number;
+  total_is_exact?: boolean;
   next_cursor: string | null;
 };
 export type TransferKind = "copy" | "move";

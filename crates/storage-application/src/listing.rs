@@ -1,7 +1,10 @@
 //! Disk-backed sorted snapshots keep directory enumeration and IPC memory bounded.
 //! A fresh query scans once; subsequent pages never re-list the provider.
 use crate::StorageService;
-use sqlx::{sqlite::SqliteConnectOptions, Connection, Row, SqliteConnection};
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+    Connection, QueryBuilder, Row, SqliteConnection,
+};
 use std::{
     collections::HashMap,
     sync::Arc,
@@ -10,6 +13,9 @@ use std::{
 use storage_domain::*;
 use tokio::sync::{Mutex, Semaphore};
 use uuid::Uuid;
+
+mod streaming;
+use streaming::Stream;
 
 struct Snapshot {
     connection: Mutex<SqliteConnection>,
@@ -23,12 +29,14 @@ struct Snapshot {
 
 pub(super) struct Listings {
     snapshots: Mutex<HashMap<Uuid, Arc<Snapshot>>>,
+    streams: Mutex<HashMap<Uuid, Arc<Stream>>>,
     building: Semaphore,
 }
 impl Default for Listings {
     fn default() -> Self {
         Self {
             snapshots: Mutex::new(HashMap::new()),
+            streams: Mutex::new(HashMap::new()),
             building: Semaphore::new(2),
         }
     }
@@ -65,6 +73,11 @@ impl StorageService {
         // Revalidate authority even for cached pages (removed or re-rooted connections).
         let _guard = self.mutation_lock.read().await;
         let backend = self.backend(parent.volume_id).await?;
+        if options.sort == EntrySort::Provider && options.search.is_empty() {
+            return self
+                .stream_entries_page(backend, parent, options, cursor, limit)
+                .await;
+        }
         let (id, offset, snapshot) = if let Some(cursor) = cursor {
             let (id, offset) = cursor.split_once(':').ok_or_else(expired)?;
             let id = Uuid::parse_str(id).map_err(|_| expired())?;
@@ -93,7 +106,9 @@ impl StorageService {
             let mut connection = SqliteConnection::connect_with(
                 &SqliteConnectOptions::new()
                     .filename(directory.path().join("entries.sqlite"))
-                    .create_if_missing(true),
+                    .create_if_missing(true)
+                    .journal_mode(SqliteJournalMode::Memory)
+                    .synchronous(SqliteSynchronous::Off),
             )
             .await
             .map_err(failure)?;
@@ -115,6 +130,7 @@ impl StorageService {
                     break;
                 }
                 let mut transaction = connection.begin().await.map_err(failure)?;
+                let mut records = Vec::new();
                 for entry in batch {
                     let directory = crate::tree::directory(&entry);
                     if (!options.show_hidden && entry.name.starts_with('.'))
@@ -123,15 +139,22 @@ impl StorageService {
                     {
                         continue;
                     }
-                    let result = sqlx::query("INSERT INTO entries VALUES (?, ?, ?, ?, ?, ?)")
-                        .bind(&entry.locator.logical_path)
-                        .bind(entry.name.to_lowercase())
-                        .bind(directory)
-                        .bind(entry.size.unwrap_or(0).min(i64::MAX as u64) as i64)
-                        .bind(entry.modified_at.as_deref().unwrap_or(""))
-                        .bind(serde_json::to_string(&entry).map_err(failure)?)
-                        .execute(&mut *transaction)
-                        .await;
+                    let value = serde_json::to_string(&entry).map_err(failure)?;
+                    records.push((entry, directory, value));
+                }
+                if !records.is_empty() {
+                    let mut insert = QueryBuilder::new(
+                        "INSERT INTO entries (path, name, directory, size, modified, value) ",
+                    );
+                    insert.push_values(&records, |mut row, (entry, directory, value)| {
+                        row.push_bind(&entry.locator.logical_path)
+                            .push_bind(entry.name.to_lowercase())
+                            .push_bind(directory)
+                            .push_bind(entry.size.unwrap_or(0).min(i64::MAX as u64) as i64)
+                            .push_bind(entry.modified_at.as_deref().unwrap_or(""))
+                            .push_bind(value);
+                    });
+                    let result = insert.build().execute(&mut *transaction).await;
                     if let Err(error) = result {
                         if error
                             .as_database_error()
@@ -144,7 +167,7 @@ impl StorageService {
                         }
                         return Err(failure(error));
                     }
-                    total += 1;
+                    total += records.len() as u64;
                 }
                 transaction.commit().await.map_err(failure)?;
             }
@@ -193,6 +216,7 @@ impl StorageService {
         Ok(EntryPage {
             entries,
             total: snapshot.total,
+            total_is_exact: true,
             next_cursor: (next < snapshot.total).then(|| format!("{id}:{next}")),
         })
     }
@@ -200,7 +224,7 @@ impl StorageService {
 
 fn order(sort: &EntrySort) -> &'static str {
     match sort {
-        EntrySort::Name => "directory DESC, name ASC, path ASC",
+        EntrySort::Provider | EntrySort::Name => "directory DESC, name ASC, path ASC",
         EntrySort::Size => "directory DESC, size DESC, name ASC, path ASC",
         EntrySort::Modified => "directory DESC, modified DESC, name ASC, path ASC",
     }

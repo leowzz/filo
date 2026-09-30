@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PointerEvent,
@@ -7,7 +8,7 @@ import {
   type KeyboardEvent,
 } from "react";
 
-import { ROW_HEIGHT, HEADER_HEIGHT } from "./useVirtualRows";
+import { ROW_HEIGHT, directoryHeaderHeight } from "./useVirtualRows";
 
 type Modifiers = { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean };
 type Point = { x: number; y: number };
@@ -32,10 +33,14 @@ export function useFileSelection(
   const pendingFocus = useRef<{ scope: string; path: string } | null>(null);
   const stopDrag = useRef<(() => void) | null>(null);
   const suppressClick = useRef(false);
-  const selectedPaths = new Set(
-    paths.filter((path) => state.scope === scope && state.paths.has(path)),
+  const selectedPaths = useMemo(
+    () =>
+      new Set(
+        paths.filter((path) => state.scope === scope && state.paths.has(path)),
+      ),
+    [paths, state.scope, state.paths, scope],
   );
-  const pathsKey = JSON.stringify(rowPaths);
+  const pathsKey = useMemo(() => JSON.stringify(rowPaths), [rowPaths]);
 
   useEffect(
     () => () => {
@@ -63,9 +68,10 @@ export function useFileSelection(
     });
     const area = areaRef.current;
     if (!area) return;
-    const top = HEADER_HEIGHT + rowPaths.indexOf(path) * ROW_HEIGHT;
-    if (top < area.scrollTop + HEADER_HEIGHT) {
-      area.scrollTop = top - HEADER_HEIGHT;
+    const headerHeight = directoryHeaderHeight(area);
+    const top = headerHeight + rowPaths.indexOf(path) * ROW_HEIGHT;
+    if (top < area.scrollTop + headerHeight) {
+      area.scrollTop = top - headerHeight;
     } else if (top + ROW_HEIGHT > area.scrollTop + area.clientHeight) {
       area.scrollTop = top + ROW_HEIGHT - area.clientHeight;
     }
@@ -171,13 +177,14 @@ export function useFileSelection(
       const next = new Set(base);
       let first: string | null = null;
       // Select by row geometry, including rows outside the rendered window.
+      const headerHeight = directoryHeaderHeight(area);
       const firstIndex = Math.max(
         0,
-        Math.floor((box.y - HEADER_HEIGHT) / ROW_HEIGHT),
+        Math.floor((box.y - headerHeight) / ROW_HEIGHT),
       );
       const lastIndex = Math.min(
         rowPaths.length - 1,
-        Math.floor((box.y + box.height - HEADER_HEIGHT) / ROW_HEIGHT),
+        Math.floor((box.y + box.height - headerHeight) / ROW_HEIGHT),
       );
       for (let index = firstIndex; index <= lastIndex; index++) {
         const path = rowPaths[index];
@@ -190,8 +197,7 @@ export function useFileSelection(
     };
     const tick = () => {
       const rect = area.getBoundingClientRect();
-      const headerHeight =
-        area.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+      const headerHeight = directoryHeaderHeight(area);
       const top = rect.top + headerHeight + 24;
       const bottom = rect.top + area.clientHeight - 24;
       const delta =
@@ -306,9 +312,10 @@ export function useFileSelection(
       const area = event.currentTarget;
       // Keep focus inside the list while a virtual row is being mounted.
       area.focus({ preventScroll: true });
-      const top = HEADER_HEIGHT + rowPaths.indexOf(path) * ROW_HEIGHT;
-      if (top < area.scrollTop + HEADER_HEIGHT) {
-        area.scrollTop = top - HEADER_HEIGHT;
+      const headerHeight = directoryHeaderHeight(area);
+      const top = headerHeight + rowPaths.indexOf(path) * ROW_HEIGHT;
+      if (top < area.scrollTop + headerHeight) {
+        area.scrollTop = top - headerHeight;
       } else if (top + ROW_HEIGHT > area.scrollTop + area.clientHeight) {
         area.scrollTop = top + ROW_HEIGHT - area.clientHeight;
       }

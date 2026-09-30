@@ -90,6 +90,63 @@ fn object(key: &str) -> String {
 }
 
 #[tokio::test]
+async fn buffered_results_do_not_wait_for_the_next_provider_page() {
+    let first = format!(
+        "<IsTruncated>true</IsTruncated><NextContinuationToken>next</NextContinuationToken>{}",
+        (0..500)
+            .map(|i| object(&format!("file-{i:04}")))
+            .collect::<String>()
+    );
+    let last = format!("<IsTruncated>false</IsTruncated>{}", object("last"));
+    let (backend, parent, server) = fixture("", "", vec![first, last]).await;
+    let mut reader = backend.open_listing(&parent).await.unwrap();
+    assert_eq!(reader.next_batch(200).await.unwrap().len(), 200);
+    assert!(!server.is_finished());
+    assert_eq!(reader.next_batch(200).await.unwrap().len(), 200);
+    let buffered = reader.next_batch(200).await.unwrap();
+    assert_eq!(
+        buffered.len(),
+        100,
+        "do not fill the batch by making another network request"
+    );
+    assert_eq!(buffered.last().unwrap().name, "file-0499");
+    assert!(!server.is_finished());
+    assert_eq!(reader.next_batch(200).await.unwrap()[0].name, "last");
+    assert!(reader.is_exhausted());
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_later_page_failure_does_not_discard_buffered_results() {
+    let first = format!(
+        "<IsTruncated>true</IsTruncated><NextContinuationToken>next</NextContinuationToken>{}{}",
+        object("first"),
+        object("second")
+    );
+    let invalid = format!(
+        "<IsTruncated>true</IsTruncated>{}",
+        object("must-not-commit")
+    );
+    let last = format!("<IsTruncated>false</IsTruncated>{}", object("last"));
+    let (backend, parent, server) = fixture("", "", vec![first, invalid, last]).await;
+    let mut reader = backend.open_listing(&parent).await.unwrap();
+    assert_eq!(
+        reader
+            .next_batch(500)
+            .await
+            .unwrap()
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "second"]
+    );
+    assert!(reader.next_batch(500).await.is_err());
+    assert_eq!(reader.next_batch(500).await.unwrap()[0].name, "last");
+    assert!(reader.is_exhausted());
+    server.await.unwrap();
+}
+
+#[tokio::test]
 async fn root_keys_do_not_panic_or_hide_later_pages() {
     let pages = vec![
         format!("<IsTruncated>true</IsTruncated><NextContinuationToken>next</NextContinuationToken><CommonPrefixes><Prefix>/</Prefix></CommonPrefixes>{}", object("/")),

@@ -133,9 +133,11 @@ function DirectoryPreview({
               ? "正在读取文件夹…"
               : query.isError
                 ? "无法读取文件夹"
-                : query.total
-                  ? `${query.total} 个项目`
-                  : "空文件夹"}
+                : !query.totalIsExact
+                  ? `已加载 ${query.total} 项，打开文件夹查看全部`
+                  : query.total
+                    ? `${query.total} 个项目`
+                    : "空文件夹"}
           </p>
         </div>
       </div>

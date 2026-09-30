@@ -37,6 +37,7 @@ function readPreferences(): BrowserPreferences {
           : defaultPreferences.showDetails,
       useGroups: input.useGroups === true,
       sort:
+        input.sort === "provider" ||
         input.sort === "name" ||
         input.sort === "size" ||
         input.sort === "modified"

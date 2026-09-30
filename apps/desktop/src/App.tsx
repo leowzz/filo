@@ -7,6 +7,7 @@ import { Info } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -319,6 +320,17 @@ export default function App() {
     !!volume && state.page === "browser",
   );
   const entries = entriesQuery.entries;
+  const entryPaths = useMemo(
+    () => entries.map((entry) => entry.locator.logical_path),
+    [entries],
+  );
+  const rowPaths = useMemo(
+    () =>
+      browserRows(entries, state.useGroups).map(
+        (row) => row.entry?.locator.logical_path ?? null,
+      ),
+    [entries, state.useGroups],
+  );
   const selection = useFileSelection(
     JSON.stringify([
       state.page,
@@ -328,14 +340,14 @@ export default function App() {
       state.showHidden,
       state.sort,
     ]),
-    entries.map((entry) => entry.locator.logical_path),
-    browserRows(entries, state.useGroups).map(
-      (row) => row.entry?.locator.logical_path ?? null,
-    ),
+    entryPaths,
+    rowPaths,
   );
   const { setSelection, selectedPaths } = selection;
-  const selectedEntries = entries.filter((entry) =>
-    selectedPaths.has(entry.locator.logical_path),
+  const selectedEntries = useMemo(
+    () =>
+      entries.filter((entry) => selectedPaths.has(entry.locator.logical_path)),
+    [entries, selectedPaths],
   );
   const selected =
     selectedEntries.length === 1 ? selectedEntries[0] : undefined;
@@ -364,6 +376,8 @@ export default function App() {
     },
   });
   function navigate(volumeId: string, logicalPath: string) {
+    if (volumes.find((item) => item.id === volumeId)?.root.type === "s3")
+      state.setSort("provider");
     state.navigate({ volumeId, path: logicalPath });
     setSelection(null);
     setSearch("");

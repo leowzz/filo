@@ -11,6 +11,10 @@ pub type StorageReader = Pin<Box<dyn AsyncRead + Send + Unpin>>;
 pub trait DirectoryReader: Send {
     /// Empty means exhausted. Implementations bound each batch and fetch lazily.
     async fn next_batch(&mut self, limit: usize) -> StorageResult<Vec<StorageEntry>>;
+    /// Some readers know exhaustion without another read; others report it with an empty batch.
+    fn is_exhausted(&self) -> bool {
+        false
+    }
 }
 
 struct BufferedDirectory(std::collections::VecDeque<StorageEntry>);
@@ -18,6 +22,9 @@ struct BufferedDirectory(std::collections::VecDeque<StorageEntry>);
 impl DirectoryReader for BufferedDirectory {
     async fn next_batch(&mut self, limit: usize) -> StorageResult<Vec<StorageEntry>> {
         Ok(self.0.drain(..limit.min(self.0.len())).collect())
+    }
+    fn is_exhausted(&self) -> bool {
+        self.0.is_empty()
     }
 }
 

@@ -217,16 +217,17 @@ impl S3Directory {
 impl DirectoryReader for S3Directory {
     async fn next_batch(&mut self, limit: usize) -> StorageResult<Vec<StorageEntry>> {
         let limit = limit.clamp(1, 500);
-        let mut entries = Vec::new();
-        while entries.len() < limit {
-            if let Some(entry) = self.pending.pop_front() {
-                entries.push(entry);
-            } else if self.done {
-                break;
-            } else {
-                self.fetch_page().await?;
-            }
+        // Return buffered entries before requesting another provider page. This gives
+        // fast first results and keeps them intact if the next request fails.
+        while self.pending.is_empty() && !self.done {
+            self.fetch_page().await?;
         }
-        Ok(entries)
+        Ok(self
+            .pending
+            .drain(..limit.min(self.pending.len()))
+            .collect())
+    }
+    fn is_exhausted(&self) -> bool {
+        self.done && self.pending.is_empty()
     }
 }

@@ -48,9 +48,15 @@ export function TransferDialog({
   const [conflictPolicy, setConflictPolicy] =
     useState<ConflictPolicy>("reject");
   const [folderPage, setFolderPage] = useState(0);
+  const targetVolume = volumes.find((volume) => volume.id === volumeId);
   const entriesQuery = useDirectoryQuery(
     { volume_id: volumeId, logical_path: path, version_id: null },
-    { search: "", show_hidden: true, folders_only: true, sort: "name" },
+    {
+      search: "",
+      show_hidden: true,
+      folders_only: true,
+      sort: targetVolume?.root.type === "s3" ? "provider" : "name",
+    },
   );
   const folders = entriesQuery.data?.pages[folderPage]?.entries ?? [];
   const changePath = (next: string) => {
@@ -197,9 +203,14 @@ export function TransferDialog({
                   <ChevronRight size={15} />
                 </button>
               ))}
-              {entriesQuery.isSuccess && entriesQuery.total === 0 && (
-                <p>此目录没有子文件夹</p>
-              )}
+              {entriesQuery.isSuccess &&
+                entriesQuery.total === 0 &&
+                !entriesQuery.hasNextPage && <p>此目录没有子文件夹</p>}
+              {entriesQuery.isSuccess &&
+                folders.length === 0 &&
+                entriesQuery.hasNextPage && (
+                  <p>此页没有子文件夹，可继续下一页查找。</p>
+                )}
             </div>
             <div className="destination-path">
               <button
@@ -209,7 +220,11 @@ export function TransferDialog({
               >
                 上一页
               </button>
-              <span>{entriesQuery.total} 个文件夹</span>
+              <span>
+                {entriesQuery.totalIsExact
+                  ? `${entriesQuery.total} 个文件夹`
+                  : `已加载 ${entriesQuery.total} 个文件夹`}
+              </span>
               <button
                 type="button"
                 disabled={

@@ -10,7 +10,14 @@ export function useDirectoryRefresh(
   active: boolean,
 ) {
   const client = useQueryClient();
-  const [enabled, setEnabled] = useState(true);
+  const [preferences, setPreferences] = useState<{
+    local: boolean | null;
+    remote: boolean | null;
+  }>({ local: null, remote: null });
+  const scope = remote ? "remote" : "local";
+  const enabled = preferences[scope] ?? !remote;
+  const setEnabled = (value: boolean) =>
+    setPreferences((current) => ({ ...current, [scope]: value }));
   const [retry, setRetry] = useState(0);
   const [error, setError] = useState("");
   const stamp = useRef<string | null>(null);

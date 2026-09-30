@@ -362,6 +362,7 @@ export function FileBrowser({
           )}
           {!entriesQuery.isPending &&
             !entriesQuery.isError &&
+            !entriesQuery.hasNextPage &&
             entries.length === 0 && (
               <div className="empty-state">
                 <FolderOpen size={40} strokeWidth={1.3} />
@@ -397,7 +398,9 @@ export function FileBrowser({
             volume={volume}
             path={path}
             selectedEntries={selectedEntries}
-            entryCount={entriesQuery.total}
+            entryCount={
+              entriesQuery.totalIsExact ? entriesQuery.total : undefined
+            }
           />
         )}
       </div>
@@ -458,8 +461,11 @@ export function FileBrowser({
       <footer className="statusbar">
         <span>
           {entriesQuery.hasNextPage
-            ? `已加载 ${entries.length} / ${entriesQuery.total} 项 · 全选仅选择已加载项`
+            ? entriesQuery.totalIsExact
+              ? `已加载 ${entries.length} / ${entriesQuery.total} 项 · 全选仅选择已加载项`
+              : `已加载 ${entries.length} 项 · 全选仅选择已加载项`
             : `${entriesQuery.total} 个项目`}
+          {sort === "provider" && " · 快速浏览"}
           {selectedEntries.length > 0
             ? ` · 已选择 ${selectedEntries.length} 项`
             : ""}

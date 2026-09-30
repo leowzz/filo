@@ -222,6 +222,7 @@ pub struct StorageEntry {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EntrySort {
+    Provider,
     #[default]
     Name,
     Size,
@@ -242,6 +243,12 @@ pub struct EntryPage {
     pub entries: Vec<StorageEntry>,
     pub next_cursor: Option<String>,
     pub total: u64,
+    #[serde(default = "exact_total")]
+    pub total_is_exact: bool,
+}
+
+fn exact_total() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

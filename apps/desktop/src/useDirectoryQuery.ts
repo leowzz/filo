@@ -15,10 +15,17 @@ export function useDirectoryQuery(
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     enabled: enabled && !!parent.volume_id,
     gcTime: 60_000,
+    refetchOnWindowFocus: false,
   });
   const entries = useMemo(
     () => query.data?.pages.flatMap((page) => page.entries) ?? [],
     [query.data],
   );
-  return { ...query, entries, total: query.data?.pages[0]?.total ?? 0 };
+  const latest = query.data?.pages.at(-1);
+  return {
+    ...query,
+    entries,
+    total: latest?.total ?? 0,
+    totalIsExact: latest?.total_is_exact !== false,
+  };
 }

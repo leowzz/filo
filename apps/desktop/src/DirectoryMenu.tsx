@@ -6,6 +6,7 @@ import { Modal } from "./components";
 import type { EntrySort } from "./types";
 
 const sorts: { value: EntrySort; label: string }[] = [
+  { value: "provider", label: "快速浏览（服务顺序）" },
   { value: "name", label: "名称" },
   { value: "size", label: "大小（从大到小）" },
   { value: "modified", label: "修改时间（从新到旧）" },
@@ -266,6 +267,9 @@ export function BrowserViewOptions({ onClose }: { onClose: () => void }) {
           </option>
         ))}
       </select>
+      <p className="field-help">
+        快速浏览按需加载。名称、大小和修改时间排序，以及名称筛选，需要读取整个目录；大目录可能耗时较长。
+      </p>
       <div className="browser-view-options">
         <label>
           <input

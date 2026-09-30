@@ -195,7 +195,7 @@ export function AppHeader({
     {
       id: "auto-refresh",
       group: "显示",
-      label: `自动刷新（${remote ? "15" : "5"} 秒）`,
+      label: `自动刷新（${remote ? "15 秒，大目录较慢" : "5 秒"}）`,
       disabled: !browsing,
       checked: refresh.enabled,
       run: () => refresh.setEnabled(!refresh.enabled),
