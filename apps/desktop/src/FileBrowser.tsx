@@ -33,6 +33,7 @@ import { StorageTypeLabel } from "./StorageProvider";
 import type { EntrySort } from "./types";
 import { browserRows } from "./browserRows";
 import { DirectoryMenu, type MenuPosition } from "./DirectoryMenu";
+import { BucketPrefixNavigation } from "./BucketPrefixNavigation";
 export type { EntrySort } from "./types";
 
 export function FileBrowser({
@@ -417,32 +418,43 @@ export function FileBrowser({
           onOptions={onViewOptions}
         />
       )}
-      <nav className="pathbar" aria-label="当前路径">
-        <button
-          onClick={() => navigate(volume.id, "")}
-          title={
-            volume.root.type === "local" ? volume.root.root_path : volume.name
-          }
-        >
-          <HardDrive size={14} />
-          {volume.name}
-        </button>
-        {path
-          .split("/")
-          .filter(Boolean)
-          .map((part, i, parts) => (
-            <span key={i}>
-              <ChevronRight size={12} />
-              <button
-                onClick={() =>
-                  navigate(volume.id, parts.slice(0, i + 1).join("/"))
-                }
-              >
-                {part}
-              </button>
-            </span>
-          ))}
-      </nav>
+      <div className="pathbar-row">
+        <nav className="pathbar" aria-label="当前路径">
+          <button
+            onClick={() => navigate(volume.id, "")}
+            title={
+              volume.root.type === "local" ? volume.root.root_path : volume.name
+            }
+          >
+            <HardDrive size={14} />
+            {volume.name}
+          </button>
+          {path
+            .split("/")
+            .filter(Boolean)
+            .map((part, i, parts) => (
+              <span key={i}>
+                <ChevronRight size={12} />
+                <button
+                  onClick={() =>
+                    navigate(volume.id, parts.slice(0, i + 1).join("/"))
+                  }
+                >
+                  {part}
+                </button>
+              </span>
+            ))}
+        </nav>
+        {volume.root.type === "s3" && (
+          <BucketPrefixNavigation
+            key={`${volume.id}:${volume.root.prefix}:${path}`}
+            volumeId={volume.id}
+            rootPrefix={volume.root.prefix}
+            path={path}
+            navigate={navigate}
+          />
+        )}
+      </div>
       <footer className="statusbar">
         <span>
           {entriesQuery.hasNextPage

@@ -1,4 +1,44 @@
 use super::*;
+
+#[test]
+fn oss_native_endpoints_use_s3_transport_without_changing_saved_config() {
+    let mut config = S3ConnectionConfig {
+        provider: Some(S3Provider::Oss),
+        endpoint: None,
+        region: "us-southeast-1".into(),
+        force_path_style: false,
+    };
+    for (endpoint, expected) in [
+        (
+            "https://oss-us-southeast-1.aliyuncs.com",
+            "https://s3.oss-us-southeast-1.aliyuncs.com/",
+        ),
+        (
+            "https://oss-us-southeast-1-internal.aliyuncs.com",
+            "https://s3.oss-us-southeast-1-internal.aliyuncs.com/",
+        ),
+        (
+            "https://s3.oss-us-southeast-1.aliyuncs.com",
+            "https://s3.oss-us-southeast-1.aliyuncs.com",
+        ),
+        ("https://storage.example.com", "https://storage.example.com"),
+        (
+            "https://oss-us-southeast-1.aliyuncs.com.example.com",
+            "https://oss-us-southeast-1.aliyuncs.com.example.com",
+        ),
+    ] {
+        config.endpoint = Some(endpoint.into());
+        let transport = transport_config(&config);
+        assert_eq!(transport.endpoint.as_deref(), Some(expected));
+        assert_eq!(config.endpoint.as_deref(), Some(endpoint));
+        assert_eq!(transport.region, config.region);
+        assert_eq!(transport.force_path_style, config.force_path_style);
+    }
+    config.endpoint = Some("https://oss-us-southeast-1.aliyuncs.com".into());
+    config.provider = Some(S3Provider::Generic);
+    assert_eq!(transport_config(&config).endpoint, config.endpoint);
+}
+
 #[test]
 fn rejects_credential_urls_and_preserves_volume_boundaries() {
     let volume = StorageVolume {

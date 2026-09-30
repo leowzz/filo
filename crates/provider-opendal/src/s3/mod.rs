@@ -54,6 +54,35 @@ fn invalid(message: &str) -> StorageError {
     StorageError::new(StorageErrorCode::InvalidConfiguration, message)
 }
 
+fn transport_config(config: &S3ConnectionConfig) -> S3ConnectionConfig {
+    let mut transport = config.clone();
+    if config.provider != Some(S3Provider::Oss) {
+        return transport;
+    }
+    let Some(endpoint) = config.endpoint.as_deref() else {
+        return transport;
+    };
+    let Ok(mut url) = url::Url::parse(endpoint) else {
+        return transport;
+    };
+    // The UI stores OSS endpoints; both S3 clients require OSS's compatibility host.
+    // Only translate known regional hosts, preserving custom domains and legacy URLs.
+    for internal in [false, true] {
+        let host = format!(
+            "oss-{}{}.aliyuncs.com",
+            config.region.trim(),
+            if internal { "-internal" } else { "" }
+        );
+        if url.host_str() == Some(host.as_str()) {
+            if url.set_host(Some(&format!("s3.{host}"))).is_ok() {
+                transport.endpoint = Some(url.to_string());
+            }
+            break;
+        }
+    }
+    transport
+}
+
 impl OpenDalS3Backend {
     pub fn with_transfer_limits(mut self, limits: Arc<TransferLimits>) -> Self {
         self.limits = limits;
@@ -64,6 +93,7 @@ impl OpenDalS3Backend {
         config: &S3ConnectionConfig,
         credentials: &S3Credentials,
     ) -> StorageResult<Self> {
+        let config = &transport_config(config);
         let VolumeRoot::S3 { bucket, prefix } = &volume.root else {
             return Err(invalid("需要 S3 存储空间"));
         };

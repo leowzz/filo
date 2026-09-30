@@ -257,7 +257,7 @@ for (const [provider, label] of [
     const publicUrl =
       provider === "tos"
         ? "https://tos-s3-cn-shanghai.volces.com"
-        : "https://s3.oss-cn-shanghai.aliyuncs.com";
+        : "https://oss-cn-shanghai.aliyuncs.com";
     assert.equal(await value("访问地址"), publicUrl);
     await page.selectOption(
       'xpath=//label[contains(., "访问方式")]//select',
@@ -266,7 +266,7 @@ for (const [provider, label] of [
     const internalUrl =
       provider === "tos"
         ? "https://tos-s3-cn-shanghai.ivolces.com"
-        : "https://s3.oss-cn-shanghai-internal.aliyuncs.com";
+        : "https://oss-cn-shanghai-internal.aliyuncs.com";
     assert.equal(await value("访问地址"), internalUrl);
     assert.equal((await test()).config.force_path_style, false);
     await page.selectOption(

@@ -18,7 +18,7 @@ export const s3Providers = {
   },
   oss: {
     name: "阿里云 OSS",
-    description: "按地域自动配置 S3 访问地址",
+    description: "按地域自动配置 OSS 访问地址",
     region: "cn-hangzhou",
   },
 } satisfies Record<
@@ -86,7 +86,7 @@ export function cloudEndpoint(
   if (provider === "tos")
     return `https://tos-s3-${region.trim()}.${internal ? "ivolces" : "volces"}.com`;
   if (provider === "oss")
-    return `https://s3.oss-${region.trim()}${internal ? "-internal" : ""}.aliyuncs.com`;
+    return `https://oss-${region.trim()}${internal ? "-internal" : ""}.aliyuncs.com`;
   return "";
 }
 
@@ -95,7 +95,23 @@ export function endpointMode(
   config?: S3Config,
 ): EndpointMode {
   if (!config) return "public";
-  // Keep saved URLs exactly, including custom endpoints and legacy HTTP URLs.
+  // Recognize previously generated OSS S3 endpoints so editing uses the native URL.
+  if (provider === "oss") {
+    if (
+      config.endpoint ===
+      cloudEndpoint(provider, config.region).replace("https://", "https://s3.")
+    )
+      return "public";
+    if (
+      config.endpoint ===
+      cloudEndpoint(provider, config.region, true).replace(
+        "https://",
+        "https://s3.",
+      )
+    )
+      return "internal";
+  }
+  // Keep custom endpoints and legacy HTTP URLs exactly.
   if (config.endpoint === cloudEndpoint(provider, config.region))
     return "public";
   if (config.endpoint === cloudEndpoint(provider, config.region, true))
