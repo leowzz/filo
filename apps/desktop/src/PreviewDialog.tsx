@@ -1,6 +1,14 @@
 import { lazy, Suspense } from "react";
+import { ChevronUp, ChevronDown } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { Modal, EntryIcon, formatDate, formatSize } from "./components";
+import {
+  Modal,
+  EntryIcon,
+  formatDate,
+  formatSize,
+  typeName,
+} from "./components";
+import { PreviewStatus } from "./PreviewStatus";
 import { browsingApi } from "./browsingApi";
 import { errorMessage } from "./api";
 import type { Entry, ListOptions } from "./types";
@@ -37,12 +45,59 @@ export function PreviewDialog({
 }) {
   const entry = entries.length === 1 ? entries[0] : undefined;
   const directory = entry ? isDirectory(entry) : false;
+  const previous = nextSibling(siblings, entries, -1);
+  const next = nextSibling(siblings, entries, 1);
   return (
     <Modal
       className={
         entry && !directory ? "preview-modal" : "selection-preview-modal"
       }
-      title={entry ? `预览 · ${entry.name}` : `预览 · ${entries.length} 个项目`}
+      title={entry ? entry.name : `${entries.length} 个项目`}
+      titleContent={
+        entry ? (
+          <>
+            <EntryIcon entry={entry} size={22} />
+            <span className="preview-heading-copy">
+              <span className="preview-filename">{entry.name}</span>
+              <span className="preview-metadata">
+                {typeName(entry)}
+                {!directory && entry.size !== null
+                  ? ` · ${formatSize(entry.size)}`
+                  : ""}
+              </span>
+            </span>
+          </>
+        ) : undefined
+      }
+      headerActions={
+        siblings.length > 1 ? (
+          <div
+            className="preview-navigation"
+            role="group"
+            aria-label="切换预览文件"
+            onClick={(event) => event.currentTarget.closest("dialog")?.focus()}
+          >
+            <button
+              className="icon-button"
+              aria-label="上一个项目"
+              title="上一个项目（↑）"
+              disabled={!previous}
+              onClick={() => previous && onSelect(previous)}
+            >
+              <ChevronUp size={18} />
+            </button>
+            <button
+              className="icon-button"
+              aria-label="下一个项目"
+              title="下一个项目（↓）"
+              disabled={!next}
+              onClick={() => next && onSelect(next)}
+            >
+              <ChevronDown size={18} />
+            </button>
+          </div>
+        ) : undefined
+      }
       onClose={onClose}
       onKeyDown={(event) => {
         if (event.altKey || event.metaKey || event.ctrlKey) return;
@@ -54,6 +109,7 @@ export function PreviewDialog({
         );
         if (!next) return;
         event.preventDefault();
+        event.currentTarget.focus();
         onSelect(next);
       }}
     >
@@ -193,23 +249,16 @@ function FilePreview({ entry }: { entry: Entry }) {
     refetchOnWindowFocus: false,
   });
   return (
-    <div className={`preview-content${query.data ? "" : " is-compact"}`}>
-      {query.isPending && (
-        <p className="preview-status" role="status">
-          正在读取预览…
-        </p>
-      )}
+    <div
+      className={`preview-content file-preview-content${query.data ? ` preview-${query.data.kind}` : " is-pending"}`}
+    >
+      {query.isPending && <PreviewStatus message="正在读取预览…" />}
       {query.isError && (
-        <div className="preview-status" role="alert">
-          <p>{errorMessage(query.error)}</p>
-          <button
-            className="secondary"
-            type="button"
-            onClick={() => void query.refetch()}
-          >
-            重试
-          </button>
-        </div>
+        <PreviewStatus
+          error
+          message={errorMessage(query.error)}
+          onRetry={() => void query.refetch()}
+        />
       )}
       {query.data?.kind === "image" && (
         <img
@@ -222,14 +271,14 @@ function FilePreview({ entry }: { entry: Entry }) {
         <>
           <TextPreview name={entry.name} content={query.data.content} />
           {query.data.truncated && (
-            <p>仅预览前 1 MiB，完整内容请打开或下载文件。</p>
+            <p className="preview-note">
+              仅预览前 1 MiB，完整内容请打开或下载文件。
+            </p>
           )}
         </>
       )}
       {query.data?.kind === "pdf" && (
-        <Suspense
-          fallback={<p className="preview-status">正在加载 PDF 预览…</p>}
-        >
+        <Suspense fallback={<PreviewStatus message="正在加载 PDF 预览…" />}>
           <PdfPreview content={query.data.content} />
         </Suspense>
       )}

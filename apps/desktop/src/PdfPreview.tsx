@@ -8,6 +8,8 @@ import {
 } from "pdfjs-dist/legacy/build/pdf.mjs";
 import pdfWorker from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import { errorMessage } from "./api";
+import { PreviewStatus } from "./PreviewStatus";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 GlobalWorkerOptions.workerSrc = pdfWorker;
 export default function PdfPreview({ content }: { content: string }) {
   const [loaded, setLoaded] = useState<{
@@ -37,9 +39,12 @@ export default function PdfPreview({ content }: { content: string }) {
     };
   }, [content]);
   if (loaded?.content !== content)
-    return <p role="status">正在加载 PDF 预览…</p>;
-  if (loaded.error) return <p role="alert">PDF 预览失败：{loaded.error}</p>;
-  return loaded.document ? <PdfPages document={loaded.document} /> : null;
+    return <PreviewStatus message="正在加载 PDF 预览…" />;
+  if (loaded.error)
+    return <PreviewStatus error message={`PDF 预览失败：${loaded.error}`} />;
+  return loaded.document ? (
+    <PdfPages key={loaded.document.loadingTask.docId} document={loaded.document} />
+  ) : null;
 }
 
 function PdfPages({ document }: { document: PDFDocumentProxy }) {
@@ -72,26 +77,37 @@ function PdfPages({ document }: { document: PDFDocumentProxy }) {
     };
   }, [document, number]);
   return (
-    <>
+    <div className="pdf-viewer">
       <div className="preview-pages">
-        <button disabled={number <= 1} onClick={() => setNumber(number - 1)}>
-          上一页
+        <button
+          className="icon-button"
+          aria-label="上一页"
+          title="上一页"
+          disabled={number <= 1}
+          onClick={() => setNumber(number - 1)}
+        >
+          <ChevronLeft size={18} />
         </button>
         <span>
           {number} / {document.numPages}
         </span>
         <button
+          className="icon-button"
+          aria-label="下一页"
+          title="下一页"
           disabled={number >= document.numPages}
           onClick={() => setNumber(number + 1)}
         >
-          下一页
+          <ChevronRight size={18} />
         </button>
       </div>
-      {error ? (
-        <p role="alert">PDF 预览失败：{error}</p>
-      ) : (
-        <canvas key={number} ref={canvas} className="pdf-preview" />
-      )}
-    </>
+      <div className="pdf-page-stage">
+        {error ? (
+          <PreviewStatus error message={`PDF 预览失败：${error}`} />
+        ) : (
+          <canvas key={number} ref={canvas} className="pdf-preview" />
+        )}
+      </div>
+    </div>
   );
 }

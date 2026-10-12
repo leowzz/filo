@@ -68,8 +68,9 @@ async function dialogState() {
     const title = dialog.querySelector("#modal-title");
     return {
       width: Math.round(dialog.getBoundingClientRect().width),
-      compact: !!dialog.querySelector(".preview-content.is-compact"),
-      title: title?.textContent ?? "",
+      pending: !!dialog.querySelector(".preview-content.is-pending"),
+      title: dialog.querySelector(".preview-filename")?.textContent ?? "",
+      height: Math.round(dialog.getBoundingClientRect().height),
       titleAttr: title?.getAttribute("title") ?? "",
       status: dialog.querySelector("[role=status]")?.textContent?.trim() ?? null,
       alert: dialog.querySelector("[role=alert] p")?.textContent?.trim() ?? null,
@@ -89,22 +90,24 @@ await page.click(
   'tr[data-entry-path="r730xd-ompublication-zh-cn.pdf"] .file-name',
 );
 await page.keyboard.press("Space");
-await page.waitForSelector("dialog.preview-modal .is-compact [role=status]");
+await page.waitForSelector("dialog.preview-modal .is-pending [role=status]");
 await page.waitForFunction(
   () => typeof window.pendingPreviews["r730xd-ompublication-zh-cn.pdf"] === "function",
 );
 let state = await dialogState();
 assert.equal(state.status, "正在读取预览…");
-assert.equal(state.compact, true);
-assert.ok(state.width <= 420, `loading dialog too wide: ${state.width}`);
-assert.equal(state.title, "预览 · r730xd-ompublication-zh-cn.pdf");
+assert.equal(state.pending, true);
+assert.ok(state.width >= 700, `loading dialog too narrow: ${state.width}`);
+assert.equal(state.title, "r730xd-ompublication-zh-cn.pdf");
 assert.equal(state.titleAttr, state.title);
+const loadingSize = { width: state.width, height: state.height };
 await page.evaluate(() =>
   window.pendingPreviews["r730xd-ompublication-zh-cn.pdf"](),
 );
 await page.waitForSelector(".text-preview");
 state = await dialogState();
-assert.equal(state.compact, false);
+assert.equal(state.pending, false);
+assert.deepEqual({ width: state.width, height: state.height }, loadingSize);
 assert.ok(state.width >= 700, `content dialog too narrow: ${state.width}`);
 assert.equal(
   await page.evaluate(
@@ -116,10 +119,10 @@ await close();
 
 await page.click('tr[data-entry-path="app_dir_rename.exe"] .file-name');
 await page.keyboard.press("Space");
-await page.waitForSelector("dialog.preview-modal .is-compact [role=alert]");
+await page.waitForSelector("dialog.preview-modal .is-pending [role=alert]");
 state = await dialogState();
-assert.equal(state.compact, true);
-assert.ok(state.width <= 420, `unsupported dialog too wide: ${state.width}`);
+assert.equal(state.pending, true);
+assert.ok(state.width >= 700, `unsupported dialog too narrow: ${state.width}`);
 assert.equal(
   state.alert,
   "此文件暂不支持预览，请下载或使用系统应用打开",
@@ -131,11 +134,28 @@ await page.click('tr[data-entry-path="notes.txt"] .file-name');
 await page.keyboard.press("Space");
 await page.waitForSelector(".text-preview");
 state = await dialogState();
-assert.equal(state.compact, false);
+assert.equal(state.pending, false);
 assert.ok(state.width >= 700, `text dialog too narrow: ${state.width}`);
+await page.cdp("Emulation.setDeviceMetricsOverride", {
+  width: 720, height: 600, deviceScaleFactor: 1, mobile: false,
+});
+const layout = await page.evaluate(() => {
+  const dialog = document.querySelector("dialog.preview-modal");
+  const rect = dialog.getBoundingClientRect();
+  const buttons = [...dialog.querySelectorAll(".modal-head button")].map(button => {
+    const bounds = button.getBoundingClientRect();
+    return bounds.y + bounds.height / 2;
+  });
+  return {
+    fits: rect.x >= 0 && rect.y >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight,
+    overflow: dialog.scrollWidth > dialog.clientWidth,
+    aligned: Math.max(...buttons) - Math.min(...buttons) < 1,
+  };
+});
+assert.deepEqual(layout, { fits: true, overflow: false, aligned: true });
 await close();
 
 console.log(
-  "PASS: compact loading/unsupported preview dialogs, expanded content preview, retry control",
+  "PASS: stable preview size across loading/content, unsupported feedback, retry control",
 );
 if (!globalThis.filoKeepBrowser) await task.finish({ keep: [] });

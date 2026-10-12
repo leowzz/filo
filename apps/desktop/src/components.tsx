@@ -92,6 +92,8 @@ export function Modal({
   busy = false,
   className = "",
   onKeyDown,
+  titleContent,
+  headerActions,
 }: {
   title: string;
   children: ReactNode;
@@ -99,6 +101,8 @@ export function Modal({
   busy?: boolean;
   className?: string;
   onKeyDown?: (event: KeyboardEvent<HTMLDialogElement>) => void;
+  titleContent?: ReactNode;
+  headerActions?: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -116,14 +120,17 @@ export function Modal({
       }}
       onKeyDown={onKeyDown}
       aria-labelledby="modal-title"
+      tabIndex={-1}
     >
       <div className="modal-head">
         <h2 id="modal-title" title={title}>
-          {title}
+          {titleContent ?? title}
         </h2>
+        {headerActions}
         <button
           className="icon-button"
           aria-label="关闭"
+          autoFocus
           disabled={busy}
           onClick={onClose}
         >

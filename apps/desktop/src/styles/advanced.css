@@ -5,74 +5,6 @@
   flex-shrink: 0;
   border-radius: 3px;
 }
-.preview-content {
-  min-width: 0;
-}
-.preview-status {
-  margin: 4px 0 2px;
-  font-size: 13px;
-  line-height: 1.55;
-  color: #555;
-}
-.preview-status[role="alert"] {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 12px;
-}
-.preview-status p {
-  overflow-wrap: anywhere;
-}
-.selection-preview-stats {
-  display: grid;
-  gap: 16px;
-  margin: 20px 0;
-}
-.selection-preview-stats > div {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-}
-.selection-preview-stats dt {
-  color: #777;
-  font-size: 13px;
-}
-.selection-preview-stats dd {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-.image-preview {
-  display: block;
-  max-width: 100%;
-  max-height: 65vh;
-  object-fit: contain;
-  margin: auto;
-}
-.text-preview {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font:
-    12px/1.6 ui-monospace,
-    monospace;
-  max-height: 65vh;
-  overflow: auto;
-  user-select: text;
-  background: #f6f7f9;
-  padding: 14px;
-}
-.text-preview code {
-  font: inherit;
-}
-.pdf-preview {
-  display: block;
-  max-width: 100%;
-  height: auto;
-  margin: auto;
-}
-.preview-pages,
 .advanced-actions {
   display: flex;
   gap: 10px;
@@ -159,55 +91,6 @@
   word-break: break-all;
 }
 
-.modal.preview-modal {
-  width: 820px;
-}
-.modal.preview-modal-compact,
-.modal.preview-modal:has(.preview-content.is-compact) {
-  width: 400px;
-}
-.directory-preview-heading {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 4px 0 12px;
-  min-width: 0;
-}
-.directory-preview-heading strong {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.directory-preview-heading .modal-description {
-  margin: 4px 0 0;
-}
-.directory-preview-list {
-  list-style: none;
-  margin: 0 0 8px;
-  padding: 0;
-  max-height: 40vh;
-  overflow: auto;
-}
-.directory-preview-list li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 5px 0;
-}
-.directory-preview-list span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.preview-modal .modal-head h2,
-.selection-preview-modal .modal-head h2 {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .modal.advanced-modal {
   width: 700px;
 }

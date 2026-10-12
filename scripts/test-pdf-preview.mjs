@@ -116,9 +116,9 @@ await expectPage(1, [255, 0, 0]);
 const initialWorkers = await page.evaluate(
   () => window.pdfCompatibility.workers.length,
 );
-await page.click('.preview-pages button:text-is("下一页")');
+await page.click('.preview-pages button[aria-label="下一页"]');
 await expectPage(2, [0, 0, 255]);
-await page.click('.preview-pages button:text-is("上一页")');
+await page.click('.preview-pages button[aria-label="上一页"]');
 await expectPage(1, [255, 0, 0]);
 assert.equal(
   await page.evaluate(() => window.pdfCompatibility.workers.length),

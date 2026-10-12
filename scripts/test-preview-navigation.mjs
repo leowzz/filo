@@ -87,7 +87,7 @@ async function selected() {
 }
 
 async function previewTitle() {
-  return page.evaluate(() => document.querySelector("#modal-title")?.textContent);
+  return page.evaluate(() => document.querySelector(".preview-filename")?.textContent);
 }
 
 assert.equal(
@@ -108,7 +108,7 @@ assert.equal(
 );
 await page.keyboard.press("Space");
 await page.waitForSelector(".directory-preview-list");
-assert.equal(await previewTitle(), "预览 · Folder");
+assert.equal(await previewTitle(), "Folder");
 assert.deepEqual(
   await page.evaluate(() =>
     Array.from(
@@ -132,7 +132,7 @@ assert.match(
 
 await page.keyboard.press("ArrowDown");
 await page.waitForSelector(".text-preview");
-assert.equal(await previewTitle(), "预览 · a.txt");
+assert.equal(await previewTitle(), "a.txt");
 assert.equal(
   await page.evaluate(
     () => document.querySelector(".text-preview").textContent,
@@ -143,7 +143,7 @@ assert.deepEqual(await selected(), ["a.txt"]);
 
 await page.keyboard.press("ArrowDown");
 await page.waitForFunction(
-  () => document.querySelector("#modal-title")?.textContent === "预览 · b.txt",
+  () => document.querySelector(".preview-filename")?.textContent === "b.txt",
 );
 assert.equal(
   await page.evaluate(
@@ -155,13 +155,13 @@ assert.deepEqual(await selected(), ["b.txt"]);
 
 await page.keyboard.press("ArrowUp");
 await page.waitForFunction(
-  () => document.querySelector("#modal-title")?.textContent === "预览 · a.txt",
+  () => document.querySelector(".preview-filename")?.textContent === "a.txt",
 );
 assert.deepEqual(await selected(), ["a.txt"]);
 
 await page.keyboard.press("ArrowUp");
 await page.waitForSelector(".directory-preview-list");
-assert.equal(await previewTitle(), "预览 · Folder");
+assert.equal(await previewTitle(), "Folder");
 assert.deepEqual(await selected(), ["Folder"]);
 assert.deepEqual(
   await page.evaluate(() => window.previewCalls),
@@ -177,7 +177,20 @@ await page.click('tr[data-entry-path="notes.txt"] .file-name');
 await page.keyboard.press("Space");
 await page.waitForSelector(".text-preview");
 await page.keyboard.press("ArrowDown");
-assert.equal(await previewTitle(), "预览 · notes.txt");
+assert.equal(await previewTitle(), "notes.txt");
+await page.click('button[aria-label="上一个项目"]');
+await page.waitForFunction(
+  () => document.querySelector(".preview-filename")?.textContent === "b.txt",
+);
+await page.click('button[aria-label="下一个项目"]');
+await page.waitForFunction(
+  () => document.querySelector(".preview-filename")?.textContent === "notes.txt",
+);
+// Disabling the clicked button at the boundary must not lose keyboard focus.
+await page.keyboard.press("ArrowUp");
+await page.waitForFunction(
+  () => document.querySelector(".preview-filename")?.textContent === "b.txt",
+);
 await page.keyboard.press("Escape");
 await page.waitForSelector("dialog[open]", { state: "detached" });
 
@@ -193,15 +206,15 @@ await page.click('button:text-is("开始搜索")');
 await page.waitForSelector(".content-results button");
 await page.click('.content-results button >> nth=0');
 await page.waitForFunction(
-  () => document.querySelector("#modal-title")?.textContent === "预览 · first.txt",
+  () => document.querySelector(".preview-filename")?.textContent === "first.txt",
 );
 await page.keyboard.press("ArrowDown");
 await page.waitForFunction(
-  () => document.querySelector("#modal-title")?.textContent === "预览 · second.txt",
+  () => document.querySelector(".preview-filename")?.textContent === "second.txt",
 );
 await page.keyboard.press("ArrowUp");
 await page.waitForFunction(
-  () => document.querySelector("#modal-title")?.textContent === "预览 · first.txt",
+  () => document.querySelector(".preview-filename")?.textContent === "first.txt",
 );
 await page.keyboard.press("Escape");
 await page.waitForFunction(
