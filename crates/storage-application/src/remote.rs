@@ -183,6 +183,7 @@ impl StorageService {
             let _ = self.delete_credentials(reference).await;
             return Err(error);
         }
+        self.nef_previews.lock().await.invalidate_volume(volume.id);
         if let Some(old) = old_reference {
             let _ = self.delete_credentials(old).await;
         }

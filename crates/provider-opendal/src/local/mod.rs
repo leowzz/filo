@@ -320,6 +320,33 @@ impl StorageBackend for OpenDalLocalBackend {
         ))
     }
 
+    async fn read_range(
+        &self,
+        entry: &StorageEntry,
+        range: std::ops::Range<u64>,
+    ) -> StorageResult<Vec<u8>> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+        let length = storage_provider_api::read_range_length(entry, &range)?;
+        let logical = self.check_locator(&entry.locator)?;
+        let path = self.checked_path(&logical, false).await?;
+        if self.stat(&entry.locator).await?.kind != StorageEntryKind::File {
+            return Err(StorageError::new(
+                StorageErrorCode::Unsupported,
+                "请选择普通文件进行预览",
+            ));
+        }
+        let mut file = tokio::fs::File::open(path).await.map_err(io_error)?;
+        file.seek(std::io::SeekFrom::Start(range.start))
+            .await
+            .map_err(io_error)?;
+        let mut bytes = Vec::new();
+        file.take(length)
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(io_error)?;
+        Ok(bytes)
+    }
+
     async fn stage_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>> {
         OpenDalLocalBackend::prepare_write(self, locator).await
     }

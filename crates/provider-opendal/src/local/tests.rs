@@ -1,4 +1,17 @@
 use super::*;
+
+#[tokio::test]
+async fn range_read_seeks_to_offset_and_preserves_path_checks() {
+    let (directory, backend) = fixture(false).await;
+    std::fs::write(directory.path().join("photo.nef"), b"0123456789").unwrap();
+    let entry = backend.stat(&locator(&backend, "photo.nef")).await.unwrap();
+    assert_eq!(backend.read_range(&entry, 4..7).await.unwrap(), b"456");
+    assert_eq!(backend.read_range(&entry, 9..10).await.unwrap(), b"9");
+    assert!(backend.read_range(&entry, 9..11).await.is_err());
+    let mut escape = entry;
+    escape.locator.logical_path = "../outside".into();
+    assert!(backend.read_range(&escape, 0..1).await.is_err());
+}
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
 #[test]
 fn atomic_rename_cannot_replace_a_target_created_after_preflight() {

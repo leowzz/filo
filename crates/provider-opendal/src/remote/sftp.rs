@@ -21,14 +21,17 @@ use russh_sftp::{
     client::{
         error::Error as SftpError,
         fs::{File as SftpFile, Metadata},
-        Config as SftpConfig, SftpSession,
+        Config as SftpConfig, RawSftpSession, SftpSession,
     },
     protocol::{OpenFlags, StatusCode},
 };
 use std::{future::Future, net::IpAddr, sync::Arc, time::Duration};
 use storage_domain::*;
 use storage_provider_api::{StagedWrite, StorageBackend, StorageReader};
-use tokio::{io::AsyncWriteExt, sync::Mutex};
+use tokio::{
+    io::AsyncWriteExt,
+    sync::{Mutex, OnceCell},
+};
 use uuid::Uuid;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -59,10 +62,57 @@ impl client::Handler for HostKeyVerifier {
 
 struct SftpConnection {
     sftp: Arc<SftpSession>,
+    range_session: OnceCell<Arc<RawSftpSession>>,
     // The SSH handle owns russh's event loop.  SftpSession owns the subsystem
     // channel, but dropping this handle would detach the transport while the
     // subsystem still has outstanding requests.
     _ssh: Mutex<russh::client::Handle<HostKeyVerifier>>,
+}
+
+impl SftpConnection {
+    async fn range_session(&self) -> StorageResult<Arc<RawSftpSession>> {
+        self.range_session
+            .get_or_try_init(|| async {
+                tokio::time::timeout(OPERATION_TIMEOUT, async {
+                    let channel = self
+                        ._ssh
+                        .lock()
+                        .await
+                        .channel_open_session()
+                        .await
+                        .map_err(ssh_error)?;
+                    channel
+                        .request_subsystem(true, "sftp")
+                        .await
+                        .map_err(ssh_error)?;
+                    let session = RawSftpSession::new(channel.into_stream());
+                    session.set_timeout(OPERATION_TIMEOUT.as_secs());
+                    session.init().await.map_err(sftp_error)?;
+                    Ok(Arc::new(session))
+                })
+                .await
+                .map_err(|_| timed_out())?
+            })
+            .await
+            .cloned()
+    }
+}
+
+// Close the remote handle even when a preview request is cancelled mid-read.
+struct SftpRangeFile {
+    session: Arc<RawSftpSession>,
+    handle: String,
+}
+impl Drop for SftpRangeFile {
+    fn drop(&mut self) {
+        let session = self.session.clone();
+        let handle = self.handle.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let _ = session.close(handle).await;
+            });
+        }
+    }
 }
 
 /// A connected SFTP volume.
@@ -505,6 +555,7 @@ impl SftpBackend {
         sftp.set_timeout(OPERATION_TIMEOUT.as_secs());
         let sftp = Arc::new(SftpConnection {
             sftp,
+            range_session: OnceCell::new(),
             _ssh: Mutex::new(ssh),
         });
         let root_path = join_root(&root, "");
@@ -741,6 +792,58 @@ impl StorageBackend for SftpBackend {
             return Err(unsupported("SFTP 特殊文件不能作为普通文件读取"));
         }
         open_read_file(&self.connection.sftp, &path).await
+    }
+
+    async fn read_range(
+        &self,
+        entry: &StorageEntry,
+        range: std::ops::Range<u64>,
+    ) -> StorageResult<Vec<u8>> {
+        let length = storage_provider_api::read_range_length(entry, &range)?;
+        let logical = self.logical_path(&entry.locator)?;
+        let path = self.remote_path(&logical);
+        let metadata = lstat_no_symlink(&self.connection.sftp, &path, false, false)
+            .await?
+            .ok_or_else(|| StorageError::new(StorageErrorCode::NotFound, "SFTP 文件不存在"))?;
+        if !metadata.is_regular() {
+            return Err(unsupported("请选择普通文件进行预览"));
+        }
+        // The high-level File reader pipelines/prefetches sensor data beyond a
+        // short range. Send explicit READ offsets and lengths on a reused channel.
+        let session = self.connection.range_session().await?;
+        let handle = timeout_sftp(session.open(path, OpenFlags::READ, Default::default()))
+            .await?
+            .handle;
+        let file = SftpRangeFile { session, handle };
+        use futures::StreamExt;
+        let mut chunks = futures::stream::iter((range.start..range.end).step_by(32 * 1024))
+            .map(|start| {
+                let file = &file;
+                let end = range.end.min(start.saturating_add(32 * 1024));
+                async move {
+                    let mut bytes = Vec::new();
+                    while start + (bytes.len() as u64) < end {
+                        let count = (end - start - bytes.len() as u64) as u32;
+                        let data = timeout_sftp(file.session.read(
+                            file.handle.clone(),
+                            start + bytes.len() as u64,
+                            count,
+                        ))
+                        .await?;
+                        if data.data.is_empty() || data.data.len() > count as usize {
+                            return Err(unsupported("SFTP 返回的预览数据不完整或超过请求范围"));
+                        }
+                        bytes.extend_from_slice(&data.data);
+                    }
+                    Ok::<_, StorageError>(bytes)
+                }
+            })
+            .buffered(8);
+        let mut bytes = Vec::with_capacity(length as usize);
+        while let Some(chunk) = chunks.next().await {
+            bytes.extend_from_slice(&chunk?);
+        }
+        Ok(bytes)
     }
 
     async fn stage_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>> {
@@ -1090,6 +1193,16 @@ mod tests {
                 .await
                 .map_err(|_| fixture_io_error())?;
             assert_eq!(read_bytes, payload_bytes);
+            let entry = backend.stat(&payload).await?;
+            assert_eq!(
+                backend.read_range(&entry, 4..11).await?,
+                &payload_bytes[4..11]
+            );
+            assert_eq!(backend.read_range(&entry, 0..3).await?, &payload_bytes[..3]);
+            assert!(backend
+                .read_range(&entry, 0..entry.size.unwrap() + 1)
+                .await
+                .is_err());
             use sha2::{Digest, Sha256};
             let mut digest = Sha256::new();
             digest.update(&read_bytes);

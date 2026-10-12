@@ -38,7 +38,7 @@ export function EntryIcon({
     );
   if (entry.kind === "symlink") return <Link2 size={size} className="muted" />;
   const ext = entry.name.split(".").pop()?.toLowerCase() ?? "";
-  if (["png", "jpg", "jpeg", "svg", "webp", "gif", "heic"].includes(ext))
+  if (["png", "jpg", "jpeg", "svg", "webp", "gif", "heic", "nef"].includes(ext))
     return <FileImage size={size} className="image-icon" />;
   if (
     [

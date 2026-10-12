@@ -54,6 +54,14 @@ impl StorageBackend for SelectedPathBackend {
         self.check(locator)?;
         self.inner.open_read(locator).await
     }
+    async fn read_range(
+        &self,
+        entry: &StorageEntry,
+        range: std::ops::Range<u64>,
+    ) -> StorageResult<Vec<u8>> {
+        self.check(&entry.locator)?;
+        self.inner.read_range(entry, range).await
+    }
     async fn stage_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>> {
         self.check(locator)?;
         self.inner.stage_write(locator).await
@@ -219,12 +227,14 @@ impl StorageService {
             let _ = self.delete_credentials(reference).await;
             return Err(error);
         }
+        self.nef_previews.lock().await.invalidate_volume(volume.id);
         if let Some(old) = old_reference {
             let _ = self.delete_credentials(old).await;
         }
         Ok(volume)
     }
     pub(super) async fn remove_storage_configuration(&self, id: Uuid) -> StorageResult<()> {
+        self.nef_previews.lock().await.invalidate_volume(id);
         let volume = self
             .repository
             .list_volumes()
@@ -559,6 +569,13 @@ mod tests {
             ..selected.clone()
         };
         assert!(backend.stat(&selected).await.is_ok());
+        let entry = backend.stat(&selected).await.unwrap();
+        assert_eq!(backend.read_range(&entry, 0..3).await.unwrap(), b"sel");
+        let sibling_entry = StorageEntry {
+            locator: sibling.clone(),
+            ..entry
+        };
+        assert!(backend.read_range(&sibling_entry, 0..3).await.is_err());
         assert!(backend.stat(&sibling).await.is_err());
         assert!(backend.open_read(&sibling).await.is_err());
         assert!(backend.stage_write(&sibling).await.is_err());

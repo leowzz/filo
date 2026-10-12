@@ -1,5 +1,79 @@
 use super::*;
 
+#[tokio::test]
+async fn range_read_sends_only_requested_bytes_and_expected_etag() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0; 4096];
+        while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            let n = socket.read(&mut buffer).await.unwrap();
+            assert!(n > 0);
+            request.extend_from_slice(&buffer[..n]);
+        }
+        let request = String::from_utf8(request).unwrap().to_lowercase();
+        assert!(request.starts_with("get /bucket/photo.nef "));
+        assert!(request.lines().any(|line| line == "range: bytes=1000-1004"));
+        assert!(request
+            .lines()
+            .any(|line| line == "if-match: \"revision-1\""));
+        socket.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Length: 5\r\nContent-Range: bytes 1000-1004/67108864\r\nETag: \"revision-1\"\r\nConnection: close\r\n\r\nhello").await.unwrap();
+    });
+    let volume = StorageVolume {
+        id: Uuid::new_v4(),
+        connection_id: Uuid::new_v4(),
+        name: "fixture".into(),
+        root: VolumeRoot::S3 {
+            bucket: "bucket".into(),
+            prefix: String::new(),
+        },
+        read_only: true,
+    };
+    let backend = OpenDalS3Backend::new(
+        &volume,
+        &S3ConnectionConfig {
+            provider: None,
+            endpoint: Some(endpoint),
+            region: "us-east-1".into(),
+            force_path_style: true,
+        },
+        &S3Credentials {
+            access_key_id: "fixture".into(),
+            secret_access_key: "fixture".into(),
+            session_token: None,
+        },
+    )
+    .unwrap();
+    let entry = StorageEntry {
+        locator: StorageLocator {
+            volume_id: volume.id,
+            logical_path: "photo.nef".into(),
+            version_id: None,
+        },
+        name: "photo.nef".into(),
+        kind: StorageEntryKind::File,
+        size: Some(64 * 1024 * 1024),
+        etag: Some("\"revision-1\"".into()),
+        modified_at: None,
+        content_type: None,
+        metadata: Default::default(),
+    };
+    assert_eq!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            backend.read_range(&entry, 1000..1005)
+        )
+        .await
+        .unwrap()
+        .unwrap(),
+        b"hello"
+    );
+    server.await.unwrap();
+}
+
 #[test]
 fn oss_native_endpoints_use_s3_transport_without_changing_saved_config() {
     let mut config = S3ConnectionConfig {

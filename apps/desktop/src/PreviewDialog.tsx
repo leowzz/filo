@@ -238,7 +238,7 @@ function FilePreview({ entry }: { entry: Entry }) {
 }
 export function Thumbnail({ entry }: { entry: Entry }) {
   const image =
-    entry.kind === "file" && /\.(png|jpe?g|gif|webp)$/i.test(entry.name);
+    entry.kind === "file" && /\.(png|jpe?g|gif|webp|nef)$/i.test(entry.name);
   const query = useQuery({
     queryKey: ["thumbnail", entry.locator, entry.modified_at, entry.etag],
     queryFn: () => browsingApi.preview(entry.locator, true),

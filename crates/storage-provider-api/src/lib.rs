@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::pin::Pin;
 use storage_domain::*;
 use tokio::io::AsyncRead;
@@ -6,6 +7,24 @@ mod rate_limit;
 pub use rate_limit::{RateLimit, TransferLimits};
 
 pub type StorageReader = Pin<Box<dyn AsyncRead + Send + Unpin>>;
+
+/// Range reads are bounded independently of the source file's total size.
+pub fn read_range_length(entry: &StorageEntry, range: &Range<u64>) -> StorageResult<u64> {
+    let length = range
+        .end
+        .checked_sub(range.start)
+        .filter(|&n| n > 0 && n <= 32 * 1024 * 1024);
+    if entry.kind != StorageEntryKind::File
+        || entry.size.is_some_and(|size| range.end > size)
+        || length.is_none()
+    {
+        return Err(StorageError::new(
+            StorageErrorCode::Unsupported,
+            "文件读取范围无效或过大",
+        ));
+    }
+    Ok(length.unwrap())
+}
 
 #[async_trait::async_trait]
 pub trait DirectoryReader: Send {
@@ -86,6 +105,19 @@ pub trait StorageBackend: Send + Sync {
         ))
     }
     async fn open_read(&self, locator: &StorageLocator) -> StorageResult<StorageReader>;
+    /// Read only this byte range (exclusive end), without downloading/skipping
+    /// the prefix. Do not fall back to open_read for unsupported providers.
+    /// Use the entry's ETag as a precondition when the protocol supports it.
+    async fn read_range(
+        &self,
+        _entry: &StorageEntry,
+        _range: Range<u64>,
+    ) -> StorageResult<Vec<u8>> {
+        Err(StorageError::new(
+            StorageErrorCode::Unsupported,
+            "该存储暂不支持按范围读取预览",
+        ))
+    }
     async fn stage_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>>;
     /// Replace a known regular file only after the staged content has been verified.
     async fn stage_replace(&self, _expected: &StorageEntry) -> StorageResult<Box<dyn StagedWrite>> {

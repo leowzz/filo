@@ -35,6 +35,7 @@ pub struct StorageService {
     listings: Arc<listing::Listings>,
     preview_slots: Arc<tokio::sync::Semaphore>,
     thumbnail_slots: Arc<tokio::sync::Semaphore>,
+    nef_previews: Arc<Mutex<browsing::nef::Cache>>,
     searches: Arc<Mutex<std::collections::HashMap<Uuid, browsing::SearchTask>>>,
     mutation_lock: Arc<RwLock<()>>,
     transfer_scheduler: Arc<transfers::scheduler::TransferScheduler>,
@@ -57,6 +58,7 @@ impl StorageService {
             // Reserve capacity for interactive previews while thumbnails load.
             preview_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             thumbnail_slots: Arc::new(tokio::sync::Semaphore::new(1)),
+            nef_previews: Arc::new(Mutex::new(browsing::nef::Cache::default())),
             searches: Arc::new(Mutex::new(std::collections::HashMap::new())),
             temporary_backends: Arc::new(Mutex::new(std::collections::HashMap::new())),
             repository,

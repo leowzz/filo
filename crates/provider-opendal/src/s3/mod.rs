@@ -353,6 +353,36 @@ impl StorageBackend for OpenDalS3Backend {
     async fn open_read(&self, locator: &StorageLocator) -> StorageResult<StorageReader> {
         reader(&self.operator, &self.path(locator, false)?, &self.limits).await
     }
+    async fn read_range(
+        &self,
+        entry: &StorageEntry,
+        range: std::ops::Range<u64>,
+    ) -> StorageResult<Vec<u8>> {
+        use tokio::io::AsyncReadExt;
+        use tokio_util::compat::FuturesAsyncReadCompatExt;
+        let length = storage_provider_api::read_range_length(entry, &range)?;
+        let path = self.path(&entry.locator, false)?;
+        let mut read = self.operator.reader_with(&path);
+        if let Some(etag) = entry.etag.as_deref() {
+            read = read.if_match(etag);
+        }
+        let reader = read
+            .await
+            .map_err(error)?
+            .into_futures_async_read(range)
+            .await
+            .map_err(error)?
+            .compat();
+        let mut bytes = Vec::new();
+        self.limits
+            .download
+            .reader(Box::pin(reader))
+            .take(length)
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|_| StorageError::new(StorageErrorCode::Network, "无法读取 S3 预览内容"))?;
+        Ok(bytes)
+    }
     async fn stage_replace(&self, expected: &StorageEntry) -> StorageResult<Box<dyn StagedWrite>> {
         self.prepare_write_mode(&expected.locator, Some(expected))
             .await

@@ -11,6 +11,7 @@
 
 use super::{
     already_exists, only_file_replace, replace_conflict, same_regular_file, sibling_hidden,
+    unsupported,
 };
 use std::{future::Future, net::IpAddr, sync::Arc, time::Duration};
 use storage_domain::*;
@@ -398,9 +399,14 @@ struct SmbReader {
 
 fn reader_from_file(file: smb2::FileReader) -> StorageReader {
     let size = file.size();
+    reader_from_file_range(file, 0..size)
+}
+
+fn reader_from_file_range(file: smb2::FileReader, range: std::ops::Range<u64>) -> StorageReader {
+    let size = range.end.min(file.size());
     let (sender, receiver) = mpsc::channel(2);
     tokio::spawn(async move {
-        let mut offset = 0;
+        let mut offset = range.start;
         let mut result = Ok(());
         while offset < size {
             let length = (size - offset).min(READ_CHUNK_SIZE);
@@ -787,6 +793,37 @@ impl StorageBackend for SmbBackend {
         open_reader_path(&self.session, &path).await
     }
 
+    async fn read_range(
+        &self,
+        entry: &StorageEntry,
+        range: std::ops::Range<u64>,
+    ) -> StorageResult<Vec<u8>> {
+        use tokio::io::AsyncReadExt;
+        storage_provider_api::read_range_length(entry, &range)?;
+        let logical = self.check_locator(&entry.locator)?;
+        let path = self.path(&logical);
+        if self.stat_path(&path).await?.is_directory {
+            return Err(unsupported("请选择普通文件进行预览"));
+        }
+        ensure_no_reparse(&self.session, &path).await?;
+        let mut guard = self.session.lock().await;
+        let SmbSession { client, tree } = &mut *guard;
+        let file = with_timeout(async {
+            client
+                .open_file_reader(tree, &path)
+                .await
+                .map_err(smb_error)
+        })
+        .await?;
+        drop(guard);
+        let mut bytes = Vec::new();
+        reader_from_file_range(file, range)
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|_| StorageError::new(StorageErrorCode::Network, "无法读取 SMB 预览内容"))?;
+        Ok(bytes)
+    }
+
     async fn stage_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>> {
         self.prepare_write(locator).await
     }
@@ -1092,6 +1129,15 @@ mod tests {
                 .await
                 .map_err(|_| fixture_io_error())?;
             assert_eq!(read_bytes, payload_bytes);
+            assert_eq!(
+                backend.read_range(&stat, 4..11).await?,
+                &payload_bytes[4..11]
+            );
+            assert_eq!(backend.read_range(&stat, 0..3).await?, &payload_bytes[..3]);
+            assert!(backend
+                .read_range(&stat, 0..stat.size.unwrap() + 1)
+                .await
+                .is_err());
 
             let mut keep_staged = backend.stage_write(&keep).await?;
             keep_staged.write(keep_bytes).await?;

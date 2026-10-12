@@ -151,6 +151,18 @@ impl StorageBackend for RemoteBackend {
         }
     }
 
+    async fn read_range(
+        &self,
+        entry: &StorageEntry,
+        range: std::ops::Range<u64>,
+    ) -> StorageResult<Vec<u8>> {
+        match &self.backend {
+            RemoteBackendImpl::Ftp(backend) => backend.read_range(entry, range).await,
+            RemoteBackendImpl::Sftp(backend) => backend.read_range(entry, range).await,
+            RemoteBackendImpl::Smb(backend) => backend.read_range(entry, range).await,
+        }
+    }
+
     async fn stage_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>> {
         match &self.backend {
             RemoteBackendImpl::Ftp(backend) => backend.stage_write(locator).await,

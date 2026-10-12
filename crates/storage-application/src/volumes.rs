@@ -132,6 +132,7 @@ impl StorageService {
                 .await?;
         }
         self.repository.update_local(&volume).await?;
+        self.nef_previews.lock().await.invalidate_volume(volume.id);
         Ok(volume)
     }
 

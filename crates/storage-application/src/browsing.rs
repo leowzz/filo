@@ -5,6 +5,8 @@ use std::{collections::HashSet, io::Cursor};
 use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
 
+pub(super) mod nef;
+
 pub(super) struct SearchTask {
     state: Arc<Mutex<ContentSearch>>,
     token: CancellationToken,
@@ -110,7 +112,8 @@ impl StorageService {
             .next()
             .unwrap_or_default()
             .to_lowercase();
-        let is_image = [".png", ".jpg", ".jpeg", ".gif", ".webp"]
+        let is_nef = name.ends_with(".nef");
+        let is_image = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".nef"]
             .iter()
             .any(|ext| name.ends_with(ext));
         let is_pdf = name.ends_with(".pdf");
@@ -133,23 +136,36 @@ impl StorageService {
         if entry.kind != StorageEntryKind::File {
             return Err(error("请选择普通文件进行预览"));
         }
+        let nef_image = if is_nef {
+            Some(nef::load(backend.as_ref(), &entry, thumbnail, &self.nef_previews).await?)
+        } else {
+            None
+        };
         let limit = if is_image || is_pdf {
             20 * 1024 * 1024
         } else {
             1024 * 1024
         };
-        if (is_image || is_pdf) && entry.size.unwrap_or(u64::MAX) > limit {
-            return Err(error("图片或 PDF 超过 20 MiB，请下载或使用系统应用打开"));
+        let too_large = "图片或 PDF 超过 20 MiB，请下载或使用系统应用打开";
+        if !is_nef && (is_image || is_pdf) && entry.size.unwrap_or(u64::MAX) > limit {
+            return Err(error(too_large));
         }
-        let mut bytes = read_preview_bytes(
-            backend.open_read(&locator).await?,
-            limit,
-            !is_image && !is_pdf,
-        )
-        .await?;
+        let (mut bytes, orientation) = if let Some(image) = nef_image {
+            image
+        } else {
+            (
+                read_preview_bytes(
+                    backend.open_read(&locator).await?,
+                    limit,
+                    !is_image && !is_pdf,
+                )
+                .await?,
+                image::metadata::Orientation::NoTransforms,
+            )
+        };
         let truncated = bytes.len() > limit as usize;
         if truncated && (is_image || is_pdf) {
-            return Err(error("图片或 PDF 超过 20 MiB，请下载或使用系统应用打开"));
+            return Err(error(too_large));
         }
         bytes.truncate(limit as usize);
         if is_image {
@@ -160,16 +176,21 @@ impl StorageService {
                 let mut limits = image::Limits::default();
                 limits.max_image_width = Some(16000);
                 limits.max_image_height = Some(16000);
-                limits.max_alloc = Some(128 * 1024 * 1024);
+                limits.max_alloc = Some(if is_nef {
+                    256 * 1024 * 1024
+                } else {
+                    128 * 1024 * 1024
+                });
                 reader.limits(limits);
                 let image = reader
                     .decode()
                     .map_err(|_| error("图片损坏、过大或格式不受支持"))?;
-                let image = if thumbnail {
+                let mut image = if thumbnail {
                     image.thumbnail(80, 80)
                 } else {
                     image.thumbnail(2400, 2400)
                 };
+                image.apply_orientation(orientation);
                 let mut output = Cursor::new(Vec::new());
                 image
                     .write_to(&mut output, image::ImageFormat::Png)
@@ -416,6 +437,63 @@ async fn search_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn nef_preview_and_thumbnail_preserve_orientation_above_regular_image_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = tempfile::tempdir().unwrap();
+        let mut bytes = nef::fixture(false, false);
+        bytes.resize(21 * 1024 * 1024, 0);
+        std::fs::write(dir.path().join("photo.NEF"), bytes).unwrap();
+        std::fs::write(dir.path().join("invalid.nef"), b"invalid").unwrap();
+        let service = StorageService::new(
+            Repository::open(&db.path().join("test.sqlite"))
+                .await
+                .unwrap(),
+        );
+        let volume = service
+            .add_selected_directory(dir.path().into(), true)
+            .await
+            .unwrap();
+        let loc = |path: &str| StorageLocator {
+            volume_id: volume.id,
+            logical_path: path.into(),
+            version_id: None,
+        };
+        for (thumbnail, dimensions) in [(false, (1200, 2400)), (true, (40, 80))] {
+            let preview = service
+                .preview_entry(loc("photo.NEF"), thumbnail)
+                .await
+                .unwrap();
+            assert_eq!(preview.kind, "image");
+            assert_eq!(preview.mime, "image/png");
+            assert!(!preview.truncated);
+            let image =
+                image::load_from_memory(&STANDARD.decode(preview.content).unwrap()).unwrap();
+            assert_eq!((image.width(), image.height()), dimensions);
+        }
+        assert!(service
+            .preview_entry(loc("invalid.nef"), false)
+            .await
+            .err()
+            .unwrap()
+            .message
+            .contains("NEF 内嵌预览"));
+        std::fs::write(dir.path().join("large.nef"), nef::fixture(true, true)).unwrap();
+        let large = std::fs::OpenOptions::new()
+            .write(true)
+            .open(dir.path().join("large.nef"))
+            .unwrap();
+        large.set_len(128 * 1024 * 1024 + 1).unwrap();
+        assert_eq!(
+            service
+                .preview_entry(loc("large.nef"), false)
+                .await
+                .unwrap()
+                .kind,
+            "image"
+        );
+    }
+
     #[tokio::test]
     async fn unsupported_preview_skips_queue_and_backend_access() {
         let db = tempfile::tempdir().unwrap();

@@ -19,7 +19,7 @@ use suppaftp::{
     tokio::{AsyncDataStream, AsyncFtpStream, AsyncRustlsConnector, AsyncRustlsFtpStream},
     FtpError, FtpResult, Status,
 };
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use uuid::Uuid;
 
 type PlainDataStream = AsyncDataStream<suppaftp::tokio::AsyncNoTlsStream>;
@@ -76,6 +76,16 @@ enum FtpSession {
 }
 
 impl FtpSession {
+    async fn resume_transfer(&mut self, offset: usize) -> FtpResult<()> {
+        ftp_timeout(async {
+            match self {
+                Self::Plain(session) => session.resume_transfer(offset).await,
+                Self::Secure(session) => session.resume_transfer(offset).await,
+            }
+        })
+        .await
+    }
+
     async fn connect(
         config: &RemoteConnectionConfig,
         credentials: &RemoteCredentials,
@@ -225,6 +235,23 @@ impl FtpSession {
                 ftp_timeout(session.finalize_retr_stream(stream)).await
             }
             _ => Err(FtpError::BadResponse),
+        }
+    }
+
+    async fn finish_range(self, mut stream: FtpDataStream) {
+        // Send TLS close_notify for FTPS instead of dropping an active TLS socket.
+        // Neither shutdown nor ABOR reads the remaining file data.
+        let _ = stream.shutdown().await;
+        match (self, stream) {
+            (Self::Plain(mut session), FtpDataStream::Plain(stream)) => {
+                let _ = session.abort(stream).await;
+                let _ = session.quit().await;
+            }
+            (Self::Secure(mut session), FtpDataStream::Secure(stream)) => {
+                let _ = session.abort(stream).await;
+                let _ = session.quit().await;
+            }
+            _ => {}
         }
     }
 
@@ -685,6 +712,46 @@ impl StorageBackend for FtpBackend {
         }
         let stream = session.retr(&logical).await.map_err(ftp_error)?;
         Ok(Box::pin(FtpReader::new(session, stream)))
+    }
+
+    async fn read_range(
+        &self,
+        entry: &StorageEntry,
+        range: std::ops::Range<u64>,
+    ) -> StorageResult<Vec<u8>> {
+        let length = storage_provider_api::read_range_length(entry, &range)?;
+        let logical = self.path(&entry.locator, false)?;
+        let mut session = self.connect().await?;
+        let file = self.safe_leaf(&mut session, &logical).await?;
+        if file.is_symlink() {
+            return Err(denied("远程符号链接不能访问"));
+        }
+        if !file.is_file() {
+            return Err(unsupported("当前只支持读取普通文件"));
+        }
+        if range.start > 0 {
+            let offset = usize::try_from(range.start).map_err(|_| unsupported("文件偏移过大"))?;
+            session
+                .resume_transfer(offset)
+                .await
+                .map_err(|_| unsupported("FTP 服务器不支持按范围读取预览"))?;
+        }
+        let stream = session.retr(&logical).await.map_err(ftp_error)?;
+        let mut bytes = Vec::new();
+        let mut reader = FtpReader::new(session, stream).take(length);
+        reader
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|_| StorageError::new(StorageErrorCode::Network, "无法读取 FTP 预览内容"))?;
+        let mut reader = reader.into_inner();
+        if let (Some(session), Some(stream)) = (reader.session.take(), reader.stream.take()) {
+            // Best-effort connection cleanup must not delay the next preview range.
+            tokio::spawn(async move {
+                let _ = tokio::time::timeout(Duration::from_secs(2), session.finish_range(stream))
+                    .await;
+            });
+        }
+        Ok(bytes)
     }
 
     async fn stage_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>> {
@@ -1165,6 +1232,20 @@ mod tests {
         let mut read_bytes = Vec::new();
         reader.read_to_end(&mut read_bytes).await.unwrap();
         assert_eq!(read_bytes, payload_bytes);
+
+        let entry = backend.stat(&payload).await.unwrap();
+        assert_eq!(
+            backend.read_range(&entry, 4..11).await.unwrap(),
+            &payload_bytes[4..11]
+        );
+        assert_eq!(
+            backend.read_range(&entry, 0..3).await.unwrap(),
+            &payload_bytes[..3]
+        );
+        assert!(backend
+            .read_range(&entry, 0..entry.size.unwrap() + 1)
+            .await
+            .is_err());
 
         let mut keep_staged = backend.stage_write(&keep).await.unwrap();
         keep_staged.write(keep_bytes).await.unwrap();
