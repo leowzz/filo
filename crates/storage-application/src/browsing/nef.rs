@@ -197,7 +197,7 @@ impl Reader<'_> {
             let bytes = self.metadata(at, (2 + count * 12 + 4) as u64).await?;
             let mut jpeg_offset = None;
             let mut jpeg_length = None;
-            for field in bytes[2..2 + count * 12].chunks_exact(12) {
+            for field in bytes[2..2 + count * 12].as_chunks::<12>().0 {
                 match tiff.u16(field, 0).ok_or_else(invalid)? {
                     0x0201 | 0x0202 => {
                         let value = self.values(tiff, field).await?.first().copied();
