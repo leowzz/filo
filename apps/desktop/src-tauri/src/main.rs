@@ -392,6 +392,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             photography::review_catalog,
             photography::review_open,
+            photography::review_open_directory,
             photography::review_sync,
             photography::review_restore,
             photography::photo_catalog,

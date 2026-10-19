@@ -56,6 +56,9 @@ pub struct PhotoSession {
     pub created_at: String,
     /// Local binding only. Portable manifests contain relative source paths.
     pub source: Option<StorageLocator>,
+    /// Folder-backed reviews persist their progress beside the photographs.
+    #[serde(default)]
+    pub directory: Option<StorageLocator>,
     pub layout: PhotoLayout,
     pub keep_hierarchy: bool,
     pub photo_ids: Vec<Uuid>,

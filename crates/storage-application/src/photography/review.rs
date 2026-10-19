@@ -14,6 +14,7 @@ impl StorageService {
             return Err(invalid("星级范围为 0–5"));
         }
         let _guard = self.photo_lock.lock().await;
+        let _mutation = self.mutation_lock.read().await;
         let (revision, mut catalog) = self.load_photos().await?;
         let index = session_index(&catalog, session_id)?;
         if !catalog.sessions[index].photo_ids.contains(&photo_id) {
@@ -58,6 +59,7 @@ impl StorageService {
 
     pub async fn photo_undo(&self, session_id: Uuid) -> StorageResult<Option<Photo>> {
         let _guard = self.photo_lock.lock().await;
+        let _mutation = self.mutation_lock.read().await;
         let (revision, mut catalog) = self.load_photos().await?;
         let index = session_index(&catalog, session_id)?;
         let Some(undo) = catalog.sessions[index].undo.pop() else {
@@ -88,6 +90,7 @@ impl StorageService {
         mut position: PhotoReviewPosition,
     ) -> StorageResult<()> {
         let _guard = self.photo_lock.lock().await;
+        let _mutation = self.mutation_lock.read().await;
         let (revision, mut catalog) = self.load_photos().await?;
         let index = session_index(&catalog, session_id)?;
         if position

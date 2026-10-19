@@ -440,6 +440,233 @@ async fn setup(path: &Path) -> (StorageService, PhotoPlanInput) {
     };
     (service, input)
 }
+
+#[tokio::test]
+async fn directory_review_saves_beside_photos_and_restores_without_local_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let (service, input) = setup(dir.path()).await;
+    let folder = dir.path().join("jpg/trip/day1");
+    std::fs::create_dir_all(folder.join(".filo/cache")).unwrap();
+    jpeg(&folder.join("one.jpg"));
+    jpeg(&folder.join("two.jpg"));
+    jpeg(&folder.join(".filo/cache/hidden.jpg"));
+    jpeg(&dir.path().join("jpg/outside.jpg"));
+    let root = StorageLocator {
+        logical_path: "trip/day1".into(),
+        ..input.jpg
+    };
+    let review = service.photo_review_workspace();
+    let session = review
+        .photo_open_directory_review(root.clone())
+        .await
+        .unwrap();
+    assert_eq!(session.photo_ids.len(), 2);
+    assert_eq!(session.directory.as_ref(), Some(&root));
+    let id = session.photo_ids[0];
+    review
+        .photo_mark(session.id, id, 4, PhotoFlag::Pick)
+        .await
+        .unwrap();
+    review
+        .photo_save_position(
+            session.id,
+            PhotoReviewPosition {
+                current: Some(id),
+                filter: "pick".into(),
+                minimum_rating: 4,
+                auto_advance: true,
+            },
+        )
+        .await
+        .unwrap();
+    let progress = folder.join(".filo/review.json");
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&progress).unwrap()).unwrap();
+    assert_eq!(manifest["photos"][0]["rating"], 4);
+    assert_eq!(manifest["session"]["position"]["current"], id.to_string());
+    assert!(manifest["session"]["directory"].is_null());
+    assert!(!dir.path().join("jpg/.filo").exists());
+    assert!(service.photo_catalog().await.unwrap().sessions.is_empty());
+
+    // A fresh database and different volume ID still recover from the folder.
+    let other = StorageService::new(
+        Repository::open(&dir.path().join("other.sqlite"))
+            .await
+            .unwrap(),
+    );
+    let volume = other
+        .add_selected_directory(dir.path().join("jpg"), false)
+        .await
+        .unwrap();
+    let root = StorageLocator {
+        volume_id: volume.id,
+        ..root
+    };
+    let other = other.photo_review_workspace();
+    let restored = other
+        .photo_open_directory_review(root.clone())
+        .await
+        .unwrap();
+    assert_eq!(restored.id, session.id);
+    assert_eq!(restored.position.current, Some(id));
+    assert_eq!(restored.position.minimum_rating, 4);
+    assert!(restored.position.auto_advance);
+    let catalog = other.photo_catalog().await.unwrap();
+    assert_eq!(
+        catalog.photos.iter().find(|p| p.id == id).unwrap().rating,
+        4
+    );
+    other.photo_undo(restored.id).await.unwrap();
+    let again = other.photo_open_directory_review(root).await.unwrap();
+    assert_eq!(again.id, session.id);
+    assert_eq!(other.photo_catalog().await.unwrap().sessions.len(), 1);
+    assert_eq!(
+        other
+            .photo_catalog()
+            .await
+            .unwrap()
+            .photos
+            .iter()
+            .find(|p| p.id == id)
+            .unwrap()
+            .rating,
+        0
+    );
+}
+
+#[tokio::test]
+async fn directory_review_preserves_external_changes_and_reports_failed_saves() {
+    let dir = tempfile::tempdir().unwrap();
+    let (service, input) = setup(dir.path()).await;
+    jpeg(&dir.path().join("jpg/one.jpg"));
+    let review = service.photo_review_workspace();
+    let session = review
+        .photo_open_directory_review(input.jpg.clone())
+        .await
+        .unwrap();
+    let id = session.photo_ids[0];
+    let target = dir.path().join("jpg/.filo/review.json");
+    let mut external: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+    external["session"]["revision"] = serde_json::json!(99);
+    external["photos"][0]["rating"] = serde_json::json!(5);
+    let bytes = serde_json::to_vec(&external).unwrap();
+    std::fs::write(&target, &bytes).unwrap();
+    assert_eq!(
+        review
+            .photo_mark(session.id, id, 2, PhotoFlag::Pick)
+            .await
+            .unwrap_err()
+            .code,
+        StorageErrorCode::Conflict
+    );
+    assert_eq!(std::fs::read(&target).unwrap(), bytes);
+    assert_eq!(review.photo_catalog().await.unwrap().photos[0].rating, 0);
+    let resumed = review
+        .photo_open_directory_review(input.jpg.clone())
+        .await
+        .unwrap();
+    assert_eq!(review.photo_catalog().await.unwrap().photos[0].rating, 5);
+    std::fs::rename(
+        dir.path().join("jpg/.filo"),
+        dir.path().join("jpg/saved-progress"),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("jpg/.filo"), b"occupied").unwrap();
+    assert!(review
+        .photo_mark(resumed.id, id, 1, PhotoFlag::Reject)
+        .await
+        .is_err());
+    assert_eq!(review.photo_catalog().await.unwrap().photos[0].rating, 5);
+    let readonly = service
+        .add_selected_directory(dir.path().join("card"), true)
+        .await
+        .unwrap();
+    let root = StorageLocator {
+        volume_id: readonly.id,
+        logical_path: String::new(),
+        version_id: None,
+    };
+    assert_eq!(
+        review
+            .photo_open_directory_review(root)
+            .await
+            .unwrap_err()
+            .code,
+        StorageErrorCode::AccessDenied
+    );
+    assert!(!dir.path().join("card/.filo").exists());
+}
+
+#[tokio::test]
+async fn directory_review_reconciles_new_photos_and_isolates_copied_folders() {
+    let dir = tempfile::tempdir().unwrap();
+    let (service, input) = setup(dir.path()).await;
+    jpeg(&dir.path().join("jpg/one.jpg"));
+    let review = service.photo_review_workspace();
+    let first = review
+        .photo_open_directory_review(input.jpg.clone())
+        .await
+        .unwrap();
+    let id = first.photo_ids[0];
+    review
+        .photo_mark(first.id, id, 3, PhotoFlag::Pick)
+        .await
+        .unwrap();
+    jpeg(&dir.path().join("jpg/new.jpg"));
+    let reopened = review
+        .photo_open_directory_review(input.jpg.clone())
+        .await
+        .unwrap();
+    assert_eq!(reopened.id, first.id);
+    assert_eq!(reopened.photo_ids.len(), 2);
+    std::fs::copy(
+        dir.path().join("jpg/one.jpg"),
+        dir.path().join("raw/one.jpg"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("raw/.filo")).unwrap();
+    std::fs::copy(
+        dir.path().join("jpg/.filo/review.json"),
+        dir.path().join("raw/.filo/review.json"),
+    )
+    .unwrap();
+    // Copies with preserved file metadata keep their marks but get independent IDs.
+    let modified = std::fs::File::open(dir.path().join("jpg/one.jpg"))
+        .unwrap()
+        .metadata()
+        .unwrap()
+        .modified()
+        .unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(dir.path().join("raw/one.jpg"))
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(modified))
+        .unwrap();
+    let copied = review.photo_open_directory_review(input.raw).await.unwrap();
+    assert_ne!(copied.id, reopened.id);
+    assert_eq!(copied.photo_ids.len(), 1);
+    assert_ne!(copied.photo_ids[0], id);
+    review
+        .photo_mark(copied.id, copied.photo_ids[0], 1, PhotoFlag::Reject)
+        .await
+        .unwrap();
+    let original = review.photo_open_directory_review(input.jpg).await.unwrap();
+    assert_eq!(original.id, first.id);
+    assert_eq!(
+        review
+            .photo_catalog()
+            .await
+            .unwrap()
+            .photos
+            .iter()
+            .find(|p| p.id == id)
+            .unwrap()
+            .rating,
+        3
+    );
+}
 fn write_pair(path: &Path, folder: &str, name: &str, content: &[u8]) {
     let folder = path.join("card/DCIM").join(folder);
     std::fs::create_dir_all(&folder).unwrap();

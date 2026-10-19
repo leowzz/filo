@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashSet};
 use storage_provider_api::StorageReader;
 use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
+mod directory;
 mod importing;
 mod metadata;
 mod model;
@@ -100,12 +101,12 @@ async fn ensure_parent(backend: &dyn StorageBackend, target: &StorageLocator) ->
             ..target.clone()
         };
         match existing(backend, &path).await? {
-            Some(entry) if entry.kind == StorageEntryKind::Directory => {}
+            Some(entry) if crate::tree::directory(&entry) => {}
             Some(_) => return Err(conflict("目标目录被其他文件占用")),
             None => match backend.create_dir(&path).await {
                 Ok(()) => {}
                 Err(error) if error.code == StorageErrorCode::AlreadyExists => {
-                    if backend.stat(&path).await?.kind != StorageEntryKind::Directory {
+                    if !crate::tree::directory(&backend.stat(&path).await?) {
                         return Err(error);
                     }
                 }
@@ -206,6 +207,16 @@ impl StorageService {
         Ok((revision, catalog))
     }
     async fn save_photos(&self, revision: i64, catalog: &PhotoCatalog) -> StorageResult<()> {
+        let mut directory_catalog;
+        let catalog = if self.photo_review_workspace
+            && catalog.sessions.iter().any(|s| s.directory.is_some())
+        {
+            directory_catalog = catalog.clone();
+            self.save_directory_progress(&mut directory_catalog).await?;
+            &directory_catalog
+        } else {
+            catalog
+        };
         let value = serde_json::to_value(catalog).map_err(|_| invalid("摄影记录无法保存"))?;
         if self.photo_review_workspace {
             self.repository
@@ -215,7 +226,7 @@ impl StorageService {
             self.repository.save_photo_catalog(revision, value).await
         }
     }
-    /// Root choices are native-picker-authorized local volumes, including system SMB mounts.
+    /// Resolve each root through the configured storage provider.
     async fn photo_archive_backends(
         &self,
         archive: &PhotoArchive,

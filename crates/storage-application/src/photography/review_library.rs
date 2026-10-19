@@ -13,11 +13,20 @@ impl StorageService {
         jpg: StorageLocator,
         raw: Option<StorageLocator>,
     ) -> StorageResult<PhotoSession> {
+        self.open_review(name, jpg, raw, false).await
+    }
+
+    pub(super) async fn open_review(
+        &self,
+        mut name: String,
+        jpg: StorageLocator,
+        raw: Option<StorageLocator>,
+        directory: bool,
+    ) -> StorageResult<PhotoSession> {
         if !self.photo_review_workspace {
             return Err(invalid("请从独立的审图工作区打开目录"));
         }
-        let name = name.trim();
-        if name.is_empty() {
+        if !directory && name.trim().is_empty() {
             return Err(invalid("请填写审图名称"));
         }
         let raw = raw.unwrap_or_else(|| jpg.clone());
@@ -26,27 +35,59 @@ impl StorageService {
         let (db_revision, mut catalog) = self.load_photos().await?;
         let volumes = self.repository.list_volumes().await?;
         for root in [&jpg, &raw] {
-            if !volumes
+            let volume = volumes
                 .iter()
-                .any(|v| v.id == root.volume_id && matches!(v.root, VolumeRoot::Local { .. }))
-            {
+                .find(|v| v.id == root.volume_id)
+                .ok_or_else(|| invalid("未找到已配置的存储"))?;
+            if !directory && !matches!(volume.root, VolumeRoot::Local { .. }) {
                 return Err(invalid("请使用系统挂载的照片目录"));
             }
+            if directory && volume.read_only {
+                return Err(StorageError::new(
+                    StorageErrorCode::AccessDenied,
+                    "此存储为只读，无法在目录的 .filo 下保存审图进度，请先设为可写",
+                ));
+            }
+            if directory {
+                name = root
+                    .logical_path
+                    .rsplit('/')
+                    .find(|s| !s.is_empty())
+                    .unwrap_or(&volume.name)
+                    .to_string();
+            }
         }
-        let archive_id = match catalog
-            .archives
-            .iter()
-            .find(|a| a.jpg == jpg && a.raw == raw)
-        {
-            Some(archive) => archive.id,
-            None => {
-                let id = Uuid::new_v4();
-                catalog.archives.push(PhotoArchive {
-                    id,
-                    jpg: jpg.clone(),
-                    raw: raw.clone(),
-                });
-                id
+        let resumed = if directory {
+            self.load_directory_review(&mut catalog, &jpg).await?
+        } else {
+            None
+        };
+        let archive_id = if let Some(session) = &resumed {
+            session.archive_id
+        } else if directory {
+            let id = Uuid::new_v4();
+            catalog.archives.push(PhotoArchive {
+                id,
+                jpg: jpg.clone(),
+                raw: raw.clone(),
+            });
+            id
+        } else {
+            match catalog
+                .archives
+                .iter()
+                .find(|a| a.jpg == jpg && a.raw == raw)
+            {
+                Some(archive) => archive.id,
+                None => {
+                    let id = Uuid::new_v4();
+                    catalog.archives.push(PhotoArchive {
+                        id,
+                        jpg: jpg.clone(),
+                        raw: raw.clone(),
+                    });
+                    id
+                }
             }
         };
         let mut groups = BTreeMap::<
@@ -61,7 +102,7 @@ impl StorageService {
         let mut count = 0;
         for (root, jpg_only) in roots {
             let backend = self.backend(root.volume_id).await?;
-            if backend.stat(&root).await?.kind != StorageEntryKind::Directory {
+            if !crate::tree::directory(&backend.stat(&root).await?) {
                 return Err(invalid("请选择照片文件夹"));
             }
             let mut pending = vec![root.clone()];
@@ -80,7 +121,7 @@ impl StorageService {
                         if entry.name.starts_with('.') {
                             continue;
                         }
-                        if entry.kind == StorageEntryKind::Directory {
+                        if crate::tree::directory(&entry) {
                             pending.push(entry.locator.clone());
                             continue;
                         }
@@ -131,13 +172,14 @@ impl StorageService {
                 }
             }
         }
-        let mut session = PhotoSession {
+        let mut session = resumed.unwrap_or_else(|| PhotoSession {
             id: Uuid::new_v4(),
             archive_id,
-            name: name.into(),
+            name: name.trim().into(),
             card_name: String::new(),
             created_at: chrono::Utc::now().to_rfc3339(),
             source: None,
+            directory: directory.then(|| jpg.clone()),
             layout: PhotoLayout::Original,
             keep_hierarchy: true,
             photo_ids: vec![],
@@ -149,7 +191,11 @@ impl StorageService {
             handed_off: false,
             position: PhotoReviewPosition::default(),
             undo: vec![],
-        };
+        });
+        session.photo_ids.clear();
+        if directory {
+            session.revision += 1;
+        }
         for group in groups
             .values()
             .filter(|g| g.iter().any(|(_, _, kind, _)| kind.primary()))
@@ -278,8 +324,24 @@ impl StorageService {
         if session.photo_ids.is_empty() {
             return Err(invalid("目录中没有可审阅的 JPG 或 NEF"));
         }
+        if directory {
+            session
+                .undo
+                .retain(|u| session.photo_ids.contains(&u.photo_id));
+            if session
+                .position
+                .current
+                .is_some_and(|id| !session.photo_ids.contains(&id))
+            {
+                session.position.current = None;
+            }
+            catalog
+                .photos
+                .retain(|p| p.archive_id != archive_id || session.photo_ids.contains(&p.id));
+        }
         catalog.sessions.push(session.clone());
         self.save_photos(db_revision, &catalog).await?;
-        Ok(session)
+        let saved = self.photo_catalog().await?;
+        Ok(saved.sessions[session_index(&saved, session.id)?].clone())
     }
 }

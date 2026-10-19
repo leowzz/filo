@@ -180,6 +180,7 @@ impl StorageService {
             }
         };
         let mut session = PhotoSession {
+            directory: None,
             id: Uuid::new_v4(),
             archive_id,
             name: input.name.clone(),

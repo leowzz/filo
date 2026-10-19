@@ -1,7 +1,8 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 
-const MANIFEST_LIMIT: u64 = 64 * 1024 * 1024;
+pub(super) const MANIFEST_LIMIT: u64 = 64 * 1024 * 1024;
+pub(super) const DIRECTORY_PROGRESS: &str = ".filo/review.json";
 #[derive(Serialize, Deserialize)]
 pub(super) struct Manifest {
     pub schema: u32,
@@ -55,6 +56,7 @@ pub(super) async fn write_document(
 fn manifest(catalog: &PhotoCatalog, session: &PhotoSession) -> Manifest {
     let mut session = session.clone();
     session.source = None;
+    session.directory = None;
     session.nas_hash = None;
     session.sync_error = None;
     session.synced_revision = session.revision;
@@ -71,7 +73,7 @@ fn manifest(catalog: &PhotoCatalog, session: &PhotoSession) -> Manifest {
     }
 }
 
-fn validate(manifest: &Manifest, review: bool) -> StorageResult<()> {
+pub(super) fn validate(manifest: &Manifest, review: bool) -> StorageResult<()> {
     let session = &manifest.session;
     if manifest.schema != 1
         || manifest.photos.len() > 100_000
@@ -128,6 +130,52 @@ fn validate(manifest: &Manifest, review: bool) -> StorageResult<()> {
 }
 
 impl StorageService {
+    // The local catalog is an index/cache for directory reviews. A successful
+    // edit is acknowledged only after its folder's progress file is committed.
+    pub(super) async fn save_directory_progress(
+        &self,
+        catalog: &mut PhotoCatalog,
+    ) -> StorageResult<()> {
+        for index in 0..catalog.sessions.len() {
+            let Some(root) = catalog.sessions[index].directory.clone() else {
+                continue;
+            };
+            let snapshot = manifest(catalog, &catalog.sessions[index]);
+            let bytes =
+                serde_json::to_vec_pretty(&snapshot).map_err(|_| invalid("无法保存审图进度"))?;
+            if bytes.len() as u64 > MANIFEST_LIMIT {
+                return Err(invalid("审图记录超过 64 MiB，请分组处理"));
+            }
+            let desired = bytes_hash(&bytes);
+            if catalog.sessions[index].nas_hash.as_deref() == Some(&desired) {
+                continue;
+            }
+            let backend = self.backend(root.volume_id).await?;
+            let target = child(&root, DIRECTORY_PROGRESS)?;
+            let before = read_document(backend.as_ref(), &target, MANIFEST_LIMIT).await?;
+            let actual = before.as_ref().map(|(_, bytes)| bytes_hash(bytes));
+            if actual != catalog.sessions[index].nas_hash && actual.as_deref() != Some(&desired) {
+                return Err(conflict(
+                    "目录中的审图进度已被其他窗口或电脑更新，请重新进入审图后重试",
+                ));
+            }
+            if actual.as_deref() != Some(&desired) {
+                write_document(
+                    backend.as_ref(),
+                    &target,
+                    before.as_ref().map(|(entry, _)| entry),
+                    &bytes,
+                )
+                .await?;
+            }
+            let session = &mut catalog.sessions[index];
+            session.nas_hash = Some(desired);
+            session.synced_revision = session.revision;
+            session.sync_error = None;
+        }
+        Ok(())
+    }
+
     pub async fn photo_sync(&self, session_id: Uuid) -> StorageResult<()> {
         let _sync = self.photo_sync_lock.lock().await;
         let result = self.sync_photos(session_id).await;
@@ -144,20 +192,26 @@ impl StorageService {
     async fn sync_photos(&self, session_id: Uuid) -> StorageResult<()> {
         // Snapshot locally, then release the journal lock before doing NAS I/O.
         // Review saves remain responsive while the NAS is slow or disconnected.
-        let (snapshot, archive) = {
+        let (snapshot, archive, directory) = {
             let _guard = self.photo_lock.lock().await;
             let (_, catalog) = self.load_photos().await?;
             let session = &catalog.sessions[session_index(&catalog, session_id)?];
             (
                 manifest(&catalog, session),
                 archive_for(&catalog, session.archive_id)?.clone(),
+                session.directory.clone(),
             )
         };
         let _mutation = self.mutation_lock.read().await;
-        let backend = self.backend(archive.raw.volume_id).await?;
+        let root = directory.as_ref().unwrap_or(&archive.raw);
+        let backend = self.backend(root.volume_id).await?;
         let target = child(
-            &archive.raw,
-            &format!("{}/{session_id}.json", self.manifest_directory()),
+            root,
+            &if directory.is_some() {
+                DIRECTORY_PROGRESS.into()
+            } else {
+                format!("{}/{session_id}.json", self.manifest_directory())
+            },
         )?;
         let before = read_document(backend.as_ref(), &target, MANIFEST_LIMIT).await?;
         let expected_hash = {
