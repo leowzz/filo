@@ -243,6 +243,35 @@ impl StorageService {
         target: &StorageLocator,
         policy: ConflictPolicy,
     ) -> StorageResult<(u64, Vec<u8>)> {
+        self.copy_file_verified(
+            job,
+            token,
+            observer,
+            source,
+            destination,
+            before,
+            target,
+            policy,
+            None,
+        )
+        .await
+    }
+
+    /// Photography supplies the digest saved in its immutable import plan.
+    /// Validate it before publication, including after a card is reattached.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn copy_file_verified(
+        &self,
+        job: &mut TransferJob,
+        token: &CancellationToken,
+        observer: &TransferObserver,
+        source: &dyn StorageBackend,
+        destination: &dyn StorageBackend,
+        before: &StorageEntry,
+        target: &StorageLocator,
+        policy: ConflictPolicy,
+        expected_digest: Option<&str>,
+    ) -> StorageResult<(u64, Vec<u8>)> {
         job.state = TransferState::Running;
         let mut reader = source.open_read(&before.locator).await?;
         let mut writer = if policy == ConflictPolicy::Overwrite {
@@ -285,6 +314,18 @@ impl StorageService {
         self.report(job, observer).await?;
         let size = job.bytes_transferred - initial_bytes;
         let target_hash = hash.finalize().to_vec();
+        if expected_digest.is_some_and(|expected| {
+            expected
+                != target_hash
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>()
+        }) {
+            return Err(StorageError::new(
+                StorageErrorCode::Conflict,
+                "源文件与导入计划内容不同，未提交目标，请重新扫描",
+            ));
+        }
         if !writer.verifies_on_commit() {
             let verified = tokio::select! {
                 biased;

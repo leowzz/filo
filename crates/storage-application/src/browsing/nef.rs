@@ -19,7 +19,7 @@ const MAX_JPEG: u64 = 20 * 1024 * 1024;
 const CACHE_BYTES: usize = 64 * 1024 * 1024;
 const CACHE_TTL: Duration = Duration::from_secs(60);
 
-pub(super) fn same_file(a: &StorageEntry, b: &StorageEntry) -> bool {
+pub(crate) fn same_file(a: &StorageEntry, b: &StorageEntry) -> bool {
     a.locator == b.locator
         && a.kind == b.kind
         && a.size == b.size

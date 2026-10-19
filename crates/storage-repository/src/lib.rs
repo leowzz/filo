@@ -5,6 +5,7 @@ use sqlx::{
 use std::path::Path;
 use storage_domain::*;
 use uuid::Uuid;
+mod photography;
 
 #[derive(Clone)]
 pub struct Repository {

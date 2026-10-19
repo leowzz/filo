@@ -20,6 +20,7 @@ pub use credentials::{
     CredentialMode, CredentialStatus, CredentialStore, FileCredentialStore, SystemCredentialStore,
 };
 mod operation_planner;
+pub mod photography;
 mod transfers;
 mod tree;
 pub use transfers::TransferObserver;
@@ -43,6 +44,8 @@ pub struct StorageService {
     transfer_scheduler: Arc<transfers::scheduler::TransferScheduler>,
     transfer_limits: Arc<OnceCell<Arc<TransferLimits>>>,
     settings_lock: Arc<Mutex<()>>,
+    photo_lock: Arc<Mutex<()>>,
+    photo_jobs: Arc<Mutex<std::collections::HashMap<Uuid, tokio_util::sync::CancellationToken>>>,
     credentials: Arc<dyn CredentialStore>,
     temporary_backends: Arc<Mutex<std::collections::HashMap<Uuid, Arc<dyn StorageBackend>>>>,
     transfers: Arc<Mutex<std::collections::HashMap<Uuid, transfers::ActiveTransfer>>>,
@@ -100,6 +103,8 @@ impl StorageService {
             transfer_scheduler: Arc::new(transfers::scheduler::TransferScheduler::default()),
             transfer_limits: Arc::new(OnceCell::new()),
             settings_lock: Arc::new(Mutex::new(())),
+            photo_lock: Arc::new(Mutex::new(())),
+            photo_jobs: Arc::new(Mutex::new(std::collections::HashMap::new())),
             transfers: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
