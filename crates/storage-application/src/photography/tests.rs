@@ -1,6 +1,46 @@
 use super::*;
 use std::path::Path;
 
+#[tokio::test]
+async fn opening_an_existing_review_preserves_xmp_scores_until_an_explicit_mark() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let (service, input) = setup(path).await;
+    std::fs::write(path.join("raw/photo.NEF"), b"raw").unwrap();
+    let original=br#"<r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><r:Description xmlns:q="http://ns.adobe.com/xap/1.0/" xmlns:d="http://ns.adobe.com/xmp/1.0/DynamicMedia/" q:Rating="4" d:pick="1"/></r:RDF>"#;
+    std::fs::write(path.join("raw/photo.xmp"), original).unwrap();
+    let review = service.photo_review_workspace();
+    let session = review
+        .photo_open_review("existing".into(), input.raw, None)
+        .await
+        .unwrap();
+    let photo = review.photo_catalog().await.unwrap().photos.remove(0);
+    assert_eq!(photo.rating, 4);
+    assert_eq!(photo.flag, PhotoFlag::Pick);
+    assert!(!photo.reviewed);
+    assert!(review
+        .photo_prepare_lrc(session.id)
+        .await
+        .unwrap()
+        .failures
+        .is_empty());
+    assert_eq!(std::fs::read(path.join("raw/photo.xmp")).unwrap(), original);
+    review
+        .photo_mark(session.id, photo.id, 0, PhotoFlag::None)
+        .await
+        .unwrap();
+    assert!(review
+        .photo_prepare_lrc(session.id)
+        .await
+        .unwrap()
+        .failures
+        .is_empty());
+    let bytes = std::fs::read(path.join("raw/photo.xmp")).unwrap();
+    let mark = super::xmp::read_mark(&bytes).unwrap();
+    assert_eq!(mark.rating, 0);
+    assert_eq!(mark.flag, PhotoFlag::None);
+}
+
 fn dated_tiff(date: &str) -> Vec<u8> {
     let mut bytes = vec![0u8; 96];
     bytes[..8].copy_from_slice(b"II\x2a\0\x08\0\0\0");

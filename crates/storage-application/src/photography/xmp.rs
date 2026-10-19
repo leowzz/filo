@@ -21,6 +21,110 @@ fn rdf(ns: &ResolveResult<'_>, local: &str) -> bool {
     matches!(ns, ResolveResult::Bound(ns) if ns.as_ref() == RDF) && local == "RDF"
 }
 
+/// Seed a new independent review from existing exchange metadata. This does
+/// not mark it reviewed or infer a reject flag from a negative star rating.
+pub(super) fn read_mark(bytes: &[u8]) -> StorageResult<PhotoMark> {
+    let mut reader = NsReader::from_reader(bytes);
+    let mut scope: Vec<(bool, bool, Option<String>)> = vec![];
+    let mut values = BTreeMap::<String, String>::new();
+    let mut rdf_count = 0;
+    loop {
+        let event = reader
+            .read_event()
+            .map_err(|_| conflict("XMP 评分无法读取，原文件已保留"))?;
+        let empty = matches!(event, Event::Empty(_));
+        match event {
+            Event::Start(start) | Event::Empty(start) => {
+                let (ns, local) = reader.resolver().resolve_element(start.name());
+                let is_rdf = rdf(&ns, local.as_ref());
+                if is_rdf {
+                    rdf_count += 1;
+                }
+                let property = if scope.last().is_some_and(|(_, photo, _)| *photo)
+                    && owned(&ns, local.as_ref())
+                {
+                    Some(local.as_ref().to_string())
+                } else {
+                    None
+                };
+                let mut photo = scope.last().is_some_and(|(rdf, _, _)| *rdf)
+                    && matches!(&ns,ResolveResult::Bound(ns) if ns.as_ref()==RDF)
+                    && local.as_ref() == "Description";
+                let attributes = start
+                    .attributes()
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|_| conflict("XMP 属性无效"))?;
+                for attribute in &attributes {
+                    let (ns, local) = reader.resolver().resolve_attribute(attribute.key);
+                    if matches!(ns,ResolveResult::Bound(ns) if ns.as_ref()==RDF)
+                        && local.as_ref() == "about"
+                        && !attribute.value.is_empty()
+                    {
+                        photo = false;
+                    }
+                }
+                if photo {
+                    for attribute in attributes {
+                        let (ns, local) = reader.resolver().resolve_attribute(attribute.key);
+                        if owned(&ns, local.as_ref()) {
+                            values.insert(
+                                local.as_ref().into(),
+                                quick_xml::escape::unescape(attribute.value.as_ref())
+                                    .map_err(|_| conflict("XMP 评分格式无效"))?
+                                    .into_owned(),
+                            );
+                        }
+                    }
+                }
+                if !empty {
+                    scope.push((is_rdf, photo, property));
+                }
+            }
+            Event::Text(text) => {
+                if let Some((_, _, Some(property))) = scope.last() {
+                    values
+                        .entry(property.clone())
+                        .or_default()
+                        .push_str(text.as_ref());
+                }
+            }
+            Event::End(_) => {
+                scope.pop();
+            }
+            Event::DocType(_) => return Err(conflict("XMP 文档类型不受支持，原文件已保留")),
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if !scope.is_empty() || rdf_count != 1 {
+        return Err(conflict("XMP 内容不完整，原文件已保留"));
+    }
+    let rating = values
+        .get("Rating")
+        .and_then(|v| v.trim().parse::<u8>().ok())
+        .filter(|v| *v <= 5)
+        .unwrap_or(0);
+    let flag = match values.get("pick").and_then(|v| v.trim().parse::<i8>().ok()) {
+        Some(1) => PhotoFlag::Pick,
+        Some(-1) => PhotoFlag::Reject,
+        Some(0) => PhotoFlag::None,
+        _ => match values
+            .get("good")
+            .map(|v| v.trim().to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("true") => PhotoFlag::Pick,
+            Some("false") => PhotoFlag::Reject,
+            _ => PhotoFlag::None,
+        },
+    };
+    Ok(PhotoMark {
+        rating,
+        flag,
+        reviewed: false,
+    })
+}
+
 /// Rewrite only the three exchange properties. Namespace aliases and element/attribute
 /// forms are supported; all unknown fields, adjustments, comments and packets survive.
 fn merge(bytes: Option<&[u8]>, rating: u8, flag: PhotoFlag) -> StorageResult<Vec<u8>> {
@@ -176,6 +280,11 @@ impl StorageService {
                 let before =
                     sync::read_document(backend.as_ref(), &target, 4 * 1024 * 1024).await?;
                 let actual = before.as_ref().map(|(_, bytes)| bytes_hash(bytes));
+                if self.photo_review_workspace && photo.revision == 0 {
+                    if let Some((_, bytes)) = &before {
+                        read_mark(bytes)?;
+                    }
+                }
                 if actual != photo.xmp_hash {
                     let proposed = merge(
                         before.as_ref().map(|(_, bytes)| bytes.as_slice()),
@@ -196,7 +305,9 @@ impl StorageService {
                     ));
                 }
                 // Explicit handoff only. No background XMP writer competes with Lightroom.
-                if photo.xmp_synced_revision != Some(photo.revision) || before.is_none() {
+                if (photo.xmp_synced_revision != Some(photo.revision) || before.is_none())
+                    && !(self.photo_review_workspace && photo.revision == 0 && before.is_some())
+                {
                     let bytes = merge(
                         before.as_ref().map(|(_, bytes)| bytes.as_slice()),
                         photo.rating,

@@ -212,6 +212,11 @@ impl StorageService {
                 }
                 let mut files = Vec::new();
                 let mut xmp_hash = None;
+                let mut initial_mark = PhotoMark {
+                    rating: 0,
+                    flag: PhotoFlag::None,
+                    reviewed: false,
+                };
                 for (entry, path, kind, _) in &set {
                     if files.iter().any(|f: &PhotoFile| f.kind == *kind) {
                         return Err(conflict("同一目录有多个同格式候选照片，请先整理文件名"));
@@ -224,6 +229,9 @@ impl StorageService {
                                 .ok_or_else(|| conflict("XMP 已消失，请重新打开目录"))?
                                 .1;
                         let hash = bytes_hash(&bytes);
+                        if let Ok(mark) = xmp::read_mark(&bytes) {
+                            initial_mark = mark;
+                        }
                         xmp_hash = Some(hash.clone());
                         hash
                     } else {
@@ -255,8 +263,8 @@ impl StorageService {
                         vec![]
                     },
                     files,
-                    rating: 0,
-                    flag: PhotoFlag::None,
+                    rating: initial_mark.rating,
+                    flag: initial_mark.flag,
                     reviewed: false,
                     excluded: false,
                     revision: 0,
