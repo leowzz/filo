@@ -53,12 +53,14 @@ export function PhotoReview({
   onSaved,
   onBack,
   onPositionSaved,
+  backLabel = "审图记录",
 }: {
   session: PhotoSession;
   photos: Photo[];
   onSaved: (photo: Photo) => void;
   onBack: () => void;
   onPositionSaved: () => void;
+  backLabel?: string;
 }) {
   const [, render] = useReducer((n) => n + 1, 0);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -82,7 +84,10 @@ export function PhotoReview({
             reviewApi.mark(session.id, id, mark.rating, mark.flag),
           undo: () => reviewApi.undo(session.id),
           changed: render,
-          saved: (photo) => callbacks.current.onSaved(photo),
+          saved: (photo) => {
+            setFailure({ message: "", retry: null });
+            callbacks.current.onSaved(photo);
+          },
           feedback: (value) => setFeedback(document.hidden ? null : value),
           error: (message, retry) => setFailure({ message, retry }),
         },
@@ -239,7 +244,7 @@ export function PhotoReview({
       <div className="photo-review-toolbar">
         <button onClick={() => void back()}>
           <ArrowLeft size={17} />
-          审图记录
+          {backLabel}
         </button>
         <span className="photo-review-name">{session.name}</span>
         <select
@@ -446,7 +451,13 @@ export function PhotoReview({
           {original ? "适应窗口" : "原尺寸"}
         </button>
         <span className="photo-save-status">
-          {controller.pending ? "本机保存中…" : "本机已保存"}
+          {failure.message
+            ? "保存失败"
+            : controller.pending
+              ? "保存中…"
+              : session.directory
+                ? "已保存到目录"
+                : "本机已保存"}
         </span>
       </div>
       <div className="photo-image-info">

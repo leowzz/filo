@@ -8,6 +8,8 @@ import { useDirectoryRefresh } from "./useDirectoryRefresh";
 import {
   ChevronLeft,
   ChevronRight,
+  Images,
+  LoaderCircle,
   Download,
   Eye,
   FileSearch,
@@ -71,6 +73,8 @@ export function AppHeader({
   transfersError,
   onRetryTransfers,
   onOpenTransferDirectory,
+  onReview,
+  reviewPending,
 }: {
   volumes: Volume[];
   volume?: Volume;
@@ -106,6 +110,8 @@ export function AppHeader({
   transfersLoading: boolean;
   transfersError: boolean;
   onRetryTransfers: () => void;
+  onReview: (root: Locator) => void;
+  reviewPending: boolean;
 }) {
   const state = useBrowser();
   const canOperate =
@@ -129,6 +135,14 @@ export function AppHeader({
         (!isDirectory(selected) && !volume?.capabilities.native_open) ||
         openingPending,
       run: () => selected && openEntry(selected),
+    },
+    {
+      id: "photo-review",
+      group: "文件",
+      label: reviewPending ? "正在读取照片…" : "进入审图",
+      disabled: !browsing || reviewPending,
+      run: () =>
+        onReview(selected && isDirectory(selected) ? selected.locator : parent),
     },
     {
       id: "rename",
@@ -267,6 +281,7 @@ export function AppHeader({
                   transfers: "传输任务",
                   settings: "设置",
                   photography: "摄影",
+                  "photo-review": "审图",
                 }[state.page]}
           </h1>
           {state.page === "browser" && volume?.read_only && (
@@ -278,6 +293,23 @@ export function AppHeader({
         </div>
         {state.page === "browser" && volume ? (
           <div className="toolbar-actions">
+            <button
+              className="secondary"
+              disabled={reviewPending}
+              title={
+                volume.read_only
+                  ? "只读存储无法保存审图进度"
+                  : "审阅当前目录的照片"
+              }
+              onClick={() => onReview(parent)}
+            >
+              {reviewPending ? (
+                <LoaderCircle size={17} className="spin" />
+              ) : (
+                <Images size={17} />
+              )}
+              {reviewPending ? "正在读取照片…" : "进入审图"}
+            </button>
             <button
               className="icon-button"
               title="预览（空格）"

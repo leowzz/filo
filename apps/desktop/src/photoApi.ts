@@ -1,4 +1,5 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { Channel } from "@tauri-apps/api/core";
+import { credentialInvoke as invoke } from "./credentialAccess";
 import { desktop } from "./api";
 import type { Locator } from "./types";
 
@@ -41,6 +42,7 @@ export type PhotoSession = {
   card_name: string;
   created_at: string;
   source: Locator | null;
+  directory?: Locator | null;
   photo_ids: string[];
   revision: number;
   synced_revision: number;
@@ -140,6 +142,8 @@ export const photoApi = {
 };
 
 export const reviewApi = {
+  openDirectory: (root: Locator) =>
+    invoke<PhotoSession>("review_open_directory", { root }),
   catalog: () =>
     desktop
       ? invoke<PhotoCatalog>("review_catalog")

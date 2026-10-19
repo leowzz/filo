@@ -82,7 +82,7 @@ export function Sidebar({
           <button
             key={item.id}
             title={item.root.type === "local" ? item.root.root_path : item.name}
-            className={`nav-item ${state.page === "browser" && volume?.id === item.id ? "active" : ""}`}
+            className={`nav-item ${(state.page === "browser" || state.page === "photo-review") && volume?.id === item.id ? "active" : ""}`}
             onClick={() => openVolume(item)}
             onContextMenu={(event) => {
               event.preventDefault();

@@ -168,6 +168,7 @@ export function PhotoLibraryPage() {
   const [handoff, setHandoff] = useState<PhotoHandoff | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const session = query.data?.sessions.find((s) => s.id === selected);
+  const directoryReview = !!session?.directory;
   const photos =
     query.data?.photos.filter((p) => session?.photo_ids.includes(p.id)) ?? [];
   useEffect(() => {
@@ -194,8 +195,12 @@ export function PhotoLibraryPage() {
   );
   const scheduleSync = useCallback(() => {
     clearTimeout(timer.current);
+    if (directoryReview) {
+      void refresh();
+      return;
+    }
     if (selected) timer.current = setTimeout(() => void sync(selected), 1000);
-  }, [selected, sync]);
+  }, [selected, sync, directoryReview, refresh]);
   const saved = useCallback(
     (photo: Photo) => {
       client.setQueryData<PhotoCatalog>(["photo-reviews"], (old) =>
@@ -236,13 +241,15 @@ export function PhotoLibraryPage() {
       throw new Error("所选 RAW 目录下没有已同步的审图记录");
     setSelected(null);
   };
-  const status = syncing
-    ? "正在同步 NAS…"
-    : session?.sync_error
-      ? "NAS 同步失败"
-      : session && session.revision > session.synced_revision
-        ? "NAS 待同步"
-        : "NAS 已同步";
+  const status = session?.directory
+    ? "进度保存在照片目录的 .filo 中"
+    : syncing
+      ? "正在同步 NAS…"
+      : session?.sync_error
+        ? "NAS 同步失败"
+        : session && session.revision > session.synced_revision
+          ? "NAS 待同步"
+          : "NAS 已同步";
   if (review && session)
     return (
       <div className="photo-review-shell">
@@ -257,7 +264,7 @@ export function PhotoLibraryPage() {
             disabled={syncing}
             onClick={() => void sync(session.id, true)}
           >
-            同步到 NAS
+            {session.directory ? "保存到目录" : "同步到 NAS"}
           </button>
           {error && <span role="alert">{error}</span>}
         </div>
@@ -351,11 +358,13 @@ export function PhotoLibraryPage() {
                     </small>
                   </span>
                   <span className="photo-sync-status">
-                    {s.sync_error
-                      ? "NAS 同步失败"
-                      : s.revision > s.synced_revision
-                        ? "NAS 待同步"
-                        : "NAS 已同步"}
+                    {s.directory
+                      ? "已保存到目录"
+                      : s.sync_error
+                        ? "NAS 同步失败"
+                        : s.revision > s.synced_revision
+                          ? "NAS 待同步"
+                          : "NAS 已同步"}
                   </span>
                   <ChevronRight size={18} />
                 </button>
@@ -389,7 +398,7 @@ export function PhotoLibraryPage() {
               onClick={() => void sync(session.id, true)}
             >
               <RefreshCw size={15} />
-              同步到 NAS
+              {session.directory ? "保存到目录" : "同步到 NAS"}
             </button>
             <button
               className="secondary"

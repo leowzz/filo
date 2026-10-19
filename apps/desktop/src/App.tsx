@@ -1,5 +1,7 @@
 import { FloatingNotice } from "./FloatingNotice";
 import { PhotographyPage } from "./PhotographyPage";
+import { DirectoryPhotoReview } from "./DirectoryPhotoReview";
+import { reviewApi } from "./photoApi";
 import { PreviewDialog } from "./PreviewDialog";
 import { ContentSearchDialog } from "./ContentSearchDialog";
 import { S3ManagerDialog } from "./S3ManagerDialog";
@@ -81,6 +83,9 @@ export default function App() {
   const updater = useAppUpdater();
   const state = useBrowser();
   const client = useQueryClient();
+  const [directoryReview, setDirectoryReview] = useState<string | null>(null);
+  const [reviewPending, setReviewPending] = useState(false);
+  const reviewRequest = useRef(0);
   const volumesQuery = useQuery({
     queryKey: ["volumes"],
     queryFn: api.volumes,
@@ -377,6 +382,8 @@ export default function App() {
     },
   });
   function navigate(volumeId: string, logicalPath: string) {
+    reviewRequest.current += 1;
+    setDirectoryReview(null);
     if (volumes.find((item) => item.id === volumeId)?.root.type === "s3")
       state.setSort("provider");
     state.navigate({ volumeId, path: logicalPath });
@@ -779,6 +786,43 @@ export default function App() {
     pasteRetry.signature === clipboardSignature(state.clipboard) &&
     sameLocator(pasteRetry.destination, parent);
   const openVolume = (item: Volume) => navigate(item.id, "");
+  async function openDirectoryReview(root: Locator) {
+    if (reviewPending) return;
+    const request = ++reviewRequest.current;
+    const origin = useBrowser.getState().history[useBrowser.getState().index];
+    setReviewPending(true);
+    setMenu(null);
+    setNotice("");
+    try {
+      const session = await reviewApi.openDirectory(root);
+      await client.invalidateQueries({
+        queryKey: ["photo-reviews"],
+        refetchType: "none",
+      });
+      await client.fetchQuery({
+        queryKey: ["photo-reviews"],
+        queryFn: reviewApi.catalog,
+      });
+      const current = useBrowser.getState();
+      if (
+        request !== reviewRequest.current ||
+        current.page !== "browser" ||
+        current.history[current.index] !== origin
+      )
+        return;
+      if (
+        origin?.volumeId !== root.volume_id ||
+        origin.path !== root.logical_path
+      )
+        navigate(root.volume_id, root.logical_path);
+      setDirectoryReview(session.id);
+      state.setPage("photo-review");
+    } catch (error) {
+      if (request === reviewRequest.current) setNotice(errorMessage(error));
+    } finally {
+      setReviewPending(false);
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -860,6 +904,8 @@ export default function App() {
           transfersLoading={transfersQuery.isPending}
           transfersError={transfersQuery.isError}
           onRetryTransfers={() => void transfersQuery.refetch()}
+          onReview={(root) => void openDirectoryReview(root)}
+          reviewPending={reviewPending}
         />
 
         {volumesQuery.isError && (
@@ -968,6 +1014,12 @@ export default function App() {
             />
           </>
         )}
+        {state.page === "photo-review" && directoryReview && (
+          <DirectoryPhotoReview
+            sessionId={directoryReview}
+            onBack={() => state.setPage("browser")}
+          />
+        )}
 
         {state.page === "photography" && <PhotographyPage volumes={volumes} />}
         {state.page === "transfers" && <TransfersPage volumes={volumes} />}
@@ -1042,6 +1094,7 @@ export default function App() {
             setS3Manager({ locator: menuEntry.locator, object: true })
           }
           onRename={() => openDialog({ type: "rename", entry: menuEntry })}
+          onReview={() => void openDirectoryReview(menuEntry.locator)}
           onTransfer={(kind) =>
             setTransferDialog({ entries: selectedEntries, kind })
           }

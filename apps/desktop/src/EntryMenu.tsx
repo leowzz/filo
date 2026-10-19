@@ -5,6 +5,7 @@ import {
   ExternalLink,
   FolderInput,
   Info,
+  Images,
   Pencil,
   Scissors,
   Trash2,
@@ -40,6 +41,7 @@ export function EntryMenu({
   onRename,
   onTransfer,
   onDelete,
+  onReview,
 }: {
   entry: Entry;
   entries: Entry[];
@@ -60,6 +62,7 @@ export function EntryMenu({
   onRename: () => void;
   onTransfer: (kind: TransferKind) => void;
   onDelete: (mode: DeleteMode) => void;
+  onReview: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -150,6 +153,12 @@ export function EntryMenu({
         <ExternalLink size={14} />
         {isDirectory(entry) ? "打开文件夹" : "打开"}
       </button>
+      {entries.length === 1 && isDirectory(entry) && (
+        <button role="menuitem" onClick={() => perform(onReview)}>
+          <Images size={14} />
+          进入审图
+        </button>
+      )}
       <button
         role="menuitem"
         disabled={entries.length !== 1}
