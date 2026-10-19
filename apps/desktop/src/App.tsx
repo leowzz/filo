@@ -1,4 +1,5 @@
 import { FloatingNotice } from "./FloatingNotice";
+import { PhotographyPage } from "./PhotographyPage";
 import { PreviewDialog } from "./PreviewDialog";
 import { ContentSearchDialog } from "./ContentSearchDialog";
 import { S3ManagerDialog } from "./S3ManagerDialog";
@@ -968,6 +969,7 @@ export default function App() {
           </>
         )}
 
+        {state.page === "photography" && <PhotographyPage volumes={volumes} />}
         {state.page === "transfers" && <TransfersPage volumes={volumes} />}
         {state.page === "settings" && <SettingsPage updater={updater} />}
       </main>

@@ -25,4 +25,4 @@
 
 - [文本预览语法高亮](16-text-syntax-preview.md)：highlight.js Worker、按扩展名识别语言、超限回退原文。
 
-- [摄影导入与审图方案](17-photo-workflow.md)：主卡归档、RAW/JPG 分流、配对审图和 Lightroom Classic 交接；需求方案，尚未实现。
+- [摄影导入与审图方案](17-photo-workflow.md)：独立拷卡与目录审图、RAW/JPG 分流、可恢复记录、评分和 Lightroom Classic 交接；含首版验证边界。

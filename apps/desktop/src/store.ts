@@ -62,7 +62,7 @@ function writePreferences(value: BrowserPreferences) {
 const initialPreferences = readPreferences();
 
 type State = {
-  page: "overview" | "browser" | "transfers" | "settings";
+  page: "overview" | "browser" | "transfers" | "settings" | "photography";
   history: Location[];
   index: number;
   showHidden: boolean;

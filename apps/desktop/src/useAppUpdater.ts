@@ -3,6 +3,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, desktop } from "./api";
+import { photoApi } from "./photoApi";
 import { activeTransfer } from "./types";
 import { version as previewVersion } from "../package.json";
 
@@ -76,7 +77,10 @@ export function useAppUpdater() {
     setError("");
     try {
       const ensureIdle = async () => {
-        if ((await api.transfers()).some(activeTransfer)) {
+        if (
+          (await api.transfers()).some(activeTransfer) ||
+          (await photoApi.active())
+        ) {
           throw new Error("请等待传输完成，或取消传输后再安装更新。");
         }
       };

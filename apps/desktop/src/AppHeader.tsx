@@ -262,9 +262,12 @@ export function AppHeader({
               ? (path.split("/").filter(Boolean).at(-1) ??
                 volume?.name ??
                 "存储浏览器")
-              : { overview: "概览", transfers: "传输任务", settings: "设置" }[
-                  state.page
-                ]}
+              : {
+                  overview: "概览",
+                  transfers: "传输任务",
+                  settings: "设置",
+                  photography: "摄影",
+                }[state.page]}
           </h1>
           {state.page === "browser" && volume?.read_only && (
             <span className="readonly-label">

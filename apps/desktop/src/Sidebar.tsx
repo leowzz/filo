@@ -1,6 +1,7 @@
 import {
   ArrowDownUp,
   Cloud,
+  Camera,
   HardDrive,
   LayoutGrid,
   LockKeyhole,
@@ -37,6 +38,15 @@ export function Sidebar({
       </div>
       <div className="section-label">个人收藏</div>
       <nav className="main-nav" aria-label="主导航">
+        <button
+          className={
+            state.page === "photography" ? "nav-item active" : "nav-item"
+          }
+          onClick={() => state.setPage("photography")}
+        >
+          <Camera size={17} />
+          摄影
+        </button>
         <button
           className={state.page === "overview" ? "nav-item active" : "nav-item"}
           onClick={() => state.setPage("overview")}
