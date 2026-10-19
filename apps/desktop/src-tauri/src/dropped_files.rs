@@ -111,7 +111,7 @@ pub async fn upload_dropped_files(
     conflict_paths: Option<Vec<PathBuf>>,
     on_progress: tauri::ipc::Channel<TransferJob>,
 ) -> StorageResult<super::FileTransferBatch> {
-    let paths = dropped.take(window.label(), &paths)?;
+    dropped.validate(window.label(), &paths)?;
     let destination = service.stat_entry(remote.clone()).await?;
     if !matches!(
         destination.kind,
@@ -122,6 +122,9 @@ pub async fn upload_dropped_files(
             "请拖入目标文件夹",
         ));
     }
+    // Credential unlock/re-entry can reject and replay this command. Consume
+    // the one-shot native grant only after that interactive step succeeds.
+    let paths = dropped.take(window.label(), &paths)?;
     let mut batch = super::FileTransferBatch {
         jobs: Vec::new(),
         failures: Vec::new(),

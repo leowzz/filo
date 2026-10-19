@@ -1,6 +1,7 @@
 import { SlidersHorizontal } from "lucide-react";
 import { useBrowser } from "./store";
 import { TransferSettingsCard } from "./TransferSettingsCard";
+import { CredentialSettingsCard } from "./CredentialSettingsCard";
 import { AppUpdateCard } from "./AppUpdateCard";
 import type { AppUpdater } from "./useAppUpdater";
 
@@ -9,6 +10,7 @@ export function SettingsPage({ updater }: { updater: AppUpdater }) {
   return (
     <div className="page-scroll simple-page">
       <h1>设置</h1>
+      <CredentialSettingsCard />
       <TransferSettingsCard />
       <section className="settings-card">
         <h2>

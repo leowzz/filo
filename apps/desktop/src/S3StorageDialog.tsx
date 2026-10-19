@@ -443,7 +443,8 @@ export function S3Form({
           只读访问
         </label>
         <p className="field-help">
-          凭据保存在系统钥匙串。保存前会测试所选 Bucket / Prefix 的访问权限。
+          凭据按设置中的保存方式处理。保存前会测试所选 Bucket / Prefix
+          的访问权限。
         </p>
       </fieldset>
       {(save.isError || test.isError) && (

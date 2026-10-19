@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { credentialInvoke as invoke } from "./credentialAccess";
 import type { Entry, Locator } from "./types";
 export type Preview = {
   kind: "image" | "text" | "pdf";

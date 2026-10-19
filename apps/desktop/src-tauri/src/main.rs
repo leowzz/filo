@@ -6,6 +6,7 @@ use storage_repository::Repository;
 use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
+mod credentials;
 mod dropped_files;
 mod errors;
 mod ssh_hosts;
@@ -376,11 +377,24 @@ fn main() {
             std::fs::create_dir_all(&data)?;
             let repository =
                 tauri::async_runtime::block_on(Repository::open(&data.join("filo.sqlite")))?;
-            app.manage(StorageService::new(repository));
+            let credentials = std::sync::Arc::new(storage_application::FileCredentialStore::new(
+                Some(data.join("credentials.json")),
+            ));
+            app.manage(StorageService::with_credentials(
+                repository,
+                credentials.clone(),
+            ));
+            app.manage(credentials);
             tracing::info!("Filo storage is ready");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            credentials::get_credential_settings,
+            credentials::save_credential_settings,
+            credentials::unlock_credentials,
+            credentials::reset_credentials,
+            credentials::import_legacy_credentials,
+            credentials::provide_connection_credentials,
             recent_backend_errors,
             preview_entry,
             directory_stamp,

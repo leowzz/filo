@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
+import { CredentialDialogs } from "./CredentialDialogs";
 import { AppErrorBoundary, GlobalErrors } from "./GlobalErrors";
 import { installGlobalErrors } from "./errors";
 import "./styles.css";
@@ -23,6 +24,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <AppErrorBoundary>
       <QueryClientProvider client={client}>
         <App />
+        <CredentialDialogs />
       </QueryClientProvider>
     </AppErrorBoundary>
     <GlobalErrors />

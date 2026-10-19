@@ -920,7 +920,7 @@ export function RemoteForm({
           只读访问
         </label>
         <p className="field-help remote-credential-help">
-          登录凭据保存在系统凭据存储。编辑连接时可保留已有凭据，只有勾选“更换登录凭据”才需要重新输入。
+          登录凭据按设置中的保存方式处理。编辑连接时可保留本次运行中可用的凭据。
         </p>
       </fieldset>
 

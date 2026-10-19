@@ -55,7 +55,7 @@ stat
 
 ```text
 添加 S3 连接
-Keychain 保存凭据
+本地凭据保存、可选主密码与仅内存模式
 测试连接
 浏览 Bucket 和 Prefix
 创建目录标记

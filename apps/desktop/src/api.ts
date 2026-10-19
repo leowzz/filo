@@ -1,4 +1,5 @@
-import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
+import { credentialInvoke as invoke } from "./credentialAccess";
+import { Channel, isTauri } from "@tauri-apps/api/core";
 import type {
   Entry,
   EntryPage,
@@ -36,49 +37,29 @@ export const api = {
       volumeId,
       input,
     }),
-  testS3: async (volumeId: string | null, input: S3Input) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        invoke<void>("test_s3_connection", { volumeId, input }),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () =>
-              reject(
-                new Error("连接测试超时（2 秒），请检查网络和服务地址后重试"),
-              ),
-            2000,
-          );
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
-  },
+  testS3: (volumeId: string | null, input: S3Input) =>
+    invoke<void>(
+      "test_s3_connection",
+      { volumeId, input },
+      {
+        ms: 2000,
+        message: "连接测试超时（2 秒），请检查网络和服务地址后重试",
+      },
+    ),
   saveRemote: (volumeId: string | null, input: RemoteInput) =>
     invoke<Omit<Volume, "capabilities">>("save_remote_storage", {
       volumeId,
       input,
     }),
-  testRemote: async (volumeId: string | null, input: RemoteInput) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        invoke<void>("test_remote_connection", { volumeId, input }),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () =>
-              reject(
-                new Error("连接测试超时，请检查网络、服务地址和认证信息后重试"),
-              ),
-            5000,
-          );
-        }),
-      ]);
-    } finally {
-      clearTimeout(timer);
-    }
-  },
+  testRemote: (volumeId: string | null, input: RemoteInput) =>
+    invoke<void>(
+      "test_remote_connection",
+      { volumeId, input },
+      {
+        ms: 5000,
+        message: "连接测试超时，请检查网络、服务地址和认证信息后重试",
+      },
+    ),
   inspectSftpHostKey: (host: string, port: number, knownHosts: string) =>
     desktop
       ? invoke<SftpHostKeyInspection>("inspect_sftp_host_key", {

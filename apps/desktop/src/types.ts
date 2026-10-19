@@ -38,6 +38,7 @@ export type RemoteCredentials = {
   domain: string;
 };
 export type Connection = {
+  credential_ref?: string | null;
   id: string;
   name: string;
   provider: "local_fs" | "s3" | "remote";

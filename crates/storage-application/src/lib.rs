@@ -16,7 +16,9 @@ mod remote;
 mod s3;
 mod s3_admin;
 mod volumes;
-pub use credentials::{CredentialStore, SystemCredentialStore};
+pub use credentials::{
+    CredentialMode, CredentialStatus, CredentialStore, FileCredentialStore, SystemCredentialStore,
+};
 mod operation_planner;
 mod transfers;
 mod tree;
@@ -47,13 +49,45 @@ pub struct StorageService {
 }
 
 impl StorageService {
+    /// Fill an existing connection after a restart in memory-only mode. Never
+    /// return saved secrets through IPC or accept an unrelated credential ref.
+    pub async fn provide_connection_credentials(
+        &self,
+        reference: String,
+        s3: Option<S3Credentials>,
+        remote: Option<RemoteCredentials>,
+    ) -> StorageResult<()> {
+        let connection = self
+            .repository
+            .list_connections()
+            .await?
+            .into_iter()
+            .find(|c| c.credential_ref.as_deref() == Some(reference.as_str()))
+            .ok_or_else(|| {
+                StorageError::new(StorageErrorCode::NotFound, "未找到此连接，请刷新后重试")
+            })?;
+        let value = match (connection.provider, s3, remote) {
+            (ProviderKind::S3, Some(value), None) => value,
+            (ProviderKind::Remote, None, Some(value)) => {
+                credentials::pack_remote_credentials(&value)?
+            }
+            _ => {
+                return Err(StorageError::new(
+                    StorageErrorCode::InvalidConfiguration,
+                    "连接凭据类型不匹配",
+                ))
+            }
+        };
+        self.store_credentials(reference, value).await
+    }
+
     pub fn new(repository: Repository) -> Self {
         Self::with_credentials(repository, Arc::new(SystemCredentialStore))
     }
 
     pub fn with_credentials(repository: Repository, credentials: Arc<dyn CredentialStore>) -> Self {
         Self {
-            credentials: Arc::new(credentials::CachedCredentialStore::new(credentials)),
+            credentials,
             listings: Arc::new(listing::Listings::default()),
             // Reserve capacity for interactive previews while thumbnails load.
             preview_slots: Arc::new(tokio::sync::Semaphore::new(2)),

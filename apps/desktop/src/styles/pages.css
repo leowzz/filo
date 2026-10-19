@@ -312,6 +312,33 @@
   align-items: center;
   padding: 12px 0;
 }
+.credential-fields {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+.credential-settings-actions,
+.credential-settings-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.credential-settings-tools:empty {
+  display: none;
+}
+.credential-private-key {
+  min-height: 130px;
+  padding: 8px;
+  resize: vertical;
+  font-family: monospace;
+}
+.credential-settings-card .error-text {
+  color: #c14b3d;
+}
+.credential-settings-card .credential-settings-saved {
+  color: #387447;
+}
 .settings-card strong {
   font-size: 13px;
   font-weight: 500;

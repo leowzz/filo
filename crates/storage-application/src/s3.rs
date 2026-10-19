@@ -244,10 +244,18 @@ impl StorageService {
             .ok_or_else(|| StorageError::new(StorageErrorCode::NotFound, "未找到该位置"))?;
         let connection = self.connection(volume.connection_id).await?;
         if let Some(reference) = connection.credential_ref {
-            let credentials = self.load_credentials(Some(reference.clone())).await?;
-            self.delete_credentials(reference.clone()).await?;
+            let credentials = match self.load_credentials(Some(reference.clone())).await {
+                Ok(value) => Some(value),
+                Err(error) if error.code == StorageErrorCode::CredentialsRequired => None,
+                Err(error) => return Err(error),
+            };
+            if credentials.is_some() {
+                self.delete_credentials(reference.clone()).await?;
+            }
             if let Err(error) = self.repository.remove_local(id).await {
-                self.store_credentials(reference, credentials).await?;
+                if let Some(credentials) = credentials {
+                    self.store_credentials(reference, credentials).await?;
+                }
                 return Err(error);
             }
             Ok(())

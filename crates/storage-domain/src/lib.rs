@@ -369,6 +369,8 @@ impl StorageCapabilities {
 #[serde(rename_all = "snake_case")]
 pub enum StorageErrorCode {
     AuthenticationFailed,
+    CredentialsLocked,
+    CredentialsRequired,
     Network,
     Timeout,
     TrashUnavailable,
@@ -390,6 +392,8 @@ pub struct StorageError {
     pub code: StorageErrorCode,
     pub message: String,
     pub retryable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_ref: Option<String>,
 }
 
 impl StorageError {
@@ -398,6 +402,7 @@ impl StorageError {
             code,
             message: message.into(),
             retryable: false,
+            credential_ref: None,
         }
     }
 }

@@ -24,3 +24,5 @@
 - [远程存储与文件操作](15-remote-storage-and-file-workflow.md)：FTP、SFTP、SMB 连接、文件剪贴板、持久化浏览偏好与验收记录。
 
 - [文本预览语法高亮](16-text-syntax-preview.md)：highlight.js Worker、按扩展名识别语言、超限回退原文。
+
+- [摄影导入与审图方案](17-photo-workflow.md)：主卡归档、RAW/JPG 分流、配对审图和 Lightroom Classic 交接；需求方案，尚未实现。

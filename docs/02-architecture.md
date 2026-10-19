@@ -39,7 +39,7 @@ tokio-util CancellationToken
 * 业务层不能直接依赖 OpenDAL 类型。
 * 必须在 OpenDAL 外包装自己的 `StorageBackend`。
 * 后续允许将 LocalFS 替换为原生实现。
-* 敏感凭据存储到系统 Keychain，不允许写入 SQLite。
+* 敏感凭据不写入 SQLite；独立凭据文件提供普通保存、主密码加密和仅内存三种模式，系统 Keychain 仅供手动导入旧数据。
 * Tauri Command 用于普通请求。
 * 文件传输进度使用 Tauri Channel，不要用高频全局 Event。
 
@@ -74,7 +74,7 @@ Providers
     ▼
 Infrastructure
     ├── SQLite
-    ├── System Keychain
+    ├── Local Credential Store（普通 / 主密码 / 仅内存）
     └── Local Logs
 ```
 

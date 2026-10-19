@@ -1017,6 +1017,7 @@ fn timeout_error() -> StorageError {
         code: StorageErrorCode::Timeout,
         message: "FTP 连接超时，请检查网络和服务地址".into(),
         retryable: true,
+        credential_ref: None,
     }
 }
 
@@ -1095,6 +1096,7 @@ fn network_error() -> StorageError {
         code: StorageErrorCode::Network,
         message: "FTP 请求失败，请检查网络和服务状态".into(),
         retryable: true,
+        credential_ref: None,
     }
 }
 
