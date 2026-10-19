@@ -9,6 +9,10 @@ mod importing;
 mod metadata;
 mod model;
 mod planning;
+mod review;
+mod review_library;
+mod sync;
+mod xmp;
 pub use model::*;
 
 fn invalid(message: impl Into<String>) -> StorageError {
@@ -23,11 +27,14 @@ fn io_error(_: std::io::Error) -> StorageError {
         "无法读取照片，请检查存储卡或 NAS 连接",
     )
 }
+fn bytes_hash(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
 fn child(root: &StorageLocator, path: &str) -> StorageResult<StorageLocator> {
     let path = normalize_path(path)?;
     Ok(StorageLocator {
         logical_path: normalize_path(
-            &format!("{}/{path}", root.logical_path).trim_start_matches('/'),
+            format!("{}/{path}", root.logical_path).trim_start_matches('/'),
         )?,
         ..root.clone()
     })
@@ -131,22 +138,82 @@ fn touch(catalog: &mut PhotoCatalog, photo: Uuid) {
 }
 
 impl StorageService {
+    /// A separate local journal and NAS namespace; no import records are read.
+    pub fn photo_review_workspace(&self) -> Self {
+        let mut service = self.clone();
+        service.photo_review_workspace = true;
+        service.photo_lock = self.photo_review_lock.clone();
+        service.photo_sync_lock = self.photo_review_sync_lock.clone();
+        service
+    }
+    fn manifest_directory(&self) -> &'static str {
+        if self.photo_review_workspace {
+            ".filo/reviews"
+        } else {
+            ".filo/sessions"
+        }
+    }
+    pub async fn photo_paths(&self, session_id: Uuid) -> StorageResult<serde_json::Value> {
+        let catalog = self.photo_catalog().await?;
+        let session = &catalog.sessions[session_index(&catalog, session_id)?];
+        let archive = archive_for(&catalog, session.archive_id)?;
+        let (jpg, raw) = self.photo_archive_backends(archive).await?;
+        let mut targets = BTreeMap::new();
+        for file in catalog
+            .photos
+            .iter()
+            .filter(|p| session.photo_ids.contains(&p.id))
+            .flat_map(|p| &p.files)
+        {
+            let backend = if file.kind == PhotoFileKind::Jpg {
+                jpg.as_ref()
+            } else {
+                raw.as_ref()
+            };
+            let target = file_target(archive, file)?;
+            targets.insert(
+                file.id.to_string(),
+                backend
+                    .storage_path(&target)
+                    .map(|(_, path)| path)
+                    .unwrap_or(target.logical_path),
+            );
+        }
+        let source = match &session.source {
+            Some(root) => self
+                .backend(root.volume_id)
+                .await?
+                .storage_path(root)
+                .map(|(_, path)| path),
+            None => None,
+        };
+        Ok(serde_json::json!({"source_root": source, "targets": targets}))
+    }
+    pub async fn photo_has_active_imports(&self) -> bool {
+        !self.photo_jobs.lock().await.is_empty()
+    }
     pub async fn photo_catalog(&self) -> StorageResult<PhotoCatalog> {
         self.load_photos().await.map(|(_, catalog)| catalog)
     }
     async fn load_photos(&self) -> StorageResult<(i64, PhotoCatalog)> {
-        let (revision, document) = self.repository.photo_catalog().await?;
+        let (revision, document) = if self.photo_review_workspace {
+            self.repository.photo_review_catalog().await?
+        } else {
+            self.repository.photo_catalog().await?
+        };
         let catalog = serde_json::from_value(document)
             .map_err(|_| invalid("摄影记录无法读取，请保留本机数据库并重试"))?;
         Ok((revision, catalog))
     }
     async fn save_photos(&self, revision: i64, catalog: &PhotoCatalog) -> StorageResult<()> {
-        self.repository
-            .save_photo_catalog(
-                revision,
-                serde_json::to_value(catalog).map_err(|_| invalid("摄影记录无法保存"))?,
-            )
-            .await
+        let value = serde_json::to_value(catalog).map_err(|_| invalid("摄影记录无法保存"))?;
+        if self.photo_review_workspace {
+            self.repository
+                .save_photo_review_catalog(revision, value)
+                .await
+        } else {
+            self.repository.save_photo_catalog(revision, value).await
+        }
     }
     /// Root choices are native-picker-authorized local volumes, including system SMB mounts.
     async fn photo_archive_backends(

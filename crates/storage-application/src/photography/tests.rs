@@ -1,6 +1,373 @@
 use super::*;
 use std::path::Path;
 
+fn dated_tiff(date: &str) -> Vec<u8> {
+    let mut bytes = vec![0u8; 96];
+    bytes[..8].copy_from_slice(b"II\x2a\0\x08\0\0\0");
+    bytes[8..10].copy_from_slice(&1u16.to_le_bytes());
+    bytes[10..12].copy_from_slice(&0x9003u16.to_le_bytes());
+    bytes[12..14].copy_from_slice(&2u16.to_le_bytes());
+    bytes[14..18].copy_from_slice(&20u32.to_le_bytes());
+    bytes[18..22].copy_from_slice(&32u32.to_le_bytes());
+    bytes[32..52].copy_from_slice(format!("{} 12:00:00\0", date.replace('-', ":")).as_bytes());
+    bytes
+}
+
+#[tokio::test]
+async fn presets_keep_real_camera_dates_and_do_not_apply_fallback_to_valid_dates() {
+    for (layout, keep, expected) in [
+        (PhotoLayout::Date, false, "2026/2026-10-18/photo.NEF"),
+        (
+            PhotoLayout::Date,
+            true,
+            "2026/2026-10-18/107NZ5_2/photo.NEF",
+        ),
+        (
+            PhotoLayout::Batch,
+            true,
+            "2026-10-19_旅行/107NZ5_2/photo.NEF",
+        ),
+        (PhotoLayout::Original, true, "107NZ5_2/photo.NEF"),
+        (PhotoLayout::Batch, false, "2026-10-19_旅行/photo.NEF"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path();
+        let (service, mut input) = setup(path).await;
+        std::fs::write(
+            path.join("card/DCIM/107NZ5_2/photo.NEF"),
+            dated_tiff("2026-10-18"),
+        )
+        .unwrap();
+        std::fs::write(
+            path.join("card/DCIM/107NZ5_2/next.NEF"),
+            dated_tiff("2026-10-19"),
+        )
+        .unwrap();
+        input.layout = layout;
+        input.keep_hierarchy = keep;
+        let session = service.photo_plan(input).await.unwrap();
+        let catalog = service.photo_catalog().await.unwrap();
+        let photo = catalog
+            .photos
+            .iter()
+            .find(|p| p.original_path.ends_with("photo.NEF"))
+            .unwrap();
+        assert_eq!(photo.capture_date.as_deref(), Some("2026-10-18"));
+        assert_eq!(photo.files[0].path, expected);
+        assert!(photo.issues.is_empty());
+        assert_eq!(session.photo_ids.len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn nas_outage_does_not_block_local_marks_and_can_be_retried() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let (service, input) = setup(path).await;
+    jpeg(&path.join("jpg/photo.JPG"));
+    let review = service.photo_review_workspace();
+    let session = review
+        .photo_open_review("offline".into(), input.jpg, None)
+        .await
+        .unwrap();
+    let id = session.photo_ids[0];
+    review.photo_sync(session.id).await.unwrap();
+    std::fs::rename(path.join("jpg"), path.join("offline")).unwrap();
+    review
+        .photo_mark(session.id, id, 4, PhotoFlag::Pick)
+        .await
+        .unwrap();
+    assert!(review.photo_sync(session.id).await.is_err());
+    let catalog = review.photo_catalog().await.unwrap();
+    assert_eq!(catalog.photos[0].rating, 4);
+    assert!(catalog.sessions[0].sync_error.is_some());
+    assert!(catalog.sessions[0].revision > catalog.sessions[0].synced_revision);
+    std::fs::rename(path.join("offline"), path.join("jpg")).unwrap();
+    review.photo_sync(session.id).await.unwrap();
+    let catalog = review.photo_catalog().await.unwrap();
+    assert_eq!(
+        catalog.sessions[0].revision,
+        catalog.sessions[0].synced_revision
+    );
+}
+
+async fn location(service: &StorageService, path: &Path) -> StorageLocator {
+    let volume = service
+        .add_selected_directory(path.to_path_buf(), false)
+        .await
+        .unwrap();
+    StorageLocator {
+        volume_id: volume.id,
+        logical_path: String::new(),
+        version_id: None,
+    }
+}
+fn jpeg(path: &Path) {
+    image::RgbImage::from_pixel(32, 16, image::Rgb([80, 100, 140]))
+        .save(path)
+        .unwrap();
+}
+
+#[tokio::test]
+async fn review_opens_existing_files_without_import_and_uses_an_independent_journal() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let (service, input) = setup(path).await;
+    std::fs::write(
+        path.join("raw/photo.NEF"),
+        crate::browsing::nef::fixture(true, false),
+    )
+    .unwrap();
+    jpeg(&path.join("jpg/photo.JPG"));
+    let review = service.photo_review_workspace();
+    let session = review
+        .photo_open_review(
+            "已有图库".into(),
+            input.jpg.clone(),
+            Some(input.raw.clone()),
+        )
+        .await
+        .unwrap();
+    assert!(service.photo_catalog().await.unwrap().sessions.is_empty());
+    let catalog = review.photo_catalog().await.unwrap();
+    assert_eq!(catalog.photos.len(), 1);
+    assert_eq!(catalog.photos[0].files.len(), 2);
+    assert!(catalog.photos[0].files.iter().all(|f| !f.verified));
+    let id = catalog.photos[0].id;
+    let preview = review.photo_preview(id, true, false).await.unwrap();
+    assert!(!preview.embedded);
+    assert_eq!((preview.width, preview.height), (32, 16));
+    {
+        let _copy_busy = service.photo_lock.lock().await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            review.photo_mark(session.id, id, 3, PhotoFlag::Reject),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    }
+    assert!(service.photo_catalog().await.unwrap().photos.is_empty());
+    let reopened = review
+        .photo_open_review("再次打开".into(), input.jpg, Some(input.raw))
+        .await
+        .unwrap();
+    assert_eq!(reopened.photo_ids, session.photo_ids);
+    let photo = review.photo_undo(session.id).await.unwrap().unwrap();
+    assert_eq!(photo.rating, 0);
+    assert!(!photo.reviewed);
+    assert_eq!(std::fs::read_dir(path.join("jpg")).unwrap().count(), 1);
+}
+
+#[tokio::test]
+async fn review_covers_over_200_photos_and_portable_sync_restores_on_a_second_computer() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let (service, input) = setup(path).await;
+    for i in 0..241 {
+        jpeg(&path.join(format!("jpg/{i:04}.JPG")));
+    }
+    let review = service.photo_review_workspace();
+    let session = review
+        .photo_open_review("241 张".into(), input.jpg, None)
+        .await
+        .unwrap();
+    assert_eq!(session.photo_ids.len(), 241);
+    let last = session.photo_ids[240];
+    review
+        .photo_mark(session.id, last, 5, PhotoFlag::Pick)
+        .await
+        .unwrap();
+    review
+        .photo_save_position(
+            session.id,
+            PhotoReviewPosition {
+                current: Some(last),
+                filter: "pick".into(),
+                minimum_rating: 3,
+                auto_advance: true,
+            },
+        )
+        .await
+        .unwrap();
+    review.photo_sync(session.id).await.unwrap();
+    let manifest_path = path.join(format!("jpg/.filo/reviews/{}.json", session.id));
+    let bytes = std::fs::read(&manifest_path).unwrap();
+    assert!(!String::from_utf8_lossy(&bytes).contains(path.to_str().unwrap()));
+    let other_dir = tempfile::tempdir().unwrap();
+    let other = StorageService::new(
+        Repository::open(&other_dir.path().join("other.sqlite"))
+            .await
+            .unwrap(),
+    );
+    let root = location(&other, &path.join("jpg")).await;
+    let other = other.photo_review_workspace();
+    assert_eq!(other.photo_restore(root.clone(), root).await.unwrap(), 1);
+    let catalog = other.photo_catalog().await.unwrap();
+    let photo = catalog.photos.iter().find(|p| p.id == last).unwrap();
+    assert_eq!(photo.rating, 5);
+    assert_eq!(photo.flag, PhotoFlag::Pick);
+    assert_eq!(catalog.sessions[0].position.current, Some(last));
+    assert!(catalog.sessions[0].source.is_none());
+    assert!(!path.join("jpg/.filo/sessions").exists());
+    // A peer edit is a conflict, never an overwrite of the NAS or the local pending score.
+    let mut remote: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    remote["session"]["name"] = "另一台电脑".into();
+    std::fs::write(&manifest_path, serde_json::to_vec(&remote).unwrap()).unwrap();
+    review
+        .photo_mark(session.id, last, 4, PhotoFlag::Reject)
+        .await
+        .unwrap();
+    assert_eq!(
+        review.photo_sync(session.id).await.unwrap_err().code,
+        StorageErrorCode::Conflict
+    );
+    assert_eq!(
+        review
+            .photo_catalog()
+            .await
+            .unwrap()
+            .photos
+            .iter()
+            .find(|p| p.id == last)
+            .unwrap()
+            .rating,
+        4
+    );
+    assert!(String::from_utf8(std::fs::read(&manifest_path).unwrap())
+        .unwrap()
+        .contains("另一台电脑"));
+    assert!(std::fs::read_dir(path.join("jpg/.filo/reviews"))
+        .unwrap()
+        .any(|e| e
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("local-conflict")));
+}
+
+#[tokio::test]
+async fn xmp_handoff_preserves_adjustments_and_acr_and_stops_on_external_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let (service, input) = setup(path).await;
+    std::fs::write(path.join("raw/photo.NEF"), b"raw unchanged").unwrap();
+    std::fs::write(path.join("raw/photo.acr"), b"acr unchanged").unwrap();
+    std::fs::write(path.join("raw/photo.xmp"),br#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Exposure2012="+1.25"/></rdf:RDF>"#).unwrap();
+    let review = service.photo_review_workspace();
+    let session = review
+        .photo_open_review("RAW".into(), input.raw, None)
+        .await
+        .unwrap();
+    let id = session.photo_ids[0];
+    review
+        .photo_mark(session.id, id, 3, PhotoFlag::Reject)
+        .await
+        .unwrap();
+    let result = review.photo_prepare_lrc(session.id).await.unwrap();
+    assert!(result.failures.is_empty());
+    assert_eq!(result.directories.len(), 1);
+    let before = std::fs::read(path.join("raw/photo.xmp")).unwrap();
+    let text = String::from_utf8_lossy(&before);
+    assert!(text.contains("Exposure2012=\"+1.25\""));
+    assert!(text.contains("<xmp:Rating>3</xmp:Rating>"));
+    assert!(text.contains("<xmpDM:pick>-1</xmpDM:pick>"));
+    assert_eq!(
+        std::fs::read(path.join("raw/photo.acr")).unwrap(),
+        b"acr unchanged"
+    );
+    assert_eq!(
+        std::fs::read(path.join("raw/photo.NEF")).unwrap(),
+        b"raw unchanged"
+    );
+    let external = String::from_utf8(before).unwrap().replace("+1.25", "+2.25");
+    std::fs::write(path.join("raw/photo.xmp"), &external).unwrap();
+    review
+        .photo_mark(session.id, id, 4, PhotoFlag::Pick)
+        .await
+        .unwrap();
+    assert_eq!(
+        review
+            .photo_prepare_lrc(session.id)
+            .await
+            .unwrap()
+            .failures
+            .len(),
+        1
+    );
+    assert_eq!(
+        std::fs::read_to_string(path.join("raw/photo.xmp")).unwrap(),
+        external
+    );
+}
+
+#[tokio::test]
+async fn local_save_failure_does_not_commit_mark_or_undo_history() {
+    use sqlx::Connection;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let (service, input) = setup(path).await;
+    jpeg(&path.join("jpg/photo.JPG"));
+    let review = service.photo_review_workspace();
+    let session = review
+        .photo_open_review("save failure".into(), input.jpg, None)
+        .await
+        .unwrap();
+    let id = session.photo_ids[0];
+    let mut connection = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(path.join("db.sqlite")),
+    )
+    .await
+    .unwrap();
+    sqlx::query("CREATE TRIGGER fail_photo_save BEFORE UPDATE ON photo_review_catalog BEGIN SELECT RAISE(FAIL, 'simulated disk failure'); END").execute(&mut connection).await.unwrap();
+    assert!(review
+        .photo_mark(session.id, id, 5, PhotoFlag::Pick)
+        .await
+        .is_err());
+    let catalog = review.photo_catalog().await.unwrap();
+    assert_eq!(catalog.photos[0].rating, 0);
+    assert!(!catalog.photos[0].reviewed);
+    assert!(catalog.sessions[0].undo.is_empty());
+    sqlx::query("DROP TRIGGER fail_photo_save")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+    review
+        .photo_mark(session.id, id, 5, PhotoFlag::Pick)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn interrupted_pair_can_resume_and_backups_fill_missing_members() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let (service, input) = setup(path).await;
+    write_pair(path, "a", "photo", b"content");
+    std::fs::remove_file(path.join("card/DCIM/a/photo.JPG")).unwrap();
+    let first = service.photo_plan(input.clone()).await.unwrap();
+    service
+        .photo_import(first.id, Arc::new(|_| {}))
+        .await
+        .unwrap();
+    std::fs::write(path.join("card/DCIM/a/photo.JPG"), b"contentJPG").unwrap();
+    let next = service.photo_plan(input).await.unwrap();
+    assert_eq!(next.photo_ids, first.photo_ids);
+    service
+        .photo_import(next.id, Arc::new(|_| {}))
+        .await
+        .unwrap();
+    assert_eq!(service.photo_catalog().await.unwrap().photos.len(), 1);
+    assert!(service.photo_catalog().await.unwrap().photos[0]
+        .files
+        .iter()
+        .all(|f| f.verified));
+    assert!(
+        service.list_transfers().await.unwrap().is_empty(),
+        "import history must remain independent"
+    );
+}
+
 async fn setup(path: &Path) -> (StorageService, PhotoPlanInput) {
     for name in ["card/DCIM/107NZ5_2", "jpg", "raw"] {
         std::fs::create_dir_all(path.join(name)).unwrap();
@@ -145,6 +512,17 @@ async fn changed_source_and_missing_dates_never_produce_false_success() {
         .photo_import(session.id, Arc::new(|_| {}))
         .await
         .is_err());
+    std::fs::create_dir_all(path.join("raw/2026/2026-10-20")).unwrap();
+    std::fs::write(
+        path.join("raw/2026/2026-10-20/photo.xmp"),
+        b"unrelated adjustments",
+    )
+    .unwrap();
+    assert!(service
+        .photo_resolve_date(session.id, "2026-10-20".into())
+        .await
+        .is_err());
+    std::fs::remove_file(path.join("raw/2026/2026-10-20/photo.xmp")).unwrap();
     service
         .photo_resolve_date(session.id, "2026-10-20".into())
         .await

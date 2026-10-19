@@ -243,7 +243,15 @@ impl StorageService {
                 .or_else(|| jpg_meta.and_then(|m| m.time.as_ref()));
             let mut date = time.map(|t| metadata::date(t));
             if let Some(override_date) = &input.date_override {
-                date = Some(override_date.clone());
+                let date_conflict = raw_meta.zip(jpg_meta).is_some_and(|(a, b)| {
+                    a.time
+                        .as_ref()
+                        .zip(b.time.as_ref())
+                        .is_some_and(|(a, b)| metadata::date(a) != metadata::date(b))
+                });
+                if date.is_none() || date_conflict {
+                    date = Some(override_date.clone());
+                }
                 // A date override resolves absent/different dates, never camera or time-of-day conflicts.
                 if let Some((a, b)) = raw_meta.zip(jpg_meta) {
                     let camera_conflict = a
@@ -410,6 +418,7 @@ impl StorageService {
                             size: f.entry.size.unwrap_or(0),
                             verified: false,
                             error: None,
+                            observed_revision: None,
                         })
                         .collect(),
                     rating: 0,
@@ -470,6 +479,7 @@ impl StorageService {
                         size: file.entry.size.unwrap_or(0),
                         verified: false,
                         error: None,
+                        observed_revision: None,
                     });
                     id
                 };
@@ -527,7 +537,7 @@ impl StorageService {
         for photo in catalog
             .photos
             .iter_mut()
-            .filter(|p| ids.contains(&p.id) && !p.issues.is_empty())
+            .filter(|p| ids.contains(&p.id) && !p.excluded && !p.issues.is_empty())
         {
             if photo.files.iter().any(|f| f.verified) {
                 return Err(conflict("此照片已开始归档，不能修改导入计划"));
@@ -547,7 +557,55 @@ impl StorageService {
         }
         // Recheck every destination and reservation before accepting changed paths.
         let archive = archive_for(&catalog, catalog.sessions[index].archive_id)?;
-        for photo in catalog.photos.iter().filter(|p| ids.contains(&p.id)) {
+        for photo in catalog
+            .photos
+            .iter()
+            .filter(|p| ids.contains(&p.id) && !p.excluded)
+        {
+            let stem = photo.files[0]
+                .path
+                .rsplit_once('.')
+                .ok_or_else(|| invalid("照片计划名称无效"))?
+                .0;
+            for (kind, extensions) in [
+                (PhotoFileKind::Raw, &["NEF", "nef"][..]),
+                (PhotoFileKind::Jpg, &["JPG", "jpg", "JPEG", "jpeg"][..]),
+                (PhotoFileKind::Xmp, &["xmp", "XMP"][..]),
+                (PhotoFileKind::Acr, &["acr", "ACR"][..]),
+            ] {
+                for extension in extensions {
+                    let path = format!("{stem}.{extension}");
+                    if photo
+                        .files
+                        .iter()
+                        .any(|f| f.kind == kind && f.path.eq_ignore_ascii_case(&path))
+                    {
+                        continue;
+                    }
+                    let root = if kind == PhotoFileKind::Jpg {
+                        &archive.jpg
+                    } else {
+                        &archive.raw
+                    };
+                    let backend = self.backend(root.volume_id).await?;
+                    if existing(backend.as_ref(), &child(root, &path)?)
+                        .await?
+                        .is_some()
+                        || catalog
+                            .photos
+                            .iter()
+                            .filter(|p| p.id != photo.id && p.archive_id == photo.archive_id)
+                            .flat_map(|p| &p.files)
+                            .any(|f| {
+                                f.kind.root() == kind.root() && f.path.eq_ignore_ascii_case(&path)
+                            })
+                    {
+                        return Err(conflict(
+                            "指定日期后配对或旁车文件存在同名冲突，请重新扫描并指定日期",
+                        ));
+                    }
+                }
+            }
             for file in &photo.files {
                 if catalog
                     .photos

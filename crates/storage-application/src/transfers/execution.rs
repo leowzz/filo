@@ -298,7 +298,11 @@ impl StorageService {
             hash.update(&buffer[..count]);
             job.bytes_transferred += count as u64;
             if last_report.elapsed() >= Duration::from_millis(150) {
-                self.report(job, observer).await?;
+                if expected_digest.is_none() {
+                    self.report(job, observer).await?;
+                } else {
+                    observer(job.clone());
+                }
                 last_report = Instant::now();
             }
         }
@@ -311,7 +315,11 @@ impl StorageService {
             ));
         }
         job.state = TransferState::Verifying;
-        self.report(job, observer).await?;
+        if expected_digest.is_none() {
+            self.report(job, observer).await?;
+        } else {
+            observer(job.clone());
+        }
         let size = job.bytes_transferred - initial_bytes;
         let target_hash = hash.finalize().to_vec();
         if expected_digest.is_some_and(|expected| {

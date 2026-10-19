@@ -106,6 +106,8 @@ pub struct PhotoFile {
     pub size: u64,
     pub verified: bool,
     pub error: Option<String>,
+    #[serde(default)]
+    pub observed_revision: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

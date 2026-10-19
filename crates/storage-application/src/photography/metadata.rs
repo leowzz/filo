@@ -107,10 +107,11 @@ fn parse(bytes: &[u8]) -> Metadata {
                 continue;
             };
             let value = value.trim_matches('\0').trim();
-            if matches!(tag, 0x9003 | 0x9004) && result.time.is_none() {
-                if chrono::NaiveDateTime::parse_from_str(value, "%Y:%m:%d %H:%M:%S").is_ok() {
-                    result.time = Some(value.to_string());
-                }
+            if matches!(tag, 0x9003 | 0x9004)
+                && result.time.is_none()
+                && chrono::NaiveDateTime::parse_from_str(value, "%Y:%m:%d %H:%M:%S").is_ok()
+            {
+                result.time = Some(value.to_string());
             }
             if tag == 0x0110 && !value.is_empty() {
                 result.camera = Some(value.to_string());

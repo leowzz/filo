@@ -9,6 +9,7 @@ use tauri_plugin_dialog::DialogExt;
 mod credentials;
 mod dropped_files;
 mod errors;
+mod photography;
 mod ssh_hosts;
 mod ssh_keys;
 
@@ -389,6 +390,29 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            photography::review_catalog,
+            photography::review_open,
+            photography::review_sync,
+            photography::review_restore,
+            photography::photo_catalog,
+            photography::photo_paths,
+            photography::photo_has_active_imports,
+            photography::photo_pick_directory,
+            photography::photo_plan,
+            photography::photo_import,
+            photography::photo_cancel_import,
+            photography::photo_rebind_source,
+            photography::photo_exclude,
+            photography::photo_resolve_date,
+            photography::review_mark,
+            photography::review_undo,
+            photography::review_save_position,
+            photography::review_preview,
+            photography::photo_sync,
+            photography::photo_restore,
+            photography::review_prepare_lrc,
+            photography::review_open_raw_directory,
+            photography::review_launch_lrc,
             credentials::get_credential_settings,
             credentials::save_credential_settings,
             credentials::unlock_credentials,

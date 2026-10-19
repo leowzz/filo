@@ -300,7 +300,7 @@ fn invalid() -> StorageError {
     error("无法读取 NEF 内嵌预览，请下载或使用系统应用打开")
 }
 
-pub(super) async fn load(
+pub(crate) async fn load(
     backend: &dyn StorageBackend,
     entry: &StorageEntry,
     thumbnail: bool,
@@ -353,7 +353,7 @@ pub(super) async fn load(
 }
 
 #[cfg(test)]
-pub(super) fn fixture(little: bool, maker_note: bool) -> Vec<u8> {
+pub(crate) fn fixture(little: bool, maker_note: bool) -> Vec<u8> {
     use std::io::Cursor;
     fn jpeg(width: u32, height: u32) -> Vec<u8> {
         let image = image::RgbImage::from_pixel(width, height, image::Rgb([220, 40, 20]));
