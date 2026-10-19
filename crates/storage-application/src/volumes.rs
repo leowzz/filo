@@ -60,7 +60,6 @@ impl StorageService {
         path: PathBuf,
         read_only: bool,
     ) -> StorageResult<StorageVolume> {
-        let _guard = self.mutation_lock.write().await;
         let root = tokio::fs::canonicalize(path)
             .await
             .map_err(|_| StorageError::new(StorageErrorCode::AccessDenied, "无法访问所选目录"))?;
@@ -74,13 +73,19 @@ impl StorageService {
             read_only,
         };
         let backend = OpenDalLocalBackend::new(&probe).await?;
+        // Validate directory access without enumerating/statting every child.
+        // The caller displays the selection before any photo scan is requested.
         backend
-            .list(&StorageLocator {
+            .open_listing(&StorageLocator {
                 volume_id: probe.id,
                 logical_path: String::new(),
                 version_id: None,
             })
             .await?;
+        // Adding a root does not change existing volumes. Keep removals/edits
+        // exclusive, but do not wait for unrelated remote directory reads.
+        let _guard = self.mutation_lock.read().await;
+        let _registration = self.local_registration_lock.lock().await;
         self.repository.add_local(&root, read_only).await
     }
 

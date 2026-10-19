@@ -30,28 +30,35 @@ function OpenReviewDialog({
   const [name, setName] = useState("");
   const [jpg, setJpg] = useState<PhotoDirectory | null>(null);
   const [raw, setRaw] = useState<PhotoDirectory | null>(null);
+  const directory = jpg ?? raw;
+  const [picking, setPicking] = useState<"jpg" | "raw" | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const pick = async (raw: boolean) => {
+  const pick = async (field: "jpg" | "raw") => {
+    setPicking(field);
+    setError("");
     try {
-      const value = await pickPhotoDirectory();
+      const value = await pickPhotoDirectory(
+        false,
+        field === "raw" ? "选择 RAW 照片目录" : "选择照片目录（JPG / NEF）",
+      );
       if (value) {
-        if (raw) setRaw(value);
-        else {
-          setJpg(value);
-          if (!name)
-            setName(value.path.split(/[\\/]/).filter(Boolean).pop() ?? "照片");
-        }
+        if (field === "raw") setRaw(value);
+        else setJpg(value);
+        if (!name.trim())
+          setName(value.path.split(/[\\/]/).filter(Boolean).pop() ?? "照片");
       }
     } catch (error) {
       setError(errorMessage(error));
+    } finally {
+      setPicking(null);
     }
   };
   return (
     <Modal
       title="打开照片目录"
       onClose={onClose}
-      busy={busy}
+      busy={busy || !!picking}
       className="photo-import-dialog"
     >
       <div className="photo-import-fields">
@@ -60,36 +67,49 @@ function OpenReviewDialog({
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            disabled={busy}
+            disabled={busy || !!picking}
           />
         </label>
         <div className="photo-directory-field">
-          <span>照片目录</span>
+          <span>照片目录（JPG / NEF）</span>
           <button
             className="secondary"
-            disabled={busy}
-            onClick={() => void pick(false)}
+            disabled={busy || !!picking}
+            onClick={() => void pick("jpg")}
           >
             <FolderOpen size={16} />
-            <span>{jpg?.path ?? "选择已有照片目录"}</span>
+            <span>
+              {picking === "jpg"
+                ? "正在选择目录…"
+                : (jpg?.path ?? "选择已有照片目录")}
+            </span>
           </button>
         </div>
         <div className="photo-directory-field">
           <span>单独的 RAW 目录（可选）</span>
           <button
             className="secondary"
-            disabled={busy}
-            onClick={() => void pick(true)}
+            disabled={busy || !!picking}
+            onClick={() => void pick("raw")}
           >
             <FolderOpen size={16} />
-            <span>{raw?.path ?? "NEF 与 JPG 分开存放时选择"}</span>
+            <span>
+              {picking === "raw"
+                ? "正在选择目录…"
+                : (raw?.path ?? "NEF 与 JPG 分开存放时选择")}
+            </span>
           </button>
-          {raw && <button onClick={() => setRaw(null)}>清除</button>}
+          {raw && (
+            <button disabled={busy || !!picking} onClick={() => setRaw(null)}>
+              清除
+            </button>
+          )}
         </div>
         <p className="muted">
           直接审阅已有
           JPG/NEF。分别选择两个根目录时，按相同相对路径配对；同一目录可同时包含两种格式。
         </p>
+        {!jpg && raw && <p className="muted">将直接审阅所选 RAW 目录。</p>}
         {error && (
           <p className="form-error" role="alert">
             {error}
@@ -97,18 +117,26 @@ function OpenReviewDialog({
         )}
       </div>
       <div className="modal-actions">
-        <button className="secondary" disabled={busy} onClick={onClose}>
+        <button
+          className="secondary"
+          disabled={busy || !!picking}
+          onClick={onClose}
+        >
           取消
         </button>
         <button
           className="primary"
-          disabled={busy || !jpg || !name.trim()}
+          disabled={busy || !!picking || !directory || !name.trim()}
           onClick={() => {
-            if (!jpg) return;
+            if (!directory) return;
             setBusy(true);
             setError("");
             void reviewApi
-              .openLibrary(name, jpg.locator, raw?.locator ?? null)
+              .openLibrary(
+                name,
+                directory.locator,
+                jpg ? (raw?.locator ?? null) : null,
+              )
               .then((s) => onOpened(s.id))
               .catch((error) => setError(errorMessage(error)))
               .finally(() => setBusy(false));

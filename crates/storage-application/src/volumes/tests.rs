@@ -2,6 +2,55 @@ use super::*;
 use storage_repository::Repository;
 
 #[tokio::test]
+async fn selecting_directory_does_not_wait_for_browsing_or_duplicate_roots() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = tempfile::tempdir().unwrap();
+    let repo = Repository::open(&database.path().join("test.sqlite"))
+        .await
+        .unwrap();
+    let service = StorageService::new(repo);
+    // Directory queries hold this read guard while waiting for a remote server.
+    let _browsing = service.mutation_lock.read().await;
+    let (first, second) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::join!(
+            service.add_selected_directory(directory.path().to_path_buf(), true),
+            service.add_selected_directory(directory.path().to_path_buf(), false),
+        )
+    })
+    .await
+    .expect("selecting a directory must not wait for other directory queries");
+    let first = first.unwrap();
+    let second = second.unwrap();
+    assert_eq!(first.id, second.id);
+    assert_eq!(first.read_only, second.read_only);
+    assert_eq!(service.list_volumes().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn selecting_directory_rejects_files_and_missing_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = tempfile::tempdir().unwrap();
+    let repo = Repository::open(&database.path().join("test.sqlite"))
+        .await
+        .unwrap();
+    let service = StorageService::new(repo);
+    let file = directory.path().join("photo.nef");
+    std::fs::write(&file, b"photo").unwrap();
+    let selected = service
+        .add_selected_directory(directory.path().to_path_buf(), false)
+        .await
+        .unwrap();
+    let canonical = std::fs::canonicalize(directory.path()).unwrap();
+    assert!(matches!(selected.root, VolumeRoot::Local { root_path } if root_path == canonical));
+    assert!(service.add_selected_directory(file, false).await.is_err());
+    assert!(service
+        .add_selected_directory(directory.path().join("missing"), false)
+        .await
+        .is_err());
+    assert_eq!(service.list_volumes().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn removing_location_preserves_files_and_revokes_access() {
     let directory = tempfile::tempdir().unwrap();
     let other = tempfile::tempdir().unwrap();
