@@ -10,20 +10,29 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
   source: `(() => {
     window.isTauri = true;
     window.previewCalls = [];
+    window.thumbnailCalls = [];
+    window.fullPreviewCalls = [];
     const volume = {
       id: 'preview-test', connection_id: 'preview-test', name: 'Preview test',
       read_only: false, root: { type: 'local', root_path: '/preview-test' },
       capabilities: { hierarchy: 'native_directory', rename: 'atomic', create_directory: true,
         delete: true, trash: true, native_open: true, native_copy: true }
     };
+    const volumes = [volume,
+      { ...volume, id: 's3-preview-test', name: 'Remote S3 test',
+        root: { type: 's3', bucket: 'preview-test', prefix: '' } },
+      { ...volume, id: 'remote-preview-test', name: 'Remote SFTP test',
+        root: { type: 'remote', path: '/preview-test' } }
+    ];
     window.__TAURI_INTERNALS__ = { transformCallback: () => 1, unregisterCallback: () => {}, invoke: async (command, args) => {
       if (command === 'recent_backend_errors') return [];
       if (command === 'plugin:event|listen') return 1;
       if (command === 'plugin:event|unlisten') return;
-      if (command === 'list_volumes') return [volume];
+      if (command === 'list_volumes') return volumes;
       if (command === 'list_transfers') return [];
       if (command === 'directory_stamp') return '1';
       if (command === 'preview_entry') {
+        (args.thumbnail ? window.thumbnailCalls : window.fullPreviewCalls).push(args.locator);
         if (!args.thumbnail) window.previewCalls.push(args.locator.logical_path);
         if (args.locator.logical_path === 'photo.jpg') {
           const canvas = document.createElement('canvas');
@@ -44,7 +53,7 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
           { name: 'unknown2.txt', kind: 'file', size: null },
           { name: 'photo.jpg', kind: 'file', size: 1024 }
         ].map(entry => ({ ...entry, modified_at: null, locator: {
-          volume_id: volume.id, logical_path: entry.name, version_id: null
+          volume_id: args.parent.volume_id, logical_path: entry.name, version_id: null
         }})).filter(entry => entry.name.includes(args.options.search));
         return { entries, total: entries.length, next_cursor: null };
       }
@@ -254,7 +263,56 @@ assert.equal(
   "Reopening a fresh image preview reuses memory cache without another IPC request",
 );
 await close();
+for (const [name, id] of [
+  ["Remote S3 test", "s3-preview-test"],
+  ["Remote SFTP test", "remote-preview-test"],
+]) {
+  await page.click(`.volume-nav button[title="${name}"]`);
+  await page.waitForFunction(
+    (name) =>
+      document.querySelector(".pathbar")?.textContent.includes(name) &&
+      document.querySelector('[data-entry-path="photo.jpg"]'),
+    name,
+  );
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
+  assert.equal(
+    await page.evaluate(
+      (id) =>
+        window.thumbnailCalls.filter((call) => call.volume_id === id).length,
+      id,
+    ),
+    0,
+    "Remote directory listings must never request automatic thumbnails",
+  );
+  assert.equal(
+    await page.evaluate(
+      () => document.querySelectorAll(".file-thumbnail").length,
+    ),
+    0,
+  );
+  await select("photo.jpg");
+  await page.keyboard.press("Space");
+  await page.waitForFunction(() => {
+    const image = document.querySelector(".image-preview");
+    return image?.complete && image.naturalWidth === 40;
+  });
+  assert.equal(
+    await page.evaluate(
+      (id) =>
+        window.fullPreviewCalls.filter((call) => call.volume_id === id).length,
+      id,
+    ),
+    1,
+    "Remote image contents load only when explicitly previewed",
+  );
+  await close();
+}
 console.log(
-  "PASS: single/multi space preview, space closes from navigation controls and dialog body, repeats are ignored, preserved selection, JPEG rendering and repeated-open cache reuse, count and total size, no content fetch for summary, toolbar/menu, unknown/zero sizes, mixed selection, input/control/empty-selection guards, 1200px/960px layout",
+  "PASS: single/multi space preview, space closes from navigation controls and dialog body, repeats are ignored, preserved selection, JPEG rendering and repeated-open cache reuse, count and total size, no content fetch for summary, toolbar/menu, unknown/zero sizes, mixed selection, input/control/empty-selection guards, local thumbnails, no automatic S3/SFTP thumbnails, explicit remote previews, 1200px/960px layout",
 );
 if (!globalThis.filoKeepBrowser) await task.finish({ keep: [] });

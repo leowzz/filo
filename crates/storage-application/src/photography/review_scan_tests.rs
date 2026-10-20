@@ -5,6 +5,8 @@ use storage_provider_api::StagedWrite;
 struct ProbeBackend {
     inner: OpenDalLocalBackend,
     primary_reads: AtomicUsize,
+    full_reads: AtomicUsize,
+    stats: AtomicUsize,
     block_listing: AtomicBool,
     listing_started: tokio::sync::Notify,
     block_primary: AtomicBool,
@@ -47,6 +49,7 @@ impl StorageBackend for ProbeBackend {
         self.inner.list(parent).await
     }
     async fn stat(&self, path: &StorageLocator) -> StorageResult<StorageEntry> {
+        self.stats.fetch_add(1, Ordering::SeqCst);
         self.inner.stat(path).await
     }
     async fn create_dir(&self, path: &StorageLocator) -> StorageResult<()> {
@@ -59,6 +62,9 @@ impl StorageBackend for ProbeBackend {
         self.inner.delete(path).await
     }
     async fn open_read(&self, path: &StorageLocator) -> StorageResult<StorageReader> {
+        if !path.logical_path.ends_with(".json") {
+            self.full_reads.fetch_add(1, Ordering::SeqCst);
+        }
         self.inner.open_read(path).await
     }
     async fn read_range(
@@ -93,6 +99,8 @@ async fn setup(path: &std::path::Path) -> (StorageService, StorageLocator, Arc<P
     let probe = Arc::new(ProbeBackend {
         inner: OpenDalLocalBackend::new(&volume).await.unwrap(),
         primary_reads: AtomicUsize::new(0),
+        full_reads: AtomicUsize::new(0),
+        stats: AtomicUsize::new(0),
         block_listing: AtomicBool::new(false),
         listing_started: tokio::sync::Notify::new(),
         block_primary: AtomicBool::new(false),
@@ -123,6 +131,70 @@ fn input(root: StorageLocator) -> PhotoReviewInput {
         directory: true,
         raw_only: None,
     }
+}
+
+#[tokio::test]
+async fn remote_thumbnails_do_not_read_sources_but_explicit_previews_still_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let (service, root, probe) = setup(dir.path()).await;
+    image::RgbImage::new(32, 16)
+        .save(dir.path().join("photos/image.JPG"))
+        .unwrap();
+    std::fs::write(
+        dir.path().join("photos/raw.NEF"),
+        crate::browsing::nef::fixture(true, false),
+    )
+    .unwrap();
+    let session = service
+        .photo_open_directory_review(root.clone())
+        .await
+        .unwrap();
+    let before = (
+        probe.stats.load(Ordering::SeqCst),
+        probe.full_reads.load(Ordering::SeqCst),
+        probe.primary_reads.load(Ordering::SeqCst),
+    );
+    for name in ["image.JPG", "raw.NEF"] {
+        let locator = StorageLocator {
+            logical_path: name.into(),
+            ..root.clone()
+        };
+        let error = service.preview_entry(locator, true).await.err().unwrap();
+        assert_eq!(error.code, StorageErrorCode::Unsupported);
+    }
+    for &id in &session.photo_ids {
+        let error = service
+            .photo_preview(id, false, true, false)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, StorageErrorCode::Unsupported);
+    }
+    assert_eq!(
+        (
+            probe.stats.load(Ordering::SeqCst),
+            probe.full_reads.load(Ordering::SeqCst),
+            probe.primary_reads.load(Ordering::SeqCst),
+        ),
+        before,
+        "thumbnail requests must not stat, download, or range-read remote files"
+    );
+    for name in ["image.JPG", "raw.NEF"] {
+        let locator = StorageLocator {
+            logical_path: name.into(),
+            ..root.clone()
+        };
+        let preview = service.preview_entry(locator, false).await.unwrap();
+        assert_eq!(preview.kind, "image");
+    }
+    for &id in &session.photo_ids {
+        let preview = service
+            .photo_preview(id, false, false, false)
+            .await
+            .unwrap();
+        assert_eq!(preview.mime, "image/jpeg");
+    }
+    assert!(probe.full_reads.load(Ordering::SeqCst) > before.1);
+    assert!(probe.primary_reads.load(Ordering::SeqCst) > before.2);
 }
 
 #[tokio::test]

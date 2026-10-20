@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { Thumbnail } from "./PreviewDialog";
 import { errorMessage } from "./api";
-import { formatDate, formatSize, typeName } from "./components";
+import { EntryIcon, formatDate, formatSize, typeName } from "./components";
 import { useBrowser } from "./store";
 import { type Entry, type Volume } from "./types";
 import { useFileSelection } from "./useFileSelection";
@@ -303,7 +303,11 @@ export function FileBrowser({
                     >
                       <td>
                         <span className="file-name">
-                          <Thumbnail entry={entry} />
+                          {volume.root.type === "local" ? (
+                            <Thumbnail entry={entry} />
+                          ) : (
+                            <EntryIcon entry={entry} />
+                          )}
                           <span title={entry.name}>{entry.name}</span>
                         </span>
                       </td>

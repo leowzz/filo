@@ -131,6 +131,9 @@ impl StorageService {
         };
         let _guard = self.mutation_lock.read().await;
         let backend = self.backend(locator.volume_id).await?;
+        if thumbnail && backend.is_remote() {
+            return Err(error("远程文件不自动生成缩略图，请打开预览"));
+        }
         let entry = backend.stat(&locator).await?;
         if entry.kind != StorageEntryKind::File {
             return Err(error("请选择普通文件进行预览"));

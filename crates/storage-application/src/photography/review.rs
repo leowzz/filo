@@ -186,6 +186,12 @@ impl StorageService {
         let _mutation = self.mutation_lock.read().await;
         let target = file_target(archive, file)?;
         let backend = self.backend(target.volume_id).await?;
+        if thumbnail && backend.is_remote() {
+            return Err(StorageError::new(
+                StorageErrorCode::Unsupported,
+                "远程文件不自动生成缩略图，请打开预览",
+            ));
+        }
         let entry = backend.stat(&target).await?;
         let variant = format!("photo:{original}:{thumbnail}");
         let cache_key = crate::preview_cache::key(&entry, &variant);

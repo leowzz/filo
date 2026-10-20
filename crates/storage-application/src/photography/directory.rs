@@ -285,8 +285,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(session.photo_ids.len(), 1);
-        let preview = review
+        let error = review
             .photo_preview(session.photo_ids[0], false, true, false)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, StorageErrorCode::Unsupported);
+        let preview = review
+            .photo_preview(session.photo_ids[0], false, false, false)
             .await
             .unwrap();
         assert_eq!(preview.mime, "image/jpeg");
