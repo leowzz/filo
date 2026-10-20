@@ -55,7 +55,9 @@ export function updateTransfer(current: TransferJob[] = [], job: TransferJob) {
   const previous = current[index];
   if (
     previous.updated_at > job.updated_at ||
-    (!activeTransfer(previous) && activeTransfer(job))
+    (!activeTransfer(previous) &&
+      activeTransfer(job) &&
+      previous.updated_at === job.updated_at)
   )
     return current;
   return current.map((item) => (item.id === job.id ? job : item));

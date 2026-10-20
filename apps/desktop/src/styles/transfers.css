@@ -103,13 +103,37 @@
 .transfer-state.failed {
   color: #bc473d;
 }
-.transfer-path {
+.transfer-list .transfer-heading strong {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.transfer-item-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: 26px;
+  color: #737373;
+  font-size: 12px;
+}
+.transfer-route {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.transfer-route span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
-  color: #737373;
-  margin: 2px 0;
+}
+.transfer-size {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.transfer-retry-name {
+  overflow-wrap: anywhere;
 }
 .transfer-item progress {
   display: block;
@@ -328,6 +352,10 @@
 }
 .transfer-item-actions button:disabled {
   opacity: 0.5;
+}
+.transfer-list .transfer-item-actions .icon-button {
+  width: 24px;
+  height: 24px;
 }
 
 .transfer-speed {

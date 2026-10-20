@@ -792,6 +792,19 @@ export default function App() {
     pasteRetry.signature === clipboardSignature(state.clipboard) &&
     sameLocator(pasteRetry.destination, parent);
   const openVolume = (item: Volume) => navigate(item.id, "");
+  async function openTransferDirectory(job: TransferJob) {
+    const target = volumes.find(
+      (item) => item.id === job.destination.volume_id,
+    );
+    if (target && target.root.type !== "local") {
+      navigate(
+        target.id,
+        job.destination.logical_path.split("/").slice(0, -1).join("/"),
+      );
+    } else {
+      return api.openTransferFile(job.id, true);
+    }
+  }
   async function openDirectoryReview(root: Locator) {
     if (reviewPending) return;
     const request = ++reviewRequest.current;
@@ -897,19 +910,7 @@ export default function App() {
             void client.invalidateQueries({ queryKey: ["preview"] });
           }}
           isFetching={entriesQuery.isFetching}
-          onOpenTransferDirectory={async (job) => {
-            const target = volumes.find(
-              (item) => item.id === job.destination.volume_id,
-            );
-            if (target && target.root.type !== "local") {
-              navigate(
-                target.id,
-                job.destination.logical_path.split("/").slice(0, -1).join("/"),
-              );
-            } else {
-              return api.openTransferFile(job.id, true);
-            }
-          }}
+          onOpenTransferDirectory={openTransferDirectory}
           transfers={transfersQuery.data ?? []}
           uploadIds={uploadIds}
           recentTransfer={recentTransfer}
@@ -1053,7 +1054,12 @@ export default function App() {
             <PhotoImportPage volumes={volumes} />
           </div>
         )}
-        {state.page === "transfers" && <TransfersPage volumes={volumes} />}
+        {state.page === "transfers" && (
+          <TransfersPage
+            volumes={volumes}
+            onOpenDirectory={openTransferDirectory}
+          />
+        )}
         {state.page === "settings" && <SettingsPage updater={updater} />}
       </main>
 

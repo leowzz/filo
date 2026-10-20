@@ -162,6 +162,19 @@ export const api = {
   transfers: () =>
     desktop ? invoke<TransferJob[]>("list_transfers") : Promise.resolve([]),
   cancelTransfer: (jobId: string) => invoke<void>("cancel_transfer", { jobId }),
+  retryTransfer: (
+    jobId: string,
+    conflictPolicy: ConflictPolicy,
+    onProgress: (job: TransferJob) => void,
+  ) => {
+    const channel = new Channel<TransferJob>();
+    channel.onmessage = onProgress;
+    return invoke<TransferJob>("retry_transfer", {
+      jobId,
+      conflictPolicy,
+      onProgress: channel,
+    });
+  },
   startTransfer: (
     kind: TransferKind,
     source: Locator,

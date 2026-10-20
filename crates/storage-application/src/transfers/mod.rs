@@ -8,6 +8,7 @@ use uuid::Uuid;
 pub type TransferObserver = Arc<dyn Fn(TransferJob) + Send + Sync>;
 mod conflicts;
 mod execution;
+mod retry;
 pub(crate) mod scheduler;
 
 #[cfg(test)]
@@ -152,7 +153,7 @@ impl StorageService {
         let queued = job.clone();
         tokio::spawn(async move {
             service
-                .run_transfer_with_options(queued, token, observer, policy, upload_conflicts)
+                .run_transfer_with_options(queued, token, observer, policy, upload_conflicts, false)
                 .await;
         });
         Ok(job)
@@ -188,7 +189,7 @@ impl StorageService {
         observer: TransferObserver,
         policy: ConflictPolicy,
     ) {
-        self.run_transfer_with_options(job, token, observer, policy, None)
+        self.run_transfer_with_options(job, token, observer, policy, None, false)
             .await;
     }
 
@@ -199,6 +200,7 @@ impl StorageService {
         observer: TransferObserver,
         policy: ConflictPolicy,
         upload_conflicts: Option<std::collections::HashSet<String>>,
+        resume: bool,
     ) {
         // Shared mutation access allows independent transfers; ordinary mutations
         // retain exclusive access. Cancellation only interrupts preparation here:
@@ -206,6 +208,11 @@ impl StorageService {
         let result = crate::catch_panic(async {
             let prepare = async {
                 let guard = self.mutation_lock.read().await;
+                if resume {
+                    self.restore_transfer_local_backend(&job.source).await?;
+                    self.restore_transfer_local_backend(&job.destination)
+                        .await?;
+                }
                 let source = self.backend(job.source.volume_id).await?;
                 let destination = self.backend(job.destination.volume_id).await?;
                 // Auto-renaming reserves the parent, including all candidate names.
@@ -244,6 +251,7 @@ impl StorageService {
                         &observer,
                         policy,
                         upload_conflicts.as_ref(),
+                        resume,
                     )
                     .await
                 }

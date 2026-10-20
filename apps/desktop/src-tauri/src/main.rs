@@ -230,6 +230,22 @@ async fn cancel_transfer(
 ) -> StorageResult<()> {
     service.cancel_transfer(job_id).await
 }
+async fn retry_transfer(
+    service: State<'_, StorageService>,
+    job_id: uuid::Uuid,
+    conflict_policy: Option<ConflictPolicy>,
+    on_progress: tauri::ipc::Channel<TransferJob>,
+) -> StorageResult<TransferJob> {
+    service
+        .retry_transfer(
+            job_id,
+            conflict_policy.unwrap_or_default(),
+            std::sync::Arc::new(move |job| {
+                let _ = on_progress.send(job);
+            }),
+        )
+        .await
+}
 async fn remove_local_storage(
     service: State<'_, StorageService>,
     volume_id: uuid::Uuid,
@@ -457,6 +473,7 @@ fn main() {
             start_transfer,
             list_transfers,
             cancel_transfer,
+            retry_transfer,
             list_entries,
             list_entries_page,
             stat_entry,

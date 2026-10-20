@@ -98,6 +98,33 @@ fn configuration(message: &str) -> StorageError {
     StorageError::new(StorageErrorCode::InvalidConfiguration, message)
 }
 impl StorageService {
+    /// Recreate only the path retained by a native transfer, without registering
+    /// its parent as a generally accessible storage location.
+    pub(super) async fn restore_transfer_local_backend(
+        &self,
+        locator: &StorageLocator,
+    ) -> StorageResult<()> {
+        let Some(volume) = self
+            .repository
+            .transfer_local_volume(locator.volume_id)
+            .await?
+        else {
+            return Ok(());
+        };
+        let inner = OpenDalLocalBackend::new(&volume).await?;
+        let directory =
+            volume.read_only && inner.stat(locator).await?.kind == StorageEntryKind::Directory;
+        self.temporary_backends.lock().await.insert(
+            volume.id,
+            Arc::new(SelectedPathBackend {
+                inner,
+                path: normalize_path(&locator.logical_path)?,
+                directory,
+            }),
+        );
+        Ok(())
+    }
+
     pub(super) async fn connection(&self, id: Uuid) -> StorageResult<StorageConnection> {
         self.repository
             .list_connections()

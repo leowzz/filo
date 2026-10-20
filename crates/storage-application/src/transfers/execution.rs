@@ -22,6 +22,7 @@ impl StorageService {
         observer: &TransferObserver,
         policy: ConflictPolicy,
         upload_conflicts: Option<&std::collections::HashSet<String>>,
+        resume: bool,
     ) -> StorageResult<()> {
         if let Some(conflicts) = upload_conflicts {
             return self
@@ -82,13 +83,14 @@ impl StorageService {
                     source.as_ref(),
                     destination.as_ref(),
                     policy,
+                    resume,
                 )
                 .await;
         }
         job.bytes_total = before.size;
         job.state = TransferState::Running;
         self.report(job, observer).await?;
-        let strategy = if existing.is_some() && policy == ConflictPolicy::Overwrite {
+        let strategy = if existing.is_some() && (policy == ConflictPolicy::Overwrite || resume) {
             OperationPlan::StreamCopy {
                 delete_source: job.kind == TransferKind::Move,
             }
@@ -113,6 +115,7 @@ impl StorageService {
                     &before,
                     &job.destination.clone(),
                     policy,
+                    resume,
                 )
                 .await?;
                 if delete_source {
@@ -215,6 +218,7 @@ impl StorageService {
                     entry,
                     &target,
                     choice,
+                    false,
                 )
                 .await
                 .map_err(|error| {
@@ -242,7 +246,33 @@ impl StorageService {
         before: &StorageEntry,
         target: &StorageLocator,
         policy: ConflictPolicy,
+        resume: bool,
     ) -> StorageResult<(u64, Vec<u8>)> {
+        if resume {
+            if let Some(existing) = super::conflicts::existing(destination, target).await? {
+                if existing.kind == StorageEntryKind::File && before.size == existing.size {
+                    job.state = TransferState::Verifying;
+                    self.report(job, observer).await?;
+                    let source_hash =
+                        digest(source.open_read(&before.locator).await?, token).await?;
+                    let target_hash = digest(destination.open_read(target).await?, token).await?;
+                    unchanged(before, &source.stat(&before.locator).await?)?;
+                    tree::unchanged(&existing, &destination.stat(target).await?)?;
+                    if source_hash == target_hash {
+                        tree::check_cancel(token)?;
+                        job.bytes_transferred += source_hash.0;
+                        self.report(job, observer).await?;
+                        return Ok(source_hash);
+                    }
+                }
+                if policy != ConflictPolicy::Overwrite {
+                    return Err(StorageError::new(
+                        StorageErrorCode::AlreadyExists,
+                        "目标已有不同内容的同名项目，请选择覆盖或自动改名后重试",
+                    ));
+                }
+            }
+        }
         self.copy_file_verified(
             job,
             token,
@@ -367,6 +397,7 @@ impl StorageService {
         source: &dyn StorageBackend,
         destination: &dyn StorageBackend,
         policy: ConflictPolicy,
+        resume: bool,
     ) -> StorageResult<()> {
         job.state = TransferState::Running;
         job.bytes_total = None;
@@ -377,7 +408,12 @@ impl StorageService {
         self.report(job, observer).await?;
         // Reserve a new root, or merge an existing folder when explicitly requested.
         tree::check_cancel(token)?;
-        super::conflicts::directory(destination, &job.destination, policy).await?;
+        let directory_policy = if resume {
+            ConflictPolicy::Overwrite
+        } else {
+            policy
+        };
+        super::conflicts::directory(destination, &job.destination, directory_policy).await?;
         let result = async {
             let mut verified = Vec::new();
             for entry in entries.iter().skip(1) {
@@ -388,7 +424,7 @@ impl StorageService {
                     ..job.destination.clone()
                 };
                 if tree::directory(entry) {
-                    super::conflicts::directory(destination, &target, policy).await?;
+                    super::conflicts::directory(destination, &target, directory_policy).await?;
                 } else {
                     let hash = self
                         .copy_file(
@@ -400,6 +436,7 @@ impl StorageService {
                             entry,
                             &target,
                             policy,
+                            resume,
                         )
                         .await?;
                     verified.push((target, hash));

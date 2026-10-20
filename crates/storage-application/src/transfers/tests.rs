@@ -738,6 +738,8 @@ async fn reservations_recognize_physical_aliases() {
         .await;
 }
 
+include!("retry_tests.rs");
+
 struct Fixture {
     service: StorageService,
     source: tempfile::TempDir,
