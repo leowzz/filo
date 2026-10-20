@@ -17,7 +17,6 @@ async fn opening_an_existing_review_preserves_xmp_scores_until_an_explicit_mark(
     let photo = review.photo_catalog().await.unwrap().photos.remove(0);
     assert_eq!(photo.rating, 4);
     assert_eq!(photo.flag, PhotoFlag::Pick);
-    assert!(!photo.reviewed);
     assert!(review
         .photo_prepare_lrc(session.id)
         .await
@@ -195,7 +194,6 @@ async fn review_opens_existing_files_without_import_and_uses_an_independent_jour
     assert_eq!(reopened.photo_ids, session.photo_ids);
     let photo = review.photo_undo(session.id).await.unwrap().unwrap();
     assert_eq!(photo.rating, 0);
-    assert!(!photo.reviewed);
     assert_eq!(std::fs::read_dir(path.join("jpg")).unwrap().count(), 1);
 }
 
@@ -223,6 +221,7 @@ async fn review_covers_over_200_photos_and_portable_sync_restores_on_a_second_co
             session.id,
             PhotoReviewPosition {
                 current: Some(last),
+                sort: PhotoSort::NameAsc,
                 filter: "pick".into(),
                 minimum_rating: 3,
                 auto_advance: true,
@@ -367,7 +366,6 @@ async fn local_save_failure_does_not_commit_mark_or_undo_history() {
         .is_err());
     let catalog = review.photo_catalog().await.unwrap();
     assert_eq!(catalog.photos[0].rating, 0);
-    assert!(!catalog.photos[0].reviewed);
     assert!(catalog.sessions[0].undo.is_empty());
     sqlx::query("DROP TRIGGER fail_photo_save")
         .execute(&mut connection)
@@ -473,6 +471,7 @@ async fn directory_review_saves_beside_photos_and_restores_without_local_history
             session.id,
             PhotoReviewPosition {
                 current: Some(id),
+                sort: PhotoSort::NameDesc,
                 filter: "pick".into(),
                 minimum_rating: 4,
                 auto_advance: true,
@@ -484,9 +483,13 @@ async fn directory_review_saves_beside_photos_and_restores_without_local_history
     let progress = folder.join(".filo/review.json");
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&progress).unwrap()).unwrap();
-    assert_eq!(manifest["photos"][0]["rating"], 4);
-    assert_eq!(manifest["session"]["position"]["current"], id.to_string());
-    assert!(manifest["session"]["directory"].is_null());
+    assert_eq!(
+        manifest,
+        serde_json::json!({"sort":"name_desc","current":"one.jpg"})
+    );
+    let mark = xmp::read_mark(&std::fs::read(folder.join("one.xmp")).unwrap()).unwrap();
+    assert_eq!(mark.rating, 4);
+    assert_eq!(mark.flag, PhotoFlag::Pick);
     assert!(!dir.path().join("jpg/.filo").exists());
     assert!(service.photo_catalog().await.unwrap().sessions.is_empty());
 
@@ -509,18 +512,28 @@ async fn directory_review_saves_beside_photos_and_restores_without_local_history
         .photo_open_directory_review(root.clone())
         .await
         .unwrap();
-    assert_eq!(restored.id, session.id);
-    assert_eq!(restored.position.current, Some(id));
-    assert_eq!(restored.position.minimum_rating, 4);
-    assert!(restored.position.auto_advance);
+    assert_ne!(restored.id, session.id);
+    let restored_id = restored.position.current.unwrap();
+    assert!(matches!(restored.position.sort, PhotoSort::NameDesc));
+    assert_eq!(restored.position.minimum_rating, 0);
+    assert!(!restored.position.auto_advance);
     let catalog = other.photo_catalog().await.unwrap();
     assert_eq!(
-        catalog.photos.iter().find(|p| p.id == id).unwrap().rating,
+        catalog
+            .photos
+            .iter()
+            .find(|p| p.id == restored_id)
+            .unwrap()
+            .rating,
         4
     );
-    other.photo_undo(restored.id).await.unwrap();
+    assert!(other.photo_undo(restored.id).await.unwrap().is_none());
+    other
+        .photo_mark(restored.id, restored_id, 0, PhotoFlag::None)
+        .await
+        .unwrap();
     let again = other.photo_open_directory_review(root).await.unwrap();
-    assert_eq!(again.id, session.id);
+    assert_eq!(again.id, restored.id);
     assert_eq!(other.photo_catalog().await.unwrap().sessions.len(), 1);
     assert_eq!(
         other
@@ -529,7 +542,7 @@ async fn directory_review_saves_beside_photos_and_restores_without_local_history
             .unwrap()
             .photos
             .iter()
-            .find(|p| p.id == id)
+            .find(|p| p.id == restored_id)
             .unwrap()
             .rating,
         0
@@ -550,8 +563,8 @@ async fn directory_review_preserves_external_changes_and_reports_failed_saves() 
     let target = dir.path().join("jpg/.filo/review.json");
     let mut external: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
-    external["session"]["revision"] = serde_json::json!(99);
-    external["photos"][0]["rating"] = serde_json::json!(5);
+    external["sort"] = serde_json::json!("name_desc");
+    external["current"] = serde_json::json!("one.jpg");
     let bytes = serde_json::to_vec(&external).unwrap();
     std::fs::write(&target, &bytes).unwrap();
     assert_eq!(
@@ -564,11 +577,34 @@ async fn directory_review_preserves_external_changes_and_reports_failed_saves() 
     );
     assert_eq!(std::fs::read(&target).unwrap(), bytes);
     assert_eq!(review.photo_catalog().await.unwrap().photos[0].rating, 0);
+    assert!(!dir.path().join("jpg/one.xmp").exists());
     let resumed = review
         .photo_open_directory_review(input.jpg.clone())
         .await
         .unwrap();
-    assert_eq!(review.photo_catalog().await.unwrap().photos[0].rating, 5);
+    review
+        .photo_mark(resumed.id, id, 5, PhotoFlag::Pick)
+        .await
+        .unwrap();
+    let xmp_path = dir.path().join("jpg/one.xmp");
+    let external_xmp = String::from_utf8(std::fs::read(&xmp_path).unwrap())
+        .unwrap()
+        .replace("<xmp:Rating>5</xmp:Rating>", "<xmp:Rating>3</xmp:Rating>");
+    std::fs::write(&xmp_path, &external_xmp).unwrap();
+    assert_eq!(
+        review
+            .photo_mark(resumed.id, id, 1, PhotoFlag::Reject)
+            .await
+            .unwrap_err()
+            .code,
+        StorageErrorCode::Conflict
+    );
+    assert_eq!(std::fs::read(&xmp_path).unwrap(), external_xmp.as_bytes());
+    review
+        .photo_open_directory_review(input.jpg.clone())
+        .await
+        .unwrap();
+    assert_eq!(review.photo_catalog().await.unwrap().photos[0].rating, 3);
     std::fs::rename(
         dir.path().join("jpg/.filo"),
         dir.path().join("jpg/saved-progress"),
@@ -576,10 +612,10 @@ async fn directory_review_preserves_external_changes_and_reports_failed_saves() 
     .unwrap();
     std::fs::write(dir.path().join("jpg/.filo"), b"occupied").unwrap();
     assert!(review
-        .photo_mark(resumed.id, id, 1, PhotoFlag::Reject)
+        .photo_save_position(resumed.id, PhotoReviewPosition::default())
         .await
         .is_err());
-    assert_eq!(review.photo_catalog().await.unwrap().photos[0].rating, 5);
+    assert_eq!(review.photo_catalog().await.unwrap().photos[0].rating, 3);
     let readonly = service
         .add_selected_directory(dir.path().join("card"), true)
         .await
@@ -633,6 +669,11 @@ async fn directory_review_reconciles_new_photos_and_isolates_copied_folders() {
         dir.path().join("raw/.filo/review.json"),
     )
     .unwrap();
+    std::fs::copy(
+        dir.path().join("jpg/one.xmp"),
+        dir.path().join("raw/one.xmp"),
+    )
+    .unwrap();
     // Copies with preserved file metadata keep their marks but get independent IDs.
     let modified = std::fs::File::open(dir.path().join("jpg/one.jpg"))
         .unwrap()
@@ -669,6 +710,257 @@ async fn directory_review_reconciles_new_photos_and_isolates_copied_folders() {
         3
     );
 }
+async fn legacy_directory_review(path: &Path) -> (StorageService, PhotoPlanInput, Vec<u8>) {
+    let (service, input) = setup(path).await;
+    jpeg(&path.join("jpg/one.jpg"));
+    let xmp = br#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:xmpDM="http://ns.adobe.com/xmp/1.0/DynamicMedia/" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" rdf:about="" xmp:Rating="2" xmpDM:pick="0" crs:Exposure2012="+0.5"/></rdf:RDF></x:xmpmeta>"#;
+    std::fs::write(path.join("jpg/one.xmp"), xmp).unwrap();
+    let review = service.photo_review_workspace();
+    let mut session = review
+        .photo_open_directory_review(input.jpg.clone())
+        .await
+        .unwrap();
+    let mut photos = review.photo_catalog().await.unwrap().photos;
+    session.position.current = Some(photos[0].id);
+    session.position.sort = PhotoSort::NameDesc;
+    photos[0].rating = 4;
+    photos[0].flag = PhotoFlag::Pick;
+    photos[0].revision = 1;
+    let mut legacy = serde_json::to_value(sync::Manifest {
+        schema: 1,
+        session,
+        photos,
+    })
+    .unwrap();
+    legacy["photos"][0]["reviewed"] = serde_json::json!(true);
+    let bytes = serde_json::to_vec(&legacy).unwrap();
+    std::fs::write(path.join("jpg/.filo/review.json"), &bytes).unwrap();
+    (review, input, bytes)
+}
+
+#[tokio::test]
+async fn directory_review_migrates_legacy_marks_to_xmp_before_compacting_progress() {
+    let dir = tempfile::tempdir().unwrap();
+    let (review, input, _) = legacy_directory_review(dir.path()).await;
+    let session = review.photo_open_directory_review(input.jpg).await.unwrap();
+    let bytes = std::fs::read(dir.path().join("jpg/one.xmp")).unwrap();
+    let mark = xmp::read_mark(&bytes).unwrap();
+    assert_eq!(mark.rating, 4);
+    assert_eq!(mark.flag, PhotoFlag::Pick);
+    assert!(String::from_utf8(bytes)
+        .unwrap()
+        .contains("crs:Exposure2012=\"+0.5\""));
+    let progress: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("jpg/.filo/review.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        progress,
+        serde_json::json!({"sort":"name_desc","current":"one.jpg"})
+    );
+    let catalog = review.photo_catalog().await.unwrap();
+    assert_eq!(session.position.current, Some(catalog.photos[0].id));
+    assert!(serde_json::to_value(&catalog.photos[0])
+        .unwrap()
+        .get("reviewed")
+        .is_none());
+    assert!(session.undo.is_empty());
+}
+
+#[tokio::test]
+async fn directory_review_preserves_legacy_progress_when_xmp_migration_conflicts() {
+    let dir = tempfile::tempdir().unwrap();
+    let (review, input, legacy) = legacy_directory_review(dir.path()).await;
+    let target = dir.path().join("jpg/one.xmp");
+    let external = String::from_utf8(std::fs::read(&target).unwrap())
+        .unwrap()
+        .replace("xmp:Rating=\"2\"", "xmp:Rating=\"5\"");
+    std::fs::write(&target, &external).unwrap();
+    assert_eq!(
+        review
+            .photo_open_directory_review(input.jpg)
+            .await
+            .unwrap_err()
+            .code,
+        StorageErrorCode::Conflict
+    );
+    assert_eq!(std::fs::read(&target).unwrap(), external.as_bytes());
+    assert_eq!(
+        std::fs::read(dir.path().join("jpg/.filo/review.json")).unwrap(),
+        legacy
+    );
+}
+
+#[tokio::test]
+async fn directory_review_retries_a_legacy_migration_after_xmp_was_already_committed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (review, input, _) = legacy_directory_review(dir.path()).await;
+    let target = dir.path().join("jpg/one.xmp");
+    let committed = String::from_utf8(std::fs::read(&target).unwrap())
+        .unwrap()
+        .replace("xmp:Rating=\"2\"", "xmp:Rating=\"4\"")
+        .replace("xmpDM:pick=\"0\"", "xmpDM:pick=\"1\"");
+    std::fs::write(&target, &committed).unwrap();
+    review.photo_open_directory_review(input.jpg).await.unwrap();
+    assert_eq!(std::fs::read(&target).unwrap(), committed.as_bytes());
+    let progress: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("jpg/.filo/review.json")).unwrap())
+            .unwrap();
+    assert_eq!(progress.as_object().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn directory_review_skips_missing_photos_during_legacy_migration() {
+    let dir = tempfile::tempdir().unwrap();
+    let (review, input, _) = legacy_directory_review(dir.path()).await;
+    std::fs::remove_file(dir.path().join("jpg/one.jpg")).unwrap();
+    jpeg(&dir.path().join("jpg/two.jpg"));
+    let original = std::fs::read(dir.path().join("jpg/one.xmp")).unwrap();
+    let session = review.photo_open_directory_review(input.jpg).await.unwrap();
+    assert_eq!(session.photo_ids.len(), 1);
+    assert_eq!(
+        std::fs::read(dir.path().join("jpg/one.xmp")).unwrap(),
+        original
+    );
+    assert_eq!(
+        review.photo_catalog().await.unwrap().photos[0].original_path,
+        "two.jpg"
+    );
+}
+
+#[tokio::test]
+async fn directory_review_undo_writes_xmp_and_keeps_progress_independent_of_marks() {
+    let dir = tempfile::tempdir().unwrap();
+    let (service, input) = setup(dir.path()).await;
+    jpeg(&dir.path().join("jpg/one.jpg"));
+    let review = service.photo_review_workspace();
+    let session = review.photo_open_directory_review(input.jpg).await.unwrap();
+    let id = session.photo_ids[0];
+    review
+        .photo_mark(session.id, id, 5, PhotoFlag::Reject)
+        .await
+        .unwrap();
+    let progress_path = dir.path().join("jpg/.filo/review.json");
+    let progress = std::fs::read(&progress_path).unwrap();
+    let mark = xmp::read_mark(&std::fs::read(dir.path().join("jpg/one.xmp")).unwrap()).unwrap();
+    assert_eq!(mark.rating, 5);
+    assert_eq!(mark.flag, PhotoFlag::Reject);
+    review.photo_undo(session.id).await.unwrap().unwrap();
+    let mark = xmp::read_mark(&std::fs::read(dir.path().join("jpg/one.xmp")).unwrap()).unwrap();
+    assert_eq!(mark.rating, 0);
+    assert_eq!(mark.flag, PhotoFlag::None);
+    assert_eq!(std::fs::read(progress_path).unwrap(), progress);
+}
+
+#[tokio::test]
+async fn directory_review_leaves_other_legacy_folders_untouched_and_can_continue_cached_reviews() {
+    let dir = tempfile::tempdir().unwrap();
+    let (service, input) = setup(dir.path()).await;
+    std::fs::create_dir_all(dir.path().join("jpg/a")).unwrap();
+    std::fs::create_dir_all(dir.path().join("jpg/b")).unwrap();
+    jpeg(&dir.path().join("jpg/a/one.jpg"));
+    jpeg(&dir.path().join("jpg/b/one.jpg"));
+    let review = service.photo_review_workspace();
+    let a = review
+        .photo_open_directory_review(child(&input.jpg, "a").unwrap())
+        .await
+        .unwrap();
+    let b = review
+        .photo_open_directory_review(child(&input.jpg, "b").unwrap())
+        .await
+        .unwrap();
+    let (revision, mut catalog) = review.load_photos().await.unwrap();
+    let mut portable = b.clone();
+    portable.directory = None;
+    portable.nas_hash = None;
+    portable.revision += 1;
+    portable.synced_revision = portable.revision;
+    let mut photos: Vec<_> = catalog
+        .photos
+        .iter()
+        .filter(|p| p.archive_id == b.archive_id)
+        .cloned()
+        .collect();
+    photos[0].rating = 3;
+    photos[0].flag = PhotoFlag::Pick;
+    photos[0].revision = 1;
+    *catalog
+        .photos
+        .iter_mut()
+        .find(|p| p.id == photos[0].id)
+        .unwrap() = photos[0].clone();
+    let legacy = serde_json::to_vec(&sync::Manifest {
+        schema: 1,
+        session: portable.clone(),
+        photos,
+    })
+    .unwrap();
+    let b_progress = dir.path().join("jpg/b/.filo/review.json");
+    std::fs::write(&b_progress, &legacy).unwrap();
+    let cached = catalog.sessions.iter_mut().find(|s| s.id == b.id).unwrap();
+    cached.revision = portable.revision;
+    cached.synced_revision = portable.revision;
+    cached.nas_hash = Some(bytes_hash(&legacy));
+    review
+        .repository
+        .save_photo_review_catalog(revision, serde_json::to_value(catalog).unwrap())
+        .await
+        .unwrap();
+
+    review
+        .photo_mark(a.id, a.photo_ids[0], 1, PhotoFlag::Pick)
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&b_progress).unwrap(), legacy);
+    assert!(!dir.path().join("jpg/b/one.xmp").exists());
+    review
+        .photo_mark(b.id, b.photo_ids[0], 4, PhotoFlag::Pick)
+        .await
+        .unwrap();
+    assert_eq!(
+        xmp::read_mark(&std::fs::read(dir.path().join("jpg/b/one.xmp")).unwrap())
+            .unwrap()
+            .rating,
+        4
+    );
+    let progress: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(b_progress).unwrap()).unwrap();
+    assert_eq!(progress.as_object().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn directory_review_discards_legacy_reviewed_only_records_without_creating_xmp() {
+    let dir = tempfile::tempdir().unwrap();
+    let (review, input, bytes) = legacy_directory_review(dir.path()).await;
+    let mut legacy: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    legacy["photos"][0]["rating"] = serde_json::json!(0);
+    legacy["photos"][0]["flag"] = serde_json::json!("none");
+    legacy["photos"][0]["xmp_hash"] = serde_json::Value::Null;
+    legacy["session"]["undo"] = serde_json::json!([{
+        "photo_id": legacy["photos"][0]["id"],
+        "before": {"rating":0,"flag":"none","reviewed":false},
+        "after": {"rating":0,"flag":"none","reviewed":true}
+    }]);
+    legacy["photos"][0]["files"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|file| file["kind"] != "xmp");
+    std::fs::remove_file(dir.path().join("jpg/one.xmp")).unwrap();
+    std::fs::write(
+        dir.path().join("jpg/.filo/review.json"),
+        serde_json::to_vec(&legacy).unwrap(),
+    )
+    .unwrap();
+    let session = review.photo_open_directory_review(input.jpg).await.unwrap();
+    assert!(!dir.path().join("jpg/one.xmp").exists());
+    assert!(session.undo.is_empty());
+    assert!(review.photo_undo(session.id).await.unwrap().is_none());
+    assert_eq!(review.photo_catalog().await.unwrap().photos[0].rating, 0);
+    let progress: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("jpg/.filo/review.json")).unwrap())
+            .unwrap();
+    assert_eq!(progress.as_object().unwrap().len(), 2);
+}
+
 fn write_pair(path: &Path, folder: &str, name: &str, content: &[u8]) {
     let folder = path.join("card/DCIM").join(folder);
     std::fs::create_dir_all(&folder).unwrap();

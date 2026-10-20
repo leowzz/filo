@@ -578,6 +578,30 @@
   color: #677384;
   font-size: 11px;
 }
+.photo-cache-cover {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  background: #12182066;
+  color: #d5dce6;
+  font-size: 11px;
+}
+.photo-cache-cover.ready {
+  background: #10b98155;
+  box-shadow: inset 0 0 0 1px #6ee7b788;
+  color: #d1fae5;
+}
+.photo-cache-cover.pending {
+  background: #f59e0b33;
+  color: #fef3c7;
+}
+.photo-cache-cover > span {
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: #111820cc;
+}
 .photo-filmstrip-mark {
   display: flex;
   align-items: center;

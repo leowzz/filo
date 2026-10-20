@@ -83,7 +83,7 @@ export class PhotoReviewController {
     const index = ids.indexOf(this.current ?? "");
     this.select(ids[Math.max(0, Math.min(ids.length - 1, index + delta))]);
   }
-  mark(mark: Mark, advance: boolean, next: () => void, relative = false) {
+  mark(mark: Mark, advance: boolean, next: () => void) {
     const photo = this.photo;
     if (!photo || this.disposed) return;
     const desired = {
@@ -92,7 +92,7 @@ export class PhotoReviewController {
     };
     const actualChange =
       desired.rating !== photo.rating || desired.flag !== photo.flag;
-    if (!actualChange && (relative || photo.reviewed)) {
+    if (!actualChange) {
       // Explicit Shift at a rating boundary still advances exactly once.
       if (advance) {
         clearTimeout(this.timer);
@@ -118,7 +118,7 @@ export class PhotoReviewController {
     const navigation = this.navigation;
     this.latest.set(photo.id, id);
     this.pending++;
-    this.replace({ ...photo, ...desired, reviewed: true });
+    this.replace({ ...photo, ...desired });
     this.deps.changed();
     this.queue = this.queue.then(async () => {
       try {

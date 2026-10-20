@@ -424,7 +424,6 @@ impl StorageService {
                         .collect(),
                     rating: 0,
                     flag: PhotoFlag::None,
-                    reviewed: false,
                     excluded: false,
                     revision: 0,
                     xmp_hash: files

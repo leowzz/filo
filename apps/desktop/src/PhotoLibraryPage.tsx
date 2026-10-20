@@ -313,14 +313,7 @@ export function PhotoLibraryPage() {
                   <Camera size={22} />
                   <span>
                     <strong>{s.name}</strong>
-                    <small>
-                      {
-                        query.data.photos.filter(
-                          (p) => s.photo_ids.includes(p.id) && p.reviewed,
-                        ).length
-                      }{" "}
-                      / {s.photo_ids.length} 张已审阅
-                    </small>
+                    <small>{s.photo_ids.length} 张照片</small>
                   </span>
                   <span className="photo-sync-status">
                     {s.directory
@@ -389,10 +382,6 @@ export function PhotoLibraryPage() {
             <div className="photo-notice error">{session.sync_error}</div>
           )}
           <div className="photo-review-summary">
-            <strong>
-              {photos.filter((p) => p.reviewed).length} / {photos.length}
-            </strong>
-            <span>张已审阅</span>
             <span>{photos.filter((p) => p.flag === "pick").length} 张保留</span>
             <span>
               {photos.filter((p) => p.flag === "reject").length}{" "}

@@ -42,10 +42,19 @@ pub struct PhotoPlanInput {
 #[serde(default)]
 pub struct PhotoReviewPosition {
     pub current: Option<Uuid>,
+    pub sort: PhotoSort,
     pub filter: String,
     pub minimum_rating: u8,
     pub auto_advance: bool,
     pub raw_only: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PhotoSort {
+    #[default]
+    NameAsc,
+    NameDesc,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -133,7 +142,6 @@ pub struct Photo {
     pub files: Vec<PhotoFile>,
     pub rating: u8,
     pub flag: PhotoFlag,
-    pub reviewed: bool,
     pub excluded: bool,
     pub revision: u64,
     /// None means no sidecar was observed when the photo was planned.
@@ -145,14 +153,12 @@ pub struct Photo {
 pub struct PhotoMark {
     pub rating: u8,
     pub flag: PhotoFlag,
-    pub reviewed: bool,
 }
 impl From<&Photo> for PhotoMark {
     fn from(photo: &Photo) -> Self {
         Self {
             rating: photo.rating,
             flag: photo.flag,
-            reviewed: photo.reviewed,
         }
     }
 }

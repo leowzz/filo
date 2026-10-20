@@ -203,8 +203,11 @@ impl StorageService {
         } else {
             self.repository.photo_catalog().await?
         };
-        let catalog = serde_json::from_value(document)
+        let mut catalog: PhotoCatalog = serde_json::from_value(document)
             .map_err(|_| invalid("摄影记录无法读取，请保留本机数据库并重试"))?;
+        for session in &mut catalog.sessions {
+            session.undo.retain(|undo| undo.before != undo.after);
+        }
         Ok((revision, catalog))
     }
     async fn save_photos(&self, revision: i64, catalog: &PhotoCatalog) -> StorageResult<()> {

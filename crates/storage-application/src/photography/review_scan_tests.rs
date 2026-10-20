@@ -237,7 +237,10 @@ async fn unchanged_pairs_reuse_validation_including_conflicts() {
     assert_eq!(changed.photo_ids.len(), 4);
     assert_eq!(probe.primary_reads.load(Ordering::SeqCst), 6);
     let catalog = service.photo_catalog().await.unwrap();
-    assert!(catalog.photos.iter().all(|p| p.files.len() == 1));
+    assert!(catalog
+        .photos
+        .iter()
+        .all(|p| p.files.iter().filter(|f| f.kind.primary()).count() == 1));
 }
 
 #[tokio::test]
@@ -369,12 +372,34 @@ async fn raw_view_uses_raw_preview_and_persists_without_changing_photo_identity(
         &std::fs::read(dir.path().join("photos/.filo/review.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(manifest["session"]["position"]["raw_only"], false);
-    let mut position = manifest["session"]["position"].clone();
-    position.as_object_mut().unwrap().remove("raw_only");
+    assert_eq!(manifest.as_object().unwrap().len(), 2);
+    assert_eq!(manifest["sort"], "name_asc");
+    let position = serde_json::json!({});
     assert!(
         !serde_json::from_value::<PhotoReviewPosition>(position)
             .unwrap()
             .raw_only
+    );
+    let paired_photo = catalog.photos.iter().find(|p| p.id == paired).unwrap();
+    let alias = paired_photo
+        .files
+        .iter()
+        .find(|f| f.kind.primary() && f.path != paired_photo.original_path)
+        .unwrap();
+    let mut progress = manifest;
+    progress["current"] = serde_json::json!(alias.path);
+    std::fs::write(
+        dir.path().join("photos/.filo/review.json"),
+        serde_json::to_vec(&progress).unwrap(),
+    )
+    .unwrap();
+    let resumed = service
+        .photo_open_directory_review(all.directory.unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        resumed.position.current,
+        Some(paired),
+        "either member of a RAW/JPG pair restores the same photo"
     );
 }

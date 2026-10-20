@@ -20,6 +20,11 @@ impl StorageService {
         if !catalog.sessions[index].photo_ids.contains(&photo_id) {
             return Err(invalid("照片不属于此批次"));
         }
+        let archive = catalog.sessions[index]
+            .directory
+            .as_ref()
+            .map(|_| archive_for(&catalog, catalog.sessions[index].archive_id).cloned())
+            .transpose()?;
         let photo = catalog
             .photos
             .iter_mut()
@@ -29,19 +34,14 @@ impl StorageService {
             return Err(invalid("此照片已排除，请先恢复导入"));
         }
         let before = PhotoMark::from(&*photo);
-        let after = PhotoMark {
-            rating,
-            flag,
-            reviewed: true,
-        };
+        let after = PhotoMark { rating, flag };
         if before == after {
             return Ok(photo.clone());
         }
         photo.rating = rating;
         photo.flag = flag;
-        photo.reviewed = true;
         photo.revision += 1;
-        let result = photo.clone();
+        let mut result = photo.clone();
         let session = &mut catalog.sessions[index];
         session.undo.push(PhotoUndo {
             photo_id,
@@ -53,6 +53,22 @@ impl StorageService {
         }
         session.position.current = Some(photo_id);
         touch(&mut catalog, photo_id);
+        if let Some(archive) = archive {
+            self.save_directory_progress(&mut catalog).await?;
+            result.xmp_hash = catalog
+                .photos
+                .iter()
+                .find(|p| p.id == photo_id)
+                .unwrap()
+                .xmp_hash
+                .clone();
+            self.write_photo_mark(&archive, &mut result).await?;
+            *catalog
+                .photos
+                .iter_mut()
+                .find(|p| p.id == photo_id)
+                .unwrap() = result.clone();
+        }
         self.save_photos(revision, &catalog).await?;
         Ok(result)
     }
@@ -65,6 +81,11 @@ impl StorageService {
         let Some(undo) = catalog.sessions[index].undo.pop() else {
             return Ok(None);
         };
+        let archive = catalog.sessions[index]
+            .directory
+            .as_ref()
+            .map(|_| archive_for(&catalog, catalog.sessions[index].archive_id).cloned())
+            .transpose()?;
         let photo = catalog
             .photos
             .iter_mut()
@@ -75,11 +96,26 @@ impl StorageService {
         }
         photo.rating = undo.before.rating;
         photo.flag = undo.before.flag;
-        photo.reviewed = undo.before.reviewed;
         photo.revision += 1;
-        let result = photo.clone();
+        let mut result = photo.clone();
         catalog.sessions[index].position.current = Some(photo.id);
         touch(&mut catalog, result.id);
+        if let Some(archive) = archive {
+            self.save_directory_progress(&mut catalog).await?;
+            result.xmp_hash = catalog
+                .photos
+                .iter()
+                .find(|p| p.id == result.id)
+                .unwrap()
+                .xmp_hash
+                .clone();
+            self.write_photo_mark(&archive, &mut result).await?;
+            *catalog
+                .photos
+                .iter_mut()
+                .find(|p| p.id == result.id)
+                .unwrap() = result.clone();
+        }
         self.save_photos(revision, &catalog).await?;
         Ok(Some(result))
     }
@@ -99,7 +135,7 @@ impl StorageService {
         {
             return Err(invalid("当前位置不属于此批次"));
         }
-        if !["", "all", "unreviewed", "pick", "reject"].contains(&position.filter.as_str()) {
+        if !["", "all", "pick", "reject"].contains(&position.filter.as_str()) {
             position.filter = "all".into();
         }
         position.minimum_rating = position.minimum_rating.min(5);

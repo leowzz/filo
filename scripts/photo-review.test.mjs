@@ -7,8 +7,8 @@ const ts = require("typescript");
 const source = await readFile(new URL("../apps/desktop/src/photoReviewController.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } });
 const { PhotoReviewController, photoKeyAction } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
-const photo = (id, rating = 0) => ({ id, original_path: `${id}.NEF`, rating, flag: "none", reviewed: false, revision: 0 });
-function setup(photos = [photo("a"), photo("b")], save = async (id, mark) => ({ ...photos.find(p => p.id === id), ...mark, reviewed: true })) {
+const photo = (id, rating = 0) => ({ id, original_path: `${id}.NEF`, rating, flag: "none", revision: 0 });
+function setup(photos = [photo("a"), photo("b")], save = async (id, mark) => ({ ...photos.find(p => p.id === id), ...mark, })) {
   const feedback = [], errors = [], calls = [];
   const controller = new PhotoReviewController(photos, photos[0].id, {
     save: (id, mark) => { calls.push({id,...mark}); return save(id,mark); },
@@ -29,7 +29,7 @@ test("keyboard distinguishes relative adjustments, explicit advance, modifiers a
 });
 
 test("rapid ratings use captured identity and only latest persisted feedback", async () => {
-  let resolve; const {controller,calls,feedback} = setup(undefined, (id,mark) => new Promise(r => {resolve = () => r({...photo(id),...mark,reviewed:true});}));
+  let resolve; const {controller,calls,feedback} = setup(undefined, (id,mark) => new Promise(r => {resolve = () => r({...photo(id),...mark,});}));
   controller.mark({rating:1,flag:"none"},false,()=>{});
   controller.mark({rating:2,flag:"none"},false,()=>{});
   controller.mark({rating:3,flag:"none"},false,()=>{});
@@ -42,14 +42,14 @@ test("rapid ratings use captured identity and only latest persisted feedback", a
 });
 
 test("an old failed request cannot undo a newer desired mark", async () => {
-  let count=0; const {controller,errors} = setup(undefined,async (id,mark) => { if (++count === 1) throw new Error("disk full"); return {...photo(id),...mark,reviewed:true}; });
+  let count=0; const {controller,errors} = setup(undefined,async (id,mark) => { if (++count === 1) throw new Error("disk full"); return {...photo(id),...mark,}; });
   controller.mark({rating:1,flag:"none"},false,()=>{}); controller.mark({rating:4,flag:"pick"},false,()=>{});
   await controller.settle(); assert.equal(controller.photo.rating,4); assert.equal(controller.photo.flag,"pick");
   assert.equal(errors.filter(e => e.message).length,0); controller.dispose();
 });
 
 test("latest save failure restores durable state and offers a photo-specific retry", async () => {
-  let fail = true; const {controller,errors,feedback} = setup(undefined,async (id,mark) => { if (fail) throw new Error("disk full"); return {...photo(id),...mark,reviewed:true}; });
+  let fail = true; const {controller,errors,feedback} = setup(undefined,async (id,mark) => { if (fail) throw new Error("disk full"); return {...photo(id),...mark,}; });
   controller.mark({rating:5,flag:"reject"},true,()=>controller.select("b")); await controller.settle();
   assert.equal(controller.photo.rating,0); assert.equal(controller.current,"a"); assert.equal(feedback.filter(Boolean).length,0);
   assert.match(errors.at(-1).message,/a.NEF.*disk full/); fail=false; errors.at(-1).retry(); await controller.settle();
@@ -57,13 +57,13 @@ test("latest save failure restores durable state and offers a photo-specific ret
 });
 
 test("manual navigation suppresses late feedback and automatic navigation", async () => {
-  let resolve; const {controller,feedback} = setup(undefined,(id,mark)=>new Promise(r=>{resolve=()=>r({...photo(id),...mark,reviewed:true});}));
+  let resolve; const {controller,feedback} = setup(undefined,(id,mark)=>new Promise(r=>{resolve=()=>r({...photo(id),...mark,});}));
   controller.mark({rating:3,flag:"none"},true,()=>controller.select("b")); await delay(0); controller.select("b"); resolve();
   await controller.settle(); await delay(210); assert.equal(controller.current,"b"); assert.equal(controller.photo.rating,0); assert.equal(feedback.filter(Boolean).length,0); controller.dispose();
 });
 
 test("automatic advance waits for persistence and motion onset; boundaries do not save", async () => {
-  let resolve; const {controller,calls} = setup([photo("a",4),photo("b")],(id,mark)=>new Promise(r=>{resolve=()=>r({...photo(id),...mark,reviewed:true});}));
+  let resolve; const {controller,calls} = setup([photo("a",4),photo("b")],(id,mark)=>new Promise(r=>{resolve=()=>r({...photo(id),...mark,});}));
   let advances=0; const next=()=>{advances++;controller.select("b");};
   controller.mark({rating:5,flag:"none"},true,next); await delay(0); assert.equal(advances,0);
   resolve(); await controller.settle(); await delay(100); assert.equal(advances,0); await delay(110); assert.equal(advances,1);
@@ -72,7 +72,7 @@ test("automatic advance waits for persistence and motion onset; boundaries do no
 });
 
 test("a Shift boundary waits for an outstanding save before advancing", async () => {
-  let resolve; const {controller} = setup([photo("a",4),photo("b")],(id,mark)=>new Promise(r=>{resolve=()=>r({...photo(id),...mark,reviewed:true});}));
+  let resolve; const {controller} = setup([photo("a",4),photo("b")],(id,mark)=>new Promise(r=>{resolve=()=>r({...photo(id),...mark,});}));
   let advanced=false; controller.mark({rating:5,flag:"none"},false,()=>{});
   controller.mark({rating:6,flag:"none"},true,()=>{advanced=true;},true); await delay(0); assert.equal(advanced,false);
   resolve(); await controller.settle(); assert.equal(advanced,true); controller.dispose();
@@ -119,6 +119,19 @@ test("a saved RAW view restores to a RAW photo and an empty RAW view can be clea
   assert.equal(empty.photo,undefined);
   empty.setRawOnly(false);
   assert.equal(empty.current,jpg.id);
+});
+
+test("an unchanged mark creates no reviewed state or persistence, and explicit advance still works", async () => {
+  const {controller,calls} = setup();
+  controller.mark({rating:0,flag:"none"},false,()=>{});
+  await controller.settle();
+  assert.equal(calls.length,0);
+  assert.equal(Object.hasOwn(controller.photo,"reviewed"),false);
+  controller.mark({rating:0,flag:"none"},true,()=>controller.select("b"));
+  await controller.settle();
+  assert.equal(controller.current,"b");
+  assert.equal(calls.length,0);
+  controller.dispose();
 });
 
 test("preview cache keeps paired JPG and RAW previews separate",async()=>{

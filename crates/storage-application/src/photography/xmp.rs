@@ -22,7 +22,7 @@ fn rdf(ns: &ResolveResult<'_>, local: &str) -> bool {
 }
 
 /// Seed a new independent review from existing exchange metadata. This does
-/// not mark it reviewed or infer a reject flag from a negative star rating.
+/// not infer a reject flag from a negative star rating.
 pub(super) fn read_mark(bytes: &[u8]) -> StorageResult<PhotoMark> {
     let mut reader = NsReader::from_reader(bytes);
     let mut scope: Vec<(bool, bool, Option<String>)> = vec![];
@@ -118,11 +118,7 @@ pub(super) fn read_mark(bytes: &[u8]) -> StorageResult<PhotoMark> {
             _ => PhotoFlag::None,
         },
     };
-    Ok(PhotoMark {
-        rating,
-        flag,
-        reviewed: false,
-    })
+    Ok(PhotoMark { rating, flag })
 }
 
 /// Rewrite only the three exchange properties. Namespace aliases and element/attribute
@@ -241,6 +237,79 @@ fn merge(bytes: Option<&[u8]>, rating: u8, flag: PhotoFlag) -> StorageResult<Vec
 }
 
 impl StorageService {
+    pub(super) async fn photo_primary_target(
+        &self,
+        archive: &PhotoArchive,
+        photo: &Photo,
+    ) -> StorageResult<Option<StorageLocator>> {
+        for kind in [PhotoFileKind::Raw, PhotoFileKind::Jpg] {
+            if let Some(file) = photo.files.iter().find(|f| f.kind == kind) {
+                let target = file_target(archive, file)?;
+                let backend = self.backend(target.volume_id).await?;
+                if let Some(entry) = existing(backend.as_ref(), &target).await? {
+                    if entry.kind != StorageEntryKind::File {
+                        return Err(conflict("原片路径不是文件，未写入 XMP"));
+                    }
+                    return Ok(Some(target));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    pub(super) async fn write_photo_mark(
+        &self,
+        archive: &PhotoArchive,
+        photo: &mut Photo,
+    ) -> StorageResult<()> {
+        let primary_target = self
+            .photo_primary_target(archive, photo)
+            .await?
+            .ok_or_else(|| conflict("原片已不存在，未写入 XMP"))?;
+        let target = if let Some(file) = photo.files.iter().find(|f| f.kind == PhotoFileKind::Xmp) {
+            file_target(archive, file)?
+        } else {
+            StorageLocator {
+                logical_path: format!(
+                    "{}.xmp",
+                    primary_target.logical_path.rsplit_once('.').unwrap().0
+                ),
+                ..primary_target
+            }
+        };
+        let backend = self.backend(target.volume_id).await?;
+        let before = sync::read_document(backend.as_ref(), &target, 4 * 1024 * 1024).await?;
+        let actual = before.as_ref().map(|(_, bytes)| bytes_hash(bytes));
+        // Avoid rewriting unchanged metadata, including retries after a completed commit.
+        if before.as_ref().is_some_and(|(_, bytes)| {
+            read_mark(bytes).is_ok_and(|mark| mark == PhotoMark::from(&*photo))
+        }) {
+            photo.xmp_hash = actual;
+            photo.xmp_synced_revision = Some(photo.revision);
+            return Ok(());
+        }
+        if actual != photo.xmp_hash {
+            return Err(conflict(
+                "XMP 已被其他应用修改，原文件已保留，请重新进入审图后重试",
+            ));
+        }
+        let bytes = merge(
+            before.as_ref().map(|(_, bytes)| bytes.as_slice()),
+            photo.rating,
+            photo.flag,
+        )?;
+        sync::write_document(
+            backend.as_ref(),
+            &target,
+            before.as_ref().map(|(entry, _)| entry),
+            &bytes,
+        )
+        .await?;
+        photo.xmp_hash = Some(bytes_hash(&bytes));
+        photo.xmp_synced_revision = Some(photo.revision);
+        Ok(())
+    }
+
     pub async fn photo_prepare_lrc(&self, session_id: Uuid) -> StorageResult<PhotoHandoff> {
         let _sync = self.photo_sync_lock.lock().await;
         let _guard = self.photo_lock.lock().await;

@@ -23,7 +23,6 @@ export type Photo = {
   files: PhotoFile[];
   rating: number;
   flag: PhotoFlag;
-  reviewed: boolean;
   excluded: boolean;
   revision: number;
   xmp_hash: string | null;
@@ -31,6 +30,7 @@ export type Photo = {
 };
 export type PhotoPosition = {
   current: string | null;
+  sort?: "name_asc" | "name_desc";
   filter: string;
   minimum_rating: number;
   auto_advance: boolean;

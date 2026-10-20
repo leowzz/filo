@@ -1,4 +1,10 @@
-import { useEffect, useReducer, useRef, useState } from "react";
+import {
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -25,7 +31,15 @@ import {
   type PhotoFeedback as Feedback,
 } from "./photoReviewController";
 import { PhotoFeedback } from "./PhotoFeedback";
-import { photoPreview } from "./photoPreviewCache";
+import { useAppSettings } from "./appSettings";
+import {
+  photoPreview,
+  photoPreviews,
+  previewAhead,
+  previewBehind,
+} from "./photoPreviewCache";
+
+const photoNameOrder = new Intl.Collator(undefined, { numeric: true }).compare;
 
 function Thumbnail({ photo, rawOnly }: { photo: Photo; rawOnly: boolean }) {
   const [image, setImage] = useState<{
@@ -50,6 +64,19 @@ function Thumbnail({ photo, rawOnly }: { photo: Photo; rawOnly: boolean }) {
     />
   ) : (
     <span className="photo-thumbnail-placeholder">预览</span>
+  );
+}
+
+function CacheCover({ id, rawOnly }: { id: string; rawOnly: boolean }) {
+  const state = useSyncExternalStore(photoPreviews.subscribe, () =>
+    photoPreviews.state(id, rawOnly),
+  );
+  return (
+    <span className={`photo-cache-cover ${state}`} data-cache-state={state}>
+      <span>
+        {{ ready: "已缓存", pending: "加载中", empty: "未缓存" }[state]}
+      </span>
+    </span>
   );
 }
 
@@ -79,11 +106,17 @@ export function PhotoReview({
   const [controller] = useState(
     () =>
       new PhotoReviewController(
-        photos.filter(
-          (p) =>
-            !p.excluded &&
-            p.files.some((f) => f.kind === "jpg" || f.kind === "raw"),
-        ),
+        photos
+          .filter(
+            (p) =>
+              !p.excluded &&
+              p.files.some((f) => f.kind === "jpg" || f.kind === "raw"),
+          )
+          .sort(
+            (a, b) =>
+              photoNameOrder(a.original_path, b.original_path) *
+              (session.position.sort === "name_desc" ? -1 : 1),
+          ),
         session.position.current,
         {
           save: (id, mark) =>
@@ -100,10 +133,16 @@ export function PhotoReview({
         session.position.raw_only ?? false,
       ),
   );
-  const [filter, setFilter] = useState(session.position.filter || "all");
+  const [filter, setFilter] = useState(
+    ["pick", "reject"].includes(session.position.filter)
+      ? session.position.filter
+      : "all",
+  );
+  const [sort, setSort] = useState(session.position.sort ?? "name_asc");
   const [minimum, setMinimum] = useState(session.position.minimum_rating);
   const [auto, setAuto] = useState(session.position.auto_advance);
   const [original, setOriginal] = useState(false);
+  const cacheDebug = useAppSettings((state) => state.debugMode);
   const rawOnly = controller.rawOnly;
   const [fullscreen, setFullscreen] = useState(false);
   const [image, setImage] = useState<{
@@ -115,6 +154,7 @@ export function PhotoReview({
   const [previewFailure, setPreviewFailure] = useState("");
   const [previewAttempt, retryPreview] = useReducer((n) => n + 1, 0);
   const container = useRef<HTMLElement>(null);
+  const filmstrip = useRef<HTMLDivElement>(null);
   const positionRef = useRef<PhotoPosition | null>(null);
   const photo = controller.photo;
   const photoPath = rawOnly
@@ -123,15 +163,22 @@ export function PhotoReview({
   const matches = (p: Photo) =>
     p.rating >= minimum &&
     (filter === "all" ||
-      (filter === "unreviewed" && !p.reviewed) ||
       (filter === "pick" && p.flag === "pick") ||
       (filter === "reject" && p.flag === "reject"));
-  const visible = controller.photos.filter(
+  const ordered = [...controller.photos].sort(
+    (a, b) =>
+      photoNameOrder(a.original_path, b.original_path) *
+      (sort === "name_desc" ? -1 : 1),
+  );
+  const visible = ordered.filter(
     (p) =>
       (!rawOnly || hasRaw(p)) && (matches(p) || p.id === controller.current),
   );
   const ids = visible.map((p) => p.id);
   const index = ids.indexOf(controller.current ?? "");
+  const previewIds = ids
+    .slice(Math.max(0, index - previewBehind), index + previewAhead + 1)
+    .join("\n");
   const step = (delta: number) => controller.step(delta, ids);
   const actions = useRef({ step, photo, ids, original, auto, onBack });
   actions.current = { step, photo, ids, original, auto, onBack };
@@ -195,7 +242,6 @@ export function PhotoReview({
           },
           action.advance,
           () => actions.current.step(1),
-          action.relative,
         );
       if (current && action.type === "flag")
         controller.mark(
@@ -210,6 +256,7 @@ export function PhotoReview({
   useEffect(() => {
     positionRef.current = {
       current: controller.current,
+      sort,
       filter,
       minimum_rating: minimum,
       auto_advance: auto,
@@ -228,12 +275,39 @@ export function PhotoReview({
   }, [
     controller.current,
     filter,
+    sort,
     minimum,
     auto,
     rawOnly,
     session.id,
     onPositionSaved,
   ]);
+  useEffect(() => {
+    photoPreviews.setWindow(
+      previewIds ? previewIds.split("\n") : [],
+      photo?.id ?? null,
+      rawOnly,
+    );
+  }, [previewIds, photo?.id, rawOnly]);
+  useEffect(() => () => photoPreviews.clearWindow(), []);
+  useEffect(() => {
+    if (!cacheDebug) return;
+    const list = filmstrip.current;
+    const selected = list?.querySelector<HTMLElement>(
+      'button[aria-current="true"]',
+    );
+    if (!list || !selected) return;
+    const center = () => {
+      list.scrollLeft +=
+        selected.getBoundingClientRect().left -
+        list.getBoundingClientRect().left -
+        (list.clientWidth - selected.offsetWidth) / 2;
+    };
+    center();
+    const observer = new ResizeObserver(center);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [cacheDebug, photo?.id, rawOnly, previewIds]);
   useEffect(() => {
     let live = true;
     setPreviewFailure("");
@@ -249,14 +323,22 @@ export function PhotoReview({
       live = false;
     };
   }, [photo?.id, original, rawOnly, previewAttempt]);
-  useEffect(() => {
-    const source = controller.photos.filter((p) => !rawOnly || hasRaw(p));
-    const selected = source.findIndex((p) => p.id === controller.current);
-    for (const p of [source[selected - 1], source[selected + 1]])
-      if (p) void photoPreview(p.id, false, false, rawOnly).catch(() => {});
-  }, [controller, controller.current, rawOnly]);
+  const cachedPreview = photo
+    ? photoPreviews.peek(photo.id, original, false, rawOnly)
+    : undefined;
+  const readyPreview =
+    cachedPreview ??
+    (original && photo
+      ? photoPreviews.peek(photo.id, false, false, rawOnly)
+      : undefined);
   const shownImage =
-    image?.id === photo?.id && image?.rawOnly === rawOnly ? image : null;
+    image?.id === photo?.id &&
+    image?.rawOnly === rawOnly &&
+    (original || !image.original)
+      ? image
+      : readyPreview
+        ? { preview: readyPreview, original: original && !!cachedPreview }
+        : null;
   const mark = (rating: number, flag = photo?.flag ?? "none") =>
     controller.mark({ rating, flag }, auto, () => step(1));
   return (
@@ -268,24 +350,29 @@ export function PhotoReview({
         </button>
         <span className="photo-review-name">{session.name}</span>
         <select
+          aria-label="照片排序"
+          value={sort}
+          onChange={(event) => setSort(event.target.value as typeof sort)}
+        >
+          <option value="name_asc">文件名升序</option>
+          <option value="name_desc">文件名降序</option>
+        </select>
+        <select
           aria-label="审图筛选"
           value={filter}
           onChange={(e) => {
             setFilter(e.target.value);
             controller.select(
-              controller.photos.find(
+              ordered.find(
                 (p) =>
                   (!rawOnly || hasRaw(p)) &&
                   p.rating >= minimum &&
-                  (e.target.value === "all" ||
-                    (e.target.value === "unreviewed" && !p.reviewed) ||
-                    e.target.value === p.flag),
+                  (e.target.value === "all" || e.target.value === p.flag),
               )?.id ?? null,
             );
           }}
         >
           <option value="all">全部</option>
-          <option value="unreviewed">未审阅</option>
           <option value="pick">保留</option>
           <option value="reject">待删除</option>
         </select>
@@ -296,13 +383,11 @@ export function PhotoReview({
             const value = Number(e.target.value);
             setMinimum(value);
             controller.select(
-              controller.photos.find(
+              ordered.find(
                 (p) =>
                   (!rawOnly || hasRaw(p)) &&
                   p.rating >= value &&
-                  (filter === "all" ||
-                    (filter === "unreviewed" && !p.reviewed) ||
-                    filter === p.flag),
+                  (filter === "all" || filter === p.flag),
               )?.id ?? null,
             );
           }}
@@ -502,7 +587,7 @@ export function PhotoReview({
             `${shownImage.preview.width} × ${shownImage.preview.height}${shownImage.preview.embedded ? " · NEF 内嵌预览，完整 RAW 请在 LRC 检查" : original && !shownImage.original ? " · 正在读取原尺寸…" : ""}`}
         </span>
       </div>
-      <div className="photo-filmstrip" aria-label="审图胶片带">
+      <div className="photo-filmstrip" aria-label="审图胶片带" ref={filmstrip}>
         {visible
           .slice(Math.max(0, index - 8), Math.max(17, index + 9))
           .map((p) => (
@@ -514,6 +599,7 @@ export function PhotoReview({
               onClick={() => controller.select(p.id)}
             >
               <Thumbnail photo={p} rawOnly={rawOnly} />
+              {cacheDebug && <CacheCover id={p.id} rawOnly={rawOnly} />}
               <span className="photo-filmstrip-mark">
                 {p.flag === "pick" && (
                   <Flag size={12} className={p.flag} fill="currentColor" />
@@ -522,9 +608,6 @@ export function PhotoReview({
                   <X size={12} className="reject" aria-label="待删除" />
                 )}
                 {p.rating > 0 && <span>{"★".repeat(p.rating)}</span>}
-                {p.reviewed && !p.rating && p.flag === "none" && (
-                  <span>已审阅</span>
-                )}
               </span>
             </button>
           ))}

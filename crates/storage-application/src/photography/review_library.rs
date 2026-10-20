@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 type ReviewFile = (StorageEntry, String, PhotoFileKind, metadata::Metadata);
 
-fn revision(entry: &StorageEntry) -> String {
+pub(super) fn revision(entry: &StorageEntry) -> String {
     bytes_hash(format!("{:?}:{:?}:{:?}", entry.size, entry.modified_at, entry.etag).as_bytes())
 }
 
@@ -43,6 +43,60 @@ fn unchanged_group(
         return None;
     }
     Some(previous.into_iter().map(|i| photos[i].id).collect())
+}
+
+async fn refresh_cached_mark(
+    photo: &mut Photo,
+    group: &[ReviewFile],
+    backends: &HashMap<Uuid, Arc<dyn StorageBackend>>,
+    scan: &ReviewScan,
+) -> StorageResult<()> {
+    let Some((entry, path, _, _)) = group
+        .iter()
+        .find(|(_, _, kind, _)| *kind == PhotoFileKind::Xmp)
+    else {
+        photo.rating = 0;
+        photo.flag = PhotoFlag::None;
+        photo.xmp_hash = None;
+        photo.xmp_synced_revision = None;
+        photo.files.retain(|f| f.kind != PhotoFileKind::Xmp);
+        return Ok(());
+    };
+    if photo.files.iter().any(|f| {
+        f.kind == PhotoFileKind::Xmp
+            && f.path == *path
+            && f.observed_revision.as_deref() == Some(&revision(entry))
+    }) {
+        return Ok(());
+    }
+    let bytes = scan
+        .read(sync::read_document(
+            backends[&entry.locator.volume_id].as_ref(),
+            &entry.locator,
+            4 * 1024 * 1024,
+        ))
+        .await?
+        .ok_or_else(|| conflict("XMP 已消失，请重新打开目录"))?
+        .1;
+    let mark = xmp::read_mark(&bytes)?;
+    let hash = bytes_hash(&bytes);
+    photo.rating = mark.rating;
+    photo.flag = mark.flag;
+    photo.xmp_hash = Some(hash.clone());
+    photo.xmp_synced_revision = Some(photo.revision);
+    photo.files.retain(|f| f.kind != PhotoFileKind::Xmp);
+    photo.files.push(PhotoFile {
+        id: Uuid::new_v4(),
+        kind: PhotoFileKind::Xmp,
+        original_name: entry.name.clone(),
+        path: path.clone(),
+        sha256: hash,
+        size: entry.size.unwrap_or(0),
+        verified: false,
+        error: None,
+        observed_revision: Some(revision(entry)),
+    });
+    Ok(())
 }
 
 impl StorageService {
@@ -118,11 +172,11 @@ impl StorageService {
                     .to_string();
             }
         }
-        let resumed = if directory {
+        let (resumed, progress) = if directory {
             scan.read(self.load_directory_review(&mut catalog, &jpg))
                 .await?
         } else {
-            None
+            (None, None)
         };
         let archive_id = if let Some(session) = &resumed {
             session.archive_id
@@ -317,6 +371,12 @@ impl StorageService {
                 );
             }
             if let Some(ids) = unchanged_group(group, &old_photos, &old_index) {
+                if directory {
+                    for id in &ids {
+                        let photo = catalog.photos.iter_mut().find(|p| p.id == *id).unwrap();
+                        refresh_cached_mark(photo, group, &backends, scan).await?;
+                    }
+                }
                 session.photo_ids.extend(ids);
                 continue;
             }
@@ -396,7 +456,6 @@ impl StorageService {
                 let mut initial_mark = PhotoMark {
                     rating: 0,
                     flag: PhotoFlag::None,
-                    reviewed: false,
                 };
                 for (entry, path, kind, _) in &set {
                     if files.iter().any(|f: &PhotoFile| f.kind == *kind) {
@@ -450,7 +509,6 @@ impl StorageService {
                     files,
                     rating: initial_mark.rating,
                     flag: initial_mark.flag,
-                    reviewed: false,
                     excluded: false,
                     revision: 0,
                     xmp_hash,
@@ -464,6 +522,22 @@ impl StorageService {
             return Err(invalid("目录中没有可审阅的 JPG 或 NEF"));
         }
         if directory {
+            if let Some(progress) = progress {
+                session.position.sort = progress.sort;
+                session.position.current = progress.current.and_then(|path| {
+                    catalog
+                        .photos
+                        .iter()
+                        .find(|p| {
+                            p.archive_id == archive_id
+                                && p.files
+                                    .iter()
+                                    .any(|file| file.kind.primary() && file.path == path)
+                                && session.photo_ids.contains(&p.id)
+                        })
+                        .map(|p| p.id)
+                });
+            }
             session
                 .undo
                 .retain(|u| session.photo_ids.contains(&u.photo_id));

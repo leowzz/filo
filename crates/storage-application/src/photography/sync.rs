@@ -1,8 +1,15 @@
 use super::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub(super) const MANIFEST_LIMIT: u64 = 64 * 1024 * 1024;
 pub(super) const DIRECTORY_PROGRESS: &str = ".filo/review.json";
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(super) struct DirectoryProgress {
+    pub sort: PhotoSort,
+    pub current: Option<String>,
+}
 #[derive(Serialize, Deserialize)]
 pub(super) struct Manifest {
     pub schema: u32,
@@ -130,8 +137,8 @@ pub(super) fn validate(manifest: &Manifest, review: bool) -> StorageResult<()> {
 }
 
 impl StorageService {
-    // The local catalog is an index/cache for directory reviews. A successful
-    // edit is acknowledged only after its folder's progress file is committed.
+    // Only directory order and browsing position belong in the progress file.
+    // Photo marks are committed separately to their XMP sidecars.
     pub(super) async fn save_directory_progress(
         &self,
         catalog: &mut PhotoCatalog,
@@ -140,7 +147,22 @@ impl StorageService {
             let Some(root) = catalog.sessions[index].directory.clone() else {
                 continue;
             };
-            let snapshot = manifest(catalog, &catalog.sessions[index]);
+            if catalog.sessions[index].synced_revision == catalog.sessions[index].revision
+                && catalog.sessions[index].nas_hash.is_some()
+            {
+                continue;
+            }
+            let session = &catalog.sessions[index];
+            let snapshot = DirectoryProgress {
+                sort: session.position.sort,
+                current: session.position.current.and_then(|id| {
+                    catalog
+                        .photos
+                        .iter()
+                        .find(|p| p.id == id)
+                        .map(|p| p.original_path.clone())
+                }),
+            };
             let bytes =
                 serde_json::to_vec_pretty(&snapshot).map_err(|_| invalid("无法保存审图进度"))?;
             if bytes.len() as u64 > MANIFEST_LIMIT {
@@ -148,6 +170,8 @@ impl StorageService {
             }
             let desired = bytes_hash(&bytes);
             if catalog.sessions[index].nas_hash.as_deref() == Some(&desired) {
+                catalog.sessions[index].synced_revision = catalog.sessions[index].revision;
+                catalog.sessions[index].sync_error = None;
                 continue;
             }
             let backend = self.backend(root.volume_id).await?;
@@ -158,6 +182,35 @@ impl StorageService {
                 return Err(conflict(
                     "目录中的审图进度已被其他窗口或电脑更新，请重新进入审图后重试",
                 ));
+            }
+            if let Some((_, bytes)) = &before {
+                let document: serde_json::Value = serde_json::from_slice(bytes)
+                    .map_err(|_| invalid("目录中的审图记录损坏，已保留原文件"))?;
+                if document.get("session").is_some() {
+                    let mut legacy: Manifest = serde_json::from_value(document)
+                        .map_err(|_| invalid("目录中的审图记录无效，已保留原文件"))?;
+                    let migrated = self.migrate_directory_marks(&root, &mut legacy).await?;
+                    let archive = catalog.sessions[index].archive_id;
+                    let by_path: HashMap<_, _> = catalog
+                        .photos
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, p)| p.archive_id == archive)
+                        .flat_map(|(index, p)| {
+                            p.files
+                                .iter()
+                                .filter(|file| file.kind.primary())
+                                .map(move |file| (file.path.clone(), index))
+                        })
+                        .collect();
+                    for photo in migrated {
+                        if let Some(&index) = by_path.get(&photo.original_path) {
+                            let cached = &mut catalog.photos[index];
+                            cached.xmp_hash = photo.xmp_hash;
+                            cached.xmp_synced_revision = photo.xmp_synced_revision;
+                        }
+                    }
+                }
             }
             if actual.as_deref() != Some(&desired) {
                 write_document(
@@ -194,8 +247,11 @@ impl StorageService {
         // Review saves remain responsive while the NAS is slow or disconnected.
         let (snapshot, archive, directory) = {
             let _guard = self.photo_lock.lock().await;
-            let (_, catalog) = self.load_photos().await?;
+            let (revision, catalog) = self.load_photos().await?;
             let session = &catalog.sessions[session_index(&catalog, session_id)?];
+            if session.directory.is_some() {
+                return self.save_photos(revision, &catalog).await;
+            }
             (
                 manifest(&catalog, session),
                 archive_for(&catalog, session.archive_id)?.clone(),
