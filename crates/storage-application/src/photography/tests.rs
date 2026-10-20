@@ -441,6 +441,233 @@ async fn setup(path: &Path) -> (StorageService, PhotoPlanInput) {
 }
 
 #[tokio::test]
+async fn export_raw_filters_ratings_preserves_sources_and_restores_destination() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let (service, input) = setup(path).await;
+    std::fs::create_dir_all(path.join("raw/nested")).unwrap();
+    for (name, rating) in [
+        ("zero", 0),
+        ("two", 2),
+        ("three", 3),
+        ("four", 4),
+        ("nested/five", 5),
+    ] {
+        std::fs::write(path.join(format!("raw/{name}.NEF")), name.as_bytes()).unwrap();
+        let bytes = format!(
+            r#"<r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><r:Description xmlns:x="http://ns.adobe.com/xap/1.0/" x:Rating="{rating}"/></r:RDF>"#
+        );
+        std::fs::write(path.join(format!("raw/{name}.xmp")), bytes).unwrap();
+    }
+    jpeg(&path.join("raw/jpg-only.jpg"));
+    let review = service.photo_review_workspace();
+    let session = review
+        .photo_open_directory_review(input.raw.clone())
+        .await
+        .unwrap();
+    let photos = review.photo_catalog().await.unwrap().photos;
+    let jpg = photos
+        .iter()
+        .find(|p| p.original_path == "jpg-only.jpg")
+        .unwrap();
+    review
+        .photo_mark(session.id, jpg.id, 5, PhotoFlag::Pick)
+        .await
+        .unwrap();
+    let five = photos
+        .iter()
+        .find(|p| p.original_path == "nested/five.NEF")
+        .unwrap();
+    review
+        .photo_mark(session.id, five.id, 5, PhotoFlag::Reject)
+        .await
+        .unwrap();
+    let destination = input.jpg.clone();
+    let first = review
+        .photo_export(
+            session.id,
+            destination.clone(),
+            PhotoExportFilter::default(),
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+    assert_eq!((first.total, first.copied, first.skipped), (3, 3, 0));
+    assert!(first.failures.is_empty());
+    for name in ["three", "four", "nested/five"] {
+        assert_eq!(
+            std::fs::read(path.join(format!("jpg/{name}.NEF"))).unwrap(),
+            name.as_bytes()
+        );
+        assert_eq!(
+            std::fs::read(path.join(format!("raw/{name}.NEF"))).unwrap(),
+            name.as_bytes()
+        );
+    }
+    for name in ["zero.NEF", "two.NEF", "jpg-only.jpg", "three.xmp"] {
+        assert!(!path.join("jpg").join(name).exists());
+    }
+    // A repeat skips identical files and reports conflicting contents without overwriting.
+    std::fs::write(path.join("jpg/four.NEF"), b"different").unwrap();
+    std::fs::remove_file(path.join("raw/three.NEF")).unwrap();
+    let repeated = review
+        .photo_export(
+            session.id,
+            destination,
+            PhotoExportFilter::default(),
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (repeated.copied, repeated.skipped, repeated.failures.len()),
+        (0, 1, 2)
+    );
+    assert_eq!(
+        std::fs::read(path.join("jpg/four.NEF")).unwrap(),
+        b"different"
+    );
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(path.join("raw/.filo/review.json")).unwrap())
+            .unwrap();
+    assert_eq!(saved["last_export"]["directory"], first.directory);
+    assert_eq!(
+        saved["last_export"]["failures"].as_array().unwrap().len(),
+        2
+    );
+    // Restoring with an empty local review catalog still retains the export record.
+    let (revision, _) = review.repository.photo_review_catalog().await.unwrap();
+    review
+        .repository
+        .save_photo_review_catalog(
+            revision,
+            serde_json::json!({
+                "photos": [], "sessions": [], "archives": [], "preset": null
+            }),
+        )
+        .await
+        .unwrap();
+    let reopened = review
+        .photo_open_directory_review(input.raw.clone())
+        .await
+        .unwrap();
+    assert_eq!(reopened.last_export.unwrap().directory, first.directory);
+    assert!(review
+        .photo_export(
+            reopened.id,
+            input.raw,
+            PhotoExportFilter::default(),
+            Arc::new(|_| {})
+        )
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn export_raw_applies_selected_rating_and_flag_conditions() {
+    let dir = tempfile::tempdir().unwrap();
+    let (service, input) = setup(dir.path()).await;
+    for rating in 0..=5 {
+        std::fs::write(dir.path().join(format!("raw/{rating}.NEF")), [rating]).unwrap();
+    }
+    let review = service.photo_review_workspace();
+    let session = review.photo_open_directory_review(input.raw).await.unwrap();
+    for photo in review.photo_catalog().await.unwrap().photos {
+        let rating = photo.original_path[..1].parse().unwrap();
+        let flag = match rating {
+            2 | 4 => PhotoFlag::Pick,
+            5 => PhotoFlag::Reject,
+            _ => PhotoFlag::None,
+        };
+        review
+            .photo_mark(session.id, photo.id, rating, flag)
+            .await
+            .unwrap();
+    }
+    use PhotoRatingFilter::*;
+    let cases = [
+        (Any, 3, None, vec![0, 1, 2, 3, 4, 5]),
+        (Exactly, 0, None, vec![0]),
+        (Exactly, 4, None, vec![4]),
+        (AtMost, 2, None, vec![0, 1, 2]),
+        (AtLeast, 4, None, vec![4, 5]),
+        (Any, 0, Some(PhotoFlag::Pick), vec![2, 4]),
+        (AtLeast, 3, Some(PhotoFlag::Pick), vec![4]),
+        (Any, 0, Some(PhotoFlag::Reject), vec![5]),
+        (Any, 0, Some(PhotoFlag::None), vec![0, 1, 3]),
+    ];
+    for (index, (rating_mode, rating, flag, expected)) in cases.into_iter().enumerate() {
+        let output = dir.path().join(format!("jpg/case-{index}"));
+        std::fs::create_dir_all(&output).unwrap();
+        let filter = PhotoExportFilter {
+            rating_mode,
+            rating,
+            flag,
+        };
+        let result = review
+            .photo_export(
+                session.id,
+                StorageLocator {
+                    logical_path: format!("case-{index}"),
+                    ..input.jpg.clone()
+                },
+                filter.clone(),
+                Arc::new(|_| {}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.copied, expected.len());
+        assert!(result.failures.is_empty());
+        assert_eq!(std::fs::read_dir(&output).unwrap().count(), expected.len());
+        for rating in expected {
+            assert!(output.join(format!("{rating}.NEF")).exists());
+        }
+        assert_eq!(
+            serde_json::to_value(result.filter).unwrap(),
+            serde_json::to_value(filter).unwrap()
+        );
+    }
+    let error = review
+        .photo_export(
+            session.id,
+            input.jpg,
+            PhotoExportFilter {
+                rating: 6,
+                ..PhotoExportFilter::default()
+            },
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, StorageErrorCode::InvalidConfiguration);
+}
+
+#[tokio::test]
+async fn export_raw_with_no_qualifying_files_does_not_record_success() {
+    let dir = tempfile::tempdir().unwrap();
+    let (service, input) = setup(dir.path()).await;
+    std::fs::write(dir.path().join("raw/two.NEF"), b"raw").unwrap();
+    let review = service.photo_review_workspace();
+    let session = review.photo_open_directory_review(input.raw).await.unwrap();
+    review
+        .photo_mark(session.id, session.photo_ids[0], 2, PhotoFlag::Pick)
+        .await
+        .unwrap();
+    assert!(review
+        .photo_export(
+            session.id,
+            input.jpg,
+            PhotoExportFilter::default(),
+            Arc::new(|_| {})
+        )
+        .await
+        .is_err());
+    assert!(review.photo_catalog().await.unwrap().sessions[0]
+        .last_export
+        .is_none());
+}
+
+#[tokio::test]
 async fn directory_review_saves_beside_photos_and_restores_without_local_history() {
     let dir = tempfile::tempdir().unwrap();
     let (service, input) = setup(dir.path()).await;

@@ -54,6 +54,7 @@ export type PhotoSession = {
   nas_hash: string | null;
   sync_error: string | null;
   handed_off: boolean;
+  last_export?: PhotoExport | null;
   position: PhotoPosition;
   undo: unknown[];
   layout: PhotoPlan["layout"];
@@ -103,6 +104,20 @@ export type PhotoPreview = {
   width: number;
   height: number;
   embedded: boolean;
+};
+export type PhotoExportFilter = {
+  rating_mode: "any" | "at_least" | "exactly" | "at_most";
+  rating: number;
+  flag: PhotoFlag | null;
+};
+export type PhotoExport = {
+  filter?: PhotoExportFilter;
+  directory: string;
+  exported_at: string;
+  total: number;
+  copied: number;
+  skipped: number;
+  failures: string[];
 };
 export type PhotoHandoff = {
   directories: string[];
@@ -161,6 +176,21 @@ export const photoApi = {
 };
 
 export const reviewApi = {
+  export: (
+    sessionId: string,
+    destination: Locator,
+    filter: PhotoExportFilter,
+    onProgress: (progress: PhotoProgress) => void,
+  ) => {
+    const channel = new Channel<PhotoProgress>();
+    channel.onmessage = onProgress;
+    return invoke<PhotoExport>("review_export", {
+      sessionId,
+      destination,
+      filter,
+      onProgress: channel,
+    });
+  },
   scan: (
     requestId: string,
     input: PhotoReviewInput,

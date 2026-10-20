@@ -110,6 +110,7 @@ impl StorageService {
         self.migrate_directory_marks(root, &mut saved).await?;
         let progress = sync::DirectoryProgress {
             sort: saved.session.position.sort,
+            last_export: saved.session.last_export.clone(),
             current: saved.session.position.current.and_then(|id| {
                 saved
                     .photos

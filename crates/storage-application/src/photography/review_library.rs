@@ -338,6 +338,7 @@ impl StorageService {
             nas_hash: None,
             sync_error: None,
             handed_off: false,
+            last_export: None,
             position: PhotoReviewPosition::default(),
             undo: vec![],
         });
@@ -534,6 +535,7 @@ impl StorageService {
         }
         if directory {
             if let Some(progress) = progress {
+                session.last_export = progress.last_export;
                 session.position.sort = progress.sort;
                 session.position.current = progress.current.and_then(|path| {
                     catalog

@@ -9,6 +9,8 @@ pub(super) const DIRECTORY_PROGRESS: &str = ".filo/review.json";
 pub(super) struct DirectoryProgress {
     pub sort: PhotoSort,
     pub current: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_export: Option<PhotoExport>,
 }
 #[derive(Serialize, Deserialize)]
 pub(super) struct Manifest {
@@ -155,6 +157,7 @@ impl StorageService {
             let session = &catalog.sessions[index];
             let snapshot = DirectoryProgress {
                 sort: session.position.sort,
+                last_export: session.last_export.clone(),
                 current: session.position.current.and_then(|id| {
                     catalog
                         .photos

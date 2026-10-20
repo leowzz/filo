@@ -39,6 +39,7 @@ import {
   isReviewConflict,
   type PhotoFeedback as Feedback,
 } from "./photoReviewController";
+import { PhotoExportButton } from "./PhotoExportButton";
 import { PhotoFeedback } from "./PhotoFeedback";
 import { observeResize } from "./observeResize";
 import { useAppSettings } from "./appSettings";
@@ -745,6 +746,14 @@ export function PhotoReview({
             自动前进
           </label>
         )}
+        <PhotoExportButton
+          session={session}
+          disabled={reloading || controller.pending > 0 || !!failure.message}
+          beforeExport={async () => {
+            await controller.settle();
+            if (positionRef.current) await writePosition(positionRef.current);
+          }}
+        />
         <button
           className="icon-button photo-review-fullscreen"
           title={fullscreen ? "退出全屏" : "全屏审图"}

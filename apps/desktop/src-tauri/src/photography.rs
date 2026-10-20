@@ -49,6 +49,9 @@ pub async fn review_save_position(service: State<'_, StorageService>, session_id
 pub async fn review_preview(service: State<'_, StorageService>, photo_id: Uuid, original: bool, thumbnail: bool, raw_only: Option<bool>) -> StorageResult<PhotoPreview> { service.photo_review_workspace().photo_preview(photo_id, original, thumbnail, raw_only.unwrap_or(false)).await }
 pub async fn photo_sync(service: State<'_, StorageService>, session_id: Uuid) -> StorageResult<()> { service.photo_sync(session_id).await }
 pub async fn photo_restore(service: State<'_, StorageService>, jpg: StorageLocator, raw: StorageLocator) -> StorageResult<usize> { service.photo_restore(jpg, raw).await }
+pub async fn review_export(service: State<'_, StorageService>, session_id: Uuid, destination: StorageLocator, filter: Option<PhotoExportFilter>, on_progress: tauri::ipc::Channel<PhotoProgress>) -> StorageResult<PhotoExport> {
+    service.photo_review_workspace().photo_export(session_id, destination, filter.unwrap_or_default(), std::sync::Arc::new(move |progress| { let _ = on_progress.send(progress); })).await
+}
 pub async fn review_prepare_lrc(service: State<'_, StorageService>, session_id: Uuid) -> StorageResult<PhotoHandoff> { service.photo_review_workspace().photo_prepare_lrc(session_id).await }
 pub async fn review_open_raw_directory(service: State<'_, StorageService>, session_id: Uuid, directory: String) -> StorageResult<()> { service.photo_review_workspace().photo_open_raw_directory(session_id, directory).await }
 pub async fn review_launch_lrc(app: tauri::AppHandle) -> StorageResult<()> {

@@ -196,6 +196,7 @@ impl StorageService {
             nas_hash: None,
             sync_error: None,
             handed_off: false,
+            last_export: None,
             position: PhotoReviewPosition::default(),
             undo: vec![],
         };

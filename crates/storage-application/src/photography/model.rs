@@ -80,6 +80,8 @@ pub struct PhotoSession {
     pub nas_hash: Option<String>,
     pub sync_error: Option<String>,
     pub handed_off: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_export: Option<PhotoExport>,
     pub position: PhotoReviewPosition,
     pub undo: Vec<PhotoUndo>,
 }
@@ -232,4 +234,43 @@ pub struct PhotoHandoff {
     pub directories: Vec<String>,
     pub failures: Vec<String>,
     pub jpg_only: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PhotoExport {
+    pub directory: String,
+    pub exported_at: String,
+    #[serde(default)]
+    pub filter: PhotoExportFilter,
+    pub total: usize,
+    pub copied: usize,
+    pub skipped: usize,
+    pub failures: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PhotoRatingFilter {
+    Any,
+    AtLeast,
+    Exactly,
+    AtMost,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PhotoExportFilter {
+    pub rating_mode: PhotoRatingFilter,
+    pub rating: u8,
+    pub flag: Option<PhotoFlag>,
+}
+
+impl Default for PhotoExportFilter {
+    fn default() -> Self {
+        Self {
+            rating_mode: PhotoRatingFilter::AtLeast,
+            rating: 3,
+            flag: None,
+        }
+    }
 }

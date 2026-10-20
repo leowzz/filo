@@ -514,6 +514,7 @@ fn main() {
             photography::review_preview,
             photography::photo_sync,
             photography::photo_restore,
+            photography::review_export,
             photography::review_prepare_lrc,
             photography::review_open_raw_directory,
             photography::review_launch_lrc,

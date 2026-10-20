@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   Camera,
   ChevronRight,
-  Copy,
   FolderOpen,
   RefreshCw,
 } from "lucide-react";
@@ -16,8 +15,8 @@ import {
   type Photo,
   type PhotoCatalog,
   type PhotoDirectory,
-  type PhotoHandoff,
 } from "./photoApi";
+import { PhotoExportButton } from "./PhotoExportButton";
 import { PhotoReview } from "./PhotoReview";
 import { useReviewScan } from "./useReviewScan";
 import { ReviewScanStatus } from "./ReviewScanStatus";
@@ -144,11 +143,9 @@ export function PhotoLibraryPage() {
   const [review, setReview] = useState(false);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [openingReview, setOpeningReview] = useState(false);
   const resumeScan = useReviewScan();
-  const [handoff, setHandoff] = useState<PhotoHandoff | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const session = query.data?.sessions.find((s) => s.id === selected);
   const directoryReview = !!session?.directory;
@@ -203,20 +200,8 @@ export function PhotoLibraryPage() {
     },
     [client, scheduleSync],
   );
-  const run = async (action: () => Promise<unknown>) => {
-    setBusy(true);
-    setError("");
-    try {
-      await action();
-    } catch (error) {
-      setError(errorMessage(error));
-    } finally {
-      await refresh();
-      setBusy(false);
-    }
-  };
   const startReview = async () => {
-    if (!session || busy || syncing || openingReview) return;
+    if (!session || syncing || openingReview) return;
     setOpeningReview(true);
     setError("");
     try {
@@ -301,7 +286,6 @@ export function PhotoLibraryPage() {
               className="secondary"
               onClick={() => {
                 setSelected(null);
-                setHandoff(null);
               }}
             >
               <ArrowLeft size={16} />
@@ -315,7 +299,7 @@ export function PhotoLibraryPage() {
         <div className="photo-page-action-spacer" />
         <button
           className="primary"
-          disabled={busy || !desktop}
+          disabled={!desktop}
           onClick={() => setOpen(true)}
         >
           <FolderOpen size={16} />
@@ -346,7 +330,6 @@ export function PhotoLibraryPage() {
                   key={s.id}
                   onClick={() => {
                     setSelected(s.id);
-                    setHandoff(null);
                   }}
                 >
                   <Camera size={22} />
@@ -371,7 +354,7 @@ export function PhotoLibraryPage() {
           <div className="photo-empty">
             <Camera size={42} />
             <h3>打开照片目录，开始初选</h3>
-            <p>为已有照片设置星级和旗标，再将结果交给 Lightroom Classic。</p>
+            <p>为照片评分，将 3 星及以上 RAW 导出到目录。</p>
             <button
               className="primary"
               disabled={!desktop}
@@ -391,27 +374,16 @@ export function PhotoLibraryPage() {
             </span>
             <button
               className="secondary"
-              disabled={busy || syncing}
+              disabled={syncing}
               onClick={() => void sync(session.id, true)}
             >
               <RefreshCw size={15} />
               {session.directory ? "保存到目录" : "同步到 NAS"}
             </button>
-            <button
-              className="secondary"
-              disabled={busy}
-              onClick={() =>
-                void run(async () => {
-                  setHandoff(await reviewApi.prepare(session.id));
-                  await sync(session.id);
-                })
-              }
-            >
-              准备 LRC 导入
-            </button>
+            <PhotoExportButton session={session} disabled={syncing} />
             <button
               className="primary"
-              disabled={busy || syncing}
+              disabled={syncing}
               onClick={() => void startReview()}
             >
               继续审图
@@ -427,70 +399,29 @@ export function PhotoLibraryPage() {
               张待删除（仅旗标）
             </span>
           </div>
-          {handoff && (
+          {session.last_export && (
             <div className="photo-handoff">
-              <h3>
-                {handoff.failures.length
-                  ? "部分 XMP 未能写出"
-                  : handoff.directories.length
-                    ? "XMP 已准备完成"
-                    : "此目录没有可交接的 RAW"}
-              </h3>
+              <h3>上次导出</h3>
+              <p className="photo-export-path">
+                {session.last_export.directory}
+              </p>
               <p>
-                在 Lightroom Classic 中使用 Add
-                添加以下目录，原片保留在原位置。目录可能包含其他照片，请在 LRC
-                中选择所需内容。catalog 请保存在本机。
+                {new Date(session.last_export.exported_at).toLocaleString()} ·
+                已复制 {session.last_export.copied} 个，跳过{" "}
+                {session.last_export.skipped} 个相同文件
               </p>
-              {handoff.jpg_only > 0 && (
-                <p>{handoff.jpg_only} 张只有 JPG，本次不写入 JPG 元数据。</p>
+              {session.last_export.failures.length > 0 && (
+                <details>
+                  <summary>
+                    {session.last_export.failures.length} 个文件未导出
+                  </summary>
+                  {session.last_export.failures.map((failure, index) => (
+                    <p className="form-error" key={index}>
+                      {failure}
+                    </p>
+                  ))}
+                </details>
               )}
-              {handoff.directories.map((directory) => (
-                <div key={directory} className="photo-handoff-directory">
-                  <code>{directory}</code>
-                  <button
-                    aria-label={`复制 ${directory}`}
-                    onClick={() =>
-                      void navigator.clipboard
-                        .writeText(directory)
-                        .catch((error) => setError(errorMessage(error)))
-                    }
-                  >
-                    <Copy size={15} />
-                  </button>
-                  <button
-                    className="secondary"
-                    onClick={() =>
-                      void reviewApi
-                        .open(session.id, directory)
-                        .catch((error) => setError(errorMessage(error)))
-                    }
-                  >
-                    <FolderOpen size={15} />
-                    打开目录
-                  </button>
-                </div>
-              ))}
-              {handoff.failures.map((f) => (
-                <p className="form-error" key={f}>
-                  {f}
-                </p>
-              ))}
-              {handoff.directories.length > 0 && (
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    void reviewApi
-                      .launch()
-                      .catch((error) => setError(errorMessage(error)))
-                  }
-                >
-                  启动 Lightroom Classic
-                </button>
-              )}
-              <p className="muted">
-                准备完成和启动程序都不代表已加入 LRC catalog。旗标需要 LRC 13.2
-                或更新版本，请先用少量照片确认兼容性。
-              </p>
             </div>
           )}
         </>
@@ -503,7 +434,6 @@ export function PhotoLibraryPage() {
             setOpen(false);
             setSelected(id);
             setReview(true);
-            setHandoff(null);
             void client.invalidateQueries({ queryKey: ["volumes"] });
           }}
         />

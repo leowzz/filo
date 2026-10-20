@@ -6,6 +6,7 @@ use storage_provider_api::StorageReader;
 use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
 mod directory;
+mod exporting;
 mod importing;
 mod metadata;
 mod model;
