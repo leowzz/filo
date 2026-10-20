@@ -78,7 +78,7 @@ pub struct PhotoSource {
     pub path: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PhotoFileKind {
     Raw,
@@ -168,6 +168,32 @@ pub struct PhotoProgress {
     pub session_id: Uuid,
     pub completed: usize,
     pub total: usize,
+    pub path: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct PhotoReviewInput {
+    pub name: String,
+    pub jpg: StorageLocator,
+    pub raw: Option<StorageLocator>,
+    pub directory: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PhotoReviewStage {
+    Connecting,
+    Listing,
+    Pairing,
+    Saving,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PhotoReviewProgress {
+    pub stage: PhotoReviewStage,
+    pub found: usize,
+    pub completed: usize,
+    pub total: Option<usize>,
     pub path: String,
 }
 

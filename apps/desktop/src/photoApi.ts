@@ -78,6 +78,19 @@ export type PhotoProgress = {
   total: number;
   path: string;
 };
+export type PhotoReviewInput = {
+  name: string;
+  jpg: Locator;
+  raw: Locator | null;
+  directory: boolean;
+};
+export type PhotoReviewProgress = {
+  stage: "connecting" | "listing" | "pairing" | "saving";
+  found: number;
+  completed: number;
+  total: number | null;
+  path: string;
+};
 export type PhotoPreview = {
   mime: string;
   content: string;
@@ -142,6 +155,21 @@ export const photoApi = {
 };
 
 export const reviewApi = {
+  scan: (
+    requestId: string,
+    input: PhotoReviewInput,
+    onProgress: (progress: PhotoReviewProgress) => void,
+  ) => {
+    const channel = new Channel<PhotoReviewProgress>();
+    channel.onmessage = onProgress;
+    return invoke<PhotoSession>("review_scan", {
+      requestId,
+      input,
+      onProgress: channel,
+    });
+  },
+  cancelScan: (requestId: string) =>
+    invoke<void>("review_cancel_scan", { requestId }),
   openDirectory: (root: Locator) =>
     invoke<PhotoSession>("review_open_directory", { root }),
   catalog: () =>

@@ -139,7 +139,7 @@ export function AppHeader({
     {
       id: "photo-review",
       group: "文件",
-      label: reviewPending ? "正在读取照片…" : "进入审图",
+      label: reviewPending ? "正在打开审图…" : "进入审图",
       disabled: !browsing || reviewPending,
       run: () =>
         onReview(selected && isDirectory(selected) ? selected.locator : parent),
@@ -308,7 +308,7 @@ export function AppHeader({
               ) : (
                 <Images size={17} />
               )}
-              {reviewPending ? "正在读取照片…" : "进入审图"}
+              {reviewPending ? "正在打开审图…" : "进入审图"}
             </button>
             <button
               className="icon-button"

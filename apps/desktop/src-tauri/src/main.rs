@@ -393,6 +393,8 @@ fn main() {
             photography::review_catalog,
             photography::review_open,
             photography::review_open_directory,
+            photography::review_scan,
+            photography::review_cancel_scan,
             photography::review_sync,
             photography::review_restore,
             photography::photo_catalog,

@@ -19,6 +19,8 @@ import {
   type PhotoHandoff,
 } from "./photoApi";
 import { PhotoReview } from "./PhotoReview";
+import { useReviewScan } from "./useReviewScan";
+import { ReviewScanStatus } from "./ReviewScanStatus";
 
 function OpenReviewDialog({
   onClose,
@@ -32,7 +34,8 @@ function OpenReviewDialog({
   const [raw, setRaw] = useState<PhotoDirectory | null>(null);
   const directory = jpg ?? raw;
   const [picking, setPicking] = useState<"jpg" | "raw" | null>(null);
-  const [busy, setBusy] = useState(false);
+  const scan = useReviewScan();
+  const busy = scan.pending;
   const [error, setError] = useState("");
   const pick = async (field: "jpg" | "raw") => {
     setPicking(field);
@@ -57,94 +60,104 @@ function OpenReviewDialog({
   return (
     <Modal
       title="打开照片目录"
-      onClose={onClose}
-      busy={busy || !!picking}
+      onClose={busy ? () => void scan.cancel() : onClose}
+      busy={(busy && !scan.canCancel) || !!picking}
       className="photo-import-dialog"
     >
-      <div className="photo-import-fields">
-        <label>
-          审图名称
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={busy || !!picking}
-          />
-        </label>
-        <div className="photo-directory-field">
-          <span>照片目录（JPG / NEF）</span>
-          <button
-            className="secondary"
-            disabled={busy || !!picking}
-            onClick={() => void pick("jpg")}
-          >
-            <FolderOpen size={16} />
-            <span>
-              {picking === "jpg"
-                ? "正在选择目录…"
-                : (jpg?.path ?? "选择已有照片目录")}
-            </span>
-          </button>
-        </div>
-        <div className="photo-directory-field">
-          <span>单独的 RAW 目录（可选）</span>
-          <button
-            className="secondary"
-            disabled={busy || !!picking}
-            onClick={() => void pick("raw")}
-          >
-            <FolderOpen size={16} />
-            <span>
-              {picking === "raw"
-                ? "正在选择目录…"
-                : (raw?.path ?? "NEF 与 JPG 分开存放时选择")}
-            </span>
-          </button>
-          {raw && (
-            <button disabled={busy || !!picking} onClick={() => setRaw(null)}>
-              清除
+      {busy ? (
+        <ReviewScanStatus scan={scan} />
+      ) : (
+        <>
+          <div className="photo-import-fields">
+            <label>
+              审图名称
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                disabled={busy || !!picking}
+              />
+            </label>
+            <div className="photo-directory-field">
+              <span>照片目录（JPG / NEF）</span>
+              <button
+                className="secondary"
+                disabled={busy || !!picking}
+                onClick={() => void pick("jpg")}
+              >
+                <FolderOpen size={16} />
+                <span>
+                  {picking === "jpg"
+                    ? "正在选择目录…"
+                    : (jpg?.path ?? "选择已有照片目录")}
+                </span>
+              </button>
+            </div>
+            <div className="photo-directory-field">
+              <span>单独的 RAW 目录（可选）</span>
+              <button
+                className="secondary"
+                disabled={busy || !!picking}
+                onClick={() => void pick("raw")}
+              >
+                <FolderOpen size={16} />
+                <span>
+                  {picking === "raw"
+                    ? "正在选择目录…"
+                    : (raw?.path ?? "NEF 与 JPG 分开存放时选择")}
+                </span>
+              </button>
+              {raw && (
+                <button
+                  disabled={busy || !!picking}
+                  onClick={() => setRaw(null)}
+                >
+                  清除
+                </button>
+              )}
+            </div>
+            <p className="muted">
+              直接审阅已有
+              JPG/NEF。分别选择两个根目录时，按相同相对路径配对；同一目录可同时包含两种格式。
+            </p>
+            {!jpg && raw && <p className="muted">将直接审阅所选 RAW 目录。</p>}
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+          </div>
+          <div className="modal-actions">
+            <button
+              className="secondary"
+              disabled={busy || !!picking}
+              onClick={onClose}
+            >
+              取消
             </button>
-          )}
-        </div>
-        <p className="muted">
-          直接审阅已有
-          JPG/NEF。分别选择两个根目录时，按相同相对路径配对；同一目录可同时包含两种格式。
-        </p>
-        {!jpg && raw && <p className="muted">将直接审阅所选 RAW 目录。</p>}
-        {error && (
-          <p className="form-error" role="alert">
-            {error}
-          </p>
-        )}
-      </div>
-      <div className="modal-actions">
-        <button
-          className="secondary"
-          disabled={busy || !!picking}
-          onClick={onClose}
-        >
-          取消
-        </button>
-        <button
-          className="primary"
-          disabled={busy || !!picking || !directory || !name.trim()}
-          onClick={() => {
-            if (!directory) return;
-            setBusy(true);
-            setError("");
-            void reviewApi
-              .openLibrary(
-                name,
-                directory.locator,
-                jpg ? (raw?.locator ?? null) : null,
-              )
-              .then((s) => onOpened(s.id))
-              .catch((error) => setError(errorMessage(error)))
-              .finally(() => setBusy(false));
-          }}
-        >
-          {busy ? "正在读取照片目录…" : "开始审图"}
-        </button>
-      </div>
+            <button
+              className="primary"
+              disabled={busy || !!picking || !directory || !name.trim()}
+              onClick={() => {
+                if (!directory) return;
+                setError("");
+                void scan
+                  .open({
+                    name,
+                    jpg: directory.locator,
+                    raw: jpg ? (raw?.locator ?? null) : null,
+                    directory: false,
+                  })
+                  .then((s) => {
+                    if (s) onOpened(s.id);
+                  })
+                  .catch((error) => setError(errorMessage(error)));
+              }}
+            >
+              {busy ? "正在读取照片目录…" : "开始审图"}
+            </button>
+          </div>
+        </>
+      )}
     </Modal>
   );
 }

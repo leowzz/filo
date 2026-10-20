@@ -51,6 +51,8 @@ pub struct StorageService {
     photo_sync_lock: Arc<Mutex<()>>,
     photo_review_sync_lock: Arc<Mutex<()>>,
     photo_jobs: Arc<Mutex<std::collections::HashMap<Uuid, tokio_util::sync::CancellationToken>>>,
+    photo_review_scans:
+        Arc<Mutex<std::collections::HashMap<Uuid, tokio_util::sync::CancellationToken>>>,
     credentials: Arc<dyn CredentialStore>,
     temporary_backends: Arc<Mutex<std::collections::HashMap<Uuid, Arc<dyn StorageBackend>>>>,
     transfers: Arc<Mutex<std::collections::HashMap<Uuid, transfers::ActiveTransfer>>>,
@@ -115,6 +117,7 @@ impl StorageService {
             photo_sync_lock: Arc::new(Mutex::new(())),
             photo_review_sync_lock: Arc::new(Mutex::new(())),
             photo_jobs: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            photo_review_scans: Arc::new(Mutex::new(std::collections::HashMap::new())),
             transfers: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }

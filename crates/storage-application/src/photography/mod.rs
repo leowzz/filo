@@ -12,6 +12,7 @@ mod model;
 mod planning;
 mod review;
 mod review_library;
+mod review_scan;
 mod sync;
 mod xmp;
 pub use model::*;

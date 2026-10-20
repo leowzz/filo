@@ -38,3 +38,4 @@ keyring = { version = "3", features = ["sync-secret-service"] }
 [dev-dependencies]
 tempfile.workspace = true
 async-trait.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

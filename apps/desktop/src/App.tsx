@@ -2,6 +2,9 @@ import { FloatingNotice } from "./FloatingNotice";
 import { PhotographyPage } from "./PhotographyPage";
 import { DirectoryPhotoReview } from "./DirectoryPhotoReview";
 import { reviewApi } from "./photoApi";
+import { useReviewScan } from "./useReviewScan";
+import { ReviewScanStatus } from "./ReviewScanStatus";
+import { Modal } from "./components";
 import { PreviewDialog } from "./PreviewDialog";
 import { ContentSearchDialog } from "./ContentSearchDialog";
 import { S3ManagerDialog } from "./S3ManagerDialog";
@@ -85,6 +88,7 @@ export default function App() {
   const client = useQueryClient();
   const [directoryReview, setDirectoryReview] = useState<string | null>(null);
   const [reviewPending, setReviewPending] = useState(false);
+  const reviewScan = useReviewScan();
   const reviewRequest = useRef(0);
   const volumesQuery = useQuery({
     queryKey: ["volumes"],
@@ -382,6 +386,7 @@ export default function App() {
     },
   });
   function navigate(volumeId: string, logicalPath: string) {
+    void reviewScan.cancel();
     reviewRequest.current += 1;
     setDirectoryReview(null);
     if (volumes.find((item) => item.id === volumeId)?.root.type === "s3")
@@ -794,7 +799,13 @@ export default function App() {
     setMenu(null);
     setNotice("");
     try {
-      const session = await reviewApi.openDirectory(root);
+      const session = await reviewScan.open({
+        name: "",
+        jpg: root,
+        raw: null,
+        directory: true,
+      });
+      if (!session) return;
       await client.invalidateQueries({
         queryKey: ["photo-reviews"],
         refetchType: "none",
@@ -907,6 +918,16 @@ export default function App() {
           onReview={(root) => void openDirectoryReview(root)}
           reviewPending={reviewPending}
         />
+
+        {reviewScan.pending && (
+          <Modal
+            title="打开审图"
+            onClose={() => void reviewScan.cancel()}
+            busy={!reviewScan.canCancel}
+          >
+            <ReviewScanStatus scan={reviewScan} />
+          </Modal>
+        )}
 
         {volumesQuery.isError && (
           <FloatingNotice key={errorMessage(volumesQuery.error)}>

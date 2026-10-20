@@ -14,6 +14,10 @@ crate::errors::commands! {
 pub async fn review_catalog(service: State<'_, StorageService>) -> StorageResult<PhotoCatalog> { service.photo_review_workspace().photo_catalog().await }
 pub async fn review_open(service: State<'_, StorageService>, name: String, jpg: StorageLocator, raw: Option<StorageLocator>) -> StorageResult<PhotoSession> { service.photo_review_workspace().photo_open_review(name, jpg, raw).await }
 pub async fn review_open_directory(service: State<'_, StorageService>, root: StorageLocator) -> StorageResult<PhotoSession> { service.photo_review_workspace().photo_open_directory_review(root).await }
+pub async fn review_scan(service: State<'_, StorageService>, request_id: Uuid, input: PhotoReviewInput, on_progress: tauri::ipc::Channel<PhotoReviewProgress>) -> StorageResult<PhotoSession> {
+    service.photo_review_workspace().photo_scan_review(request_id, input, std::sync::Arc::new(move |progress| { let _ = on_progress.send(progress); })).await
+}
+pub async fn review_cancel_scan(service: State<'_, StorageService>, request_id: Uuid) -> StorageResult<()> { service.photo_cancel_review_scan(request_id).await }
 pub async fn review_sync(service: State<'_, StorageService>, session_id: Uuid) -> StorageResult<()> { service.photo_review_workspace().photo_sync(session_id).await }
 pub async fn review_restore(service: State<'_, StorageService>, jpg: StorageLocator, raw: StorageLocator) -> StorageResult<usize> { service.photo_review_workspace().photo_restore(jpg, raw).await }
 pub async fn photo_catalog(service: State<'_, StorageService>) -> StorageResult<PhotoCatalog> { service.photo_catalog().await }

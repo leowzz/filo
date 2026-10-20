@@ -3,13 +3,19 @@ use super::*;
 impl StorageService {
     pub async fn photo_open_directory_review(
         &self,
-        mut root: StorageLocator,
+        root: StorageLocator,
     ) -> StorageResult<PhotoSession> {
-        if root.version_id.is_some() {
-            return Err(invalid("请从当前目录进入审图，不支持历史版本"));
-        }
-        root.logical_path = normalize_path(&root.logical_path)?;
-        self.open_review(String::new(), root, None, true).await
+        self.photo_scan_review(
+            Uuid::new_v4(),
+            PhotoReviewInput {
+                name: String::new(),
+                jpg: root,
+                raw: None,
+                directory: true,
+            },
+            Arc::new(|_| {}),
+        )
+        .await
     }
 
     pub(super) async fn load_directory_review(
