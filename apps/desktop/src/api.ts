@@ -34,6 +34,7 @@ export const api = {
   savePreviewCacheSettings: (settings: PreviewCacheSettings) =>
     invoke<PreviewCacheInfo>("save_preview_cache_settings", { settings }),
   clearPreviewCache: () => invoke<PreviewCacheInfo>("clear_preview_cache"),
+  openPreviewCacheDirectory: () => invoke<void>("open_preview_cache_directory"),
   transferSettings: () =>
     desktop
       ? invoke<TransferSettings>("get_transfer_settings")

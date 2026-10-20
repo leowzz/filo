@@ -17,7 +17,8 @@ import {
   Undo2,
   X,
 } from "lucide-react";
-import { errorMessage } from "./api";
+import { useQuery } from "@tanstack/react-query";
+import { api, desktop, errorMessage } from "./api";
 import {
   reviewApi,
   type Photo,
@@ -207,6 +208,23 @@ export function PhotoReview({
   const photoPath = rawOnly
     ? photo?.files.find((f) => f.kind === "raw")?.path
     : photo?.original_path;
+  const { data: volumes = [] } = useQuery({
+    queryKey: ["volumes"],
+    queryFn: api.volumes,
+  });
+  const { data: catalog } = useQuery({
+    queryKey: ["photo-reviews"],
+    queryFn: reviewApi.catalog,
+    refetchOnWindowFocus: false,
+  });
+  const reviewRoot =
+    session.directory ??
+    catalog?.archives.find((archive) => archive.id === session.archive_id)?.jpg;
+  const volume = volumes.find((item) => item.id === reviewRoot?.volume_id);
+  const folderName = reviewRoot?.logical_path.split("/").filter(Boolean).at(-1);
+  const locationName =
+    [volume?.name, folderName].filter(Boolean).join(" / ") || session.name;
+  const filename = photoPath?.split("/").at(-1);
   const ordered = sortPhotos(
     controller.photos.map((p) => ({
       ...p,
@@ -478,15 +496,35 @@ export function PhotoReview({
   const mark = (rating: number, flag = photo?.flag ?? "none") =>
     controller.mark({ rating, flag }, auto, () => step(1));
   return (
-    <section className="photo-review" ref={container} aria-label="照片审图">
-      <div className="photo-review-toolbar">
+    <section
+      className={`photo-review${desktop && navigator.platform.toLowerCase().includes("mac") ? " photo-review-macos" : ""}`}
+      ref={container}
+      aria-label="照片审图"
+    >
+      <div
+        className="photo-review-titlebar"
+        title={[locationName, filename].filter(Boolean).join(" / ")}
+        data-tauri-drag-region
+      >
+        <span className="photo-review-location" data-tauri-drag-region>
+          {locationName}
+        </span>
+        {filename && (
+          <>
+            <span className="photo-review-title-separator" aria-hidden="true">
+              /
+            </span>
+            <span className="photo-review-current-file" data-tauri-drag-region>
+              {filename}
+            </span>
+          </>
+        )}
+      </div>
+      <div className="photo-review-toolbar" data-tauri-drag-region>
         <button className="photo-review-back" onClick={() => void back()}>
           <ArrowLeft size={17} />
           {backLabel}
         </button>
-        <span className="photo-review-name" title={session.name}>
-          {session.name}
-        </span>
         <span className="photo-review-select">
           <select
             aria-label="照片排序"
@@ -640,9 +678,6 @@ export function PhotoReview({
         />
       </div>
       <div className="photo-review-controls">
-        <span className="photo-review-filename" title={photoPath}>
-          {photoPath?.split("/").at(-1)}
-        </span>
         <button
           aria-label="上一张"
           disabled={index <= 0}

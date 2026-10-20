@@ -13,7 +13,7 @@ export function SettingsPage({ updater }: { updater: AppUpdater }) {
   return (
     <div className="page-scroll simple-page">
       <h1>设置</h1>
-      <CredentialSettingsCard />
+      <AppUpdateCard updater={updater} />
       <TransferSettingsCard />
       <PreviewCacheSettingsCard />
       <section className="settings-card">
@@ -62,7 +62,7 @@ export function SettingsPage({ updater }: { updater: AppUpdater }) {
           />
         </label>
       </section>
-      <AppUpdateCard updater={updater} />
+      <CredentialSettingsCard />
     </div>
   );
 }

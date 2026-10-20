@@ -23,3 +23,16 @@ sha2 = "0.10"
 chrono = "0.4"
 thiserror = "2"
 tempfile = "3"
+
+# Keep image processing responsive in the desktop development build.
+[profile.dev.package.storage-application]
+opt-level = 2
+
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+
+[profile.dev.package.zune-core]
+opt-level = 3

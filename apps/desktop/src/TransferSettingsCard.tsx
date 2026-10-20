@@ -22,7 +22,6 @@ export function TransferSettingsCard() {
         <Gauge size={19} />
         传输速度
       </h2>
-      <p>上传和下载分别限速，同一方向的并行任务共享上限。默认不限速。</p>
       {query.isPending && <p role="status">正在读取设置…</p>}
       {query.isError && (
         <p className="error-text" role="alert">
@@ -86,14 +85,7 @@ function TransferSettingsForm({
       }}
     >
       <label htmlFor="upload-speed">
-        <div>
-          <strong>上传速度上限</strong>
-          <p>
-            {Number(upload) === 0 && upload !== ""
-              ? "不限速"
-              : "所有上传任务共用"}
-          </p>
-        </div>
+        <strong>上传速度上限</strong>
         <span className="transfer-speed-input">
           <input
             id="upload-speed"
@@ -115,14 +107,7 @@ function TransferSettingsForm({
         </span>
       </label>
       <label htmlFor="download-speed">
-        <div>
-          <strong>下载速度上限</strong>
-          <p>
-            {Number(download) === 0 && download !== ""
-              ? "不限速"
-              : "所有下载及远程校验读取共用"}
-          </p>
-        </div>
+        <strong>下载速度上限</strong>
         <span className="transfer-speed-input">
           <input
             id="download-speed"
@@ -143,31 +128,32 @@ function TransferSettingsForm({
           <span>KiB/s</span>
         </span>
       </label>
-      <p className="field-help" id="transfer-speed-help">
-        0 表示不限速，1024 KiB/s = 1
-        MiB/s。限制任务的平均速度；本地文件互拷不受影响。保存后重启仍然有效。
-      </p>
       {!valid && (
         <p className="error-text" role="alert">
           请输入 0 到 1048576 的整数。
         </p>
       )}
-      <div className="transfer-settings-actions">
-        <button
-          type="button"
-          className="secondary"
-          disabled={pending}
-          onClick={() => {
-            setUpload("0");
-            setDownload("0");
-            onChange();
-          }}
-        >
-          恢复不限速
-        </button>
-        <button className="primary" disabled={!valid || pending}>
-          {pending && <LoaderCircle size={14} className="spin" />}保存速度设置
-        </button>
+      <div className="settings-form-footer">
+        <p className="field-help" id="transfer-speed-help">
+          0 为不限速，同向任务共享；下载含远程校验，本地互拷不受影响。
+        </p>
+        <div className="transfer-settings-actions">
+          <button
+            type="button"
+            className="secondary"
+            disabled={pending}
+            onClick={() => {
+              setUpload("0");
+              setDownload("0");
+              onChange();
+            }}
+          >
+            恢复不限速
+          </button>
+          <button className="primary" disabled={!valid || pending}>
+            {pending && <LoaderCircle size={14} className="spin" />}保存速度设置
+          </button>
+        </div>
       </div>
     </form>
   );

@@ -1931,6 +1931,7 @@ version = "0.1.13"
 dependencies = [
  "base64 0.22.1",
  "dirs",
+ "open",
  "provider-opendal",
  "regex",
  "serde",

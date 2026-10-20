@@ -306,17 +306,21 @@
 }
 .transfer-speed-input {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 8px;
   color: var(--muted);
   white-space: nowrap;
 }
+.transfer-speed-input > span {
+  min-width: 4ch;
+}
 .transfer-settings-form > label {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 16px;
-  padding: 12px 0;
+  gap: 12px;
+  padding: 4px 0;
 }
 .settings-card .error-text {
   color: #bc473d;
@@ -332,7 +336,7 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 16px;
+  margin-top: 10px;
 }
 .settings-card .transfer-settings-saved {
   color: #348747;

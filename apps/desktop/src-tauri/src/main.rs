@@ -38,6 +38,17 @@ async fn clear_preview_cache(service: State<'_, StorageService>) -> StorageResul
     service.clear_preview_cache().await
 }
 
+async fn open_preview_cache_directory(service: State<'_, StorageService>) -> StorageResult<()> {
+    let directory = service.preview_cache_info().await?.directory;
+    tokio::task::spawn_blocking(move || {
+        open::that(directory).map_err(|_| {
+            StorageError::new(StorageErrorCode::Io, "无法打开缓存位置，请检查目录和系统权限")
+        })
+    })
+    .await
+    .map_err(|_| StorageError::new(StorageErrorCode::Internal, "打开缓存位置任务意外中断"))?
+}
+
 async fn get_transfer_settings(
     service: State<'_, StorageService>,
 ) -> StorageResult<TransferSettings> {
@@ -450,6 +461,7 @@ fn main() {
             get_preview_cache,
             save_preview_cache_settings,
             clear_preview_cache,
+            open_preview_cache_directory,
             photography::review_catalog,
             photography::review_open,
             photography::review_open_directory,

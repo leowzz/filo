@@ -129,7 +129,6 @@ impl StorageService {
         } else {
             &self.preview_slots
         };
-        let _slot = slots.acquire().await.map_err(|_| error("预览任务已停止"))?;
         let _guard = self.mutation_lock.read().await;
         let backend = self.backend(locator.volume_id).await?;
         let entry = backend.stat(&locator).await?;
@@ -143,6 +142,7 @@ impl StorageService {
                 return Ok(preview);
             }
         }
+        let _slot = slots.acquire().await.map_err(|_| error("预览任务已停止"))?;
         let nef_image = if is_nef {
             Some(nef::load(backend.as_ref(), &entry, thumbnail, &self.nef_previews).await?)
         } else {

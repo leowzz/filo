@@ -183,10 +183,6 @@ impl StorageService {
         } else {
             &self.preview_slots
         };
-        let _slot = slots
-            .acquire()
-            .await
-            .map_err(|_| invalid("预览任务已停止"))?;
         let _mutation = self.mutation_lock.read().await;
         let target = file_target(archive, file)?;
         let backend = self.backend(target.volume_id).await?;
@@ -198,6 +194,10 @@ impl StorageService {
                 return Ok(preview);
             }
         }
+        let _slot = slots
+            .acquire()
+            .await
+            .map_err(|_| invalid("预览任务已停止"))?;
         let embedded = file.kind == PhotoFileKind::Raw;
         let (bytes, orientation) = if embedded {
             crate::browsing::nef::load(backend.as_ref(), &entry, thumbnail, &self.nef_previews)

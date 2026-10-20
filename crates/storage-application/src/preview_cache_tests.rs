@@ -329,3 +329,63 @@ async fn ordinary_and_photo_previews_share_disk_cache_and_revalidate_sources() {
     );
     assert!(!photos.join(".filo/cache").exists());
 }
+
+#[tokio::test]
+async fn cached_previews_do_not_wait_for_busy_image_processing_slots() {
+    let dir = tempfile::tempdir().unwrap();
+    let photos = dir.path().join("photos");
+    fs::create_dir(&photos).unwrap();
+    fs::write(
+        photos.join("photo.NEF"),
+        crate::browsing::nef::fixture(false, false),
+    )
+    .unwrap();
+    fs::write(photos.join("note.txt"), "cached text").unwrap();
+    let repository = storage_repository::Repository::open(&dir.path().join("settings.sqlite"))
+        .await
+        .unwrap();
+    let service = crate::StorageService::new(repository).with_preview_cache(open(&dir).await);
+    let volume = service.add_selected_directory(photos, false).await.unwrap();
+    let locator = |path: &str| StorageLocator {
+        volume_id: volume.id,
+        logical_path: path.into(),
+        version_id: None,
+    };
+    let review = service.photo_review_workspace();
+    let session = review
+        .photo_open_directory_review(locator(""))
+        .await
+        .unwrap();
+    service
+        .preview_entry(locator("note.txt"), false)
+        .await
+        .unwrap();
+    for thumbnail in [false, true] {
+        review
+            .photo_preview(session.photo_ids[0], false, thumbnail, false)
+            .await
+            .unwrap();
+    }
+    let _previews_busy = service.preview_slots.acquire_many(2).await.unwrap();
+    let _thumbnail_busy = service.thumbnail_slots.acquire().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        assert_eq!(
+            service
+                .preview_entry(locator("note.txt"), false)
+                .await
+                .unwrap()
+                .content,
+            "cached text"
+        );
+        for thumbnail in [false, true] {
+            assert!(!review
+                .photo_preview(session.photo_ids[0], false, thumbnail, false)
+                .await
+                .unwrap()
+                .content
+                .is_empty());
+        }
+    })
+    .await
+    .expect("disk cache hits must bypass busy preview and thumbnail generation slots");
+}

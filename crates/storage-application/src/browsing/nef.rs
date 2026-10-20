@@ -89,11 +89,6 @@ struct FileData {
     metadata_bytes: usize,
 }
 impl FileData {
-    fn contains(&self, range: &Range<u64>) -> bool {
-        self.blocks.iter().any(|(offset, bytes)| {
-            range.start >= *offset && range.end <= *offset + bytes.len() as u64
-        })
-    }
     fn cached(&self, range: &Range<u64>) -> Option<Vec<u8>> {
         self.blocks.iter().find_map(|(offset, bytes)| {
             if range.start >= *offset && range.end <= *offset + bytes.len() as u64 {
@@ -323,14 +318,10 @@ pub(crate) async fn load(
             index
         }
     };
-    // Reuse an already loaded full-size JPEG for a later thumbnail.
+    // Decode the small embedded JPEG even when the full-size JPEG is cached.
+    // Reusing the large image saves a small read but wastes a full image decode.
     let range = if thumbnail {
-        index
-            .previews
-            .iter()
-            .rev()
-            .find(|r| reader.data.contains(r))
-            .unwrap_or(&index.previews[0])
+        &index.previews[0]
     } else {
         index.previews.last().unwrap()
     };
@@ -629,8 +620,8 @@ mod tests {
         service.preview_entry(locator, true).await.unwrap();
         assert_eq!(
             backend.received(),
-            received,
-            "a loaded large JPEG serves a later thumbnail"
+            received + small_len as u64,
+            "a thumbnail reads the small JPEG instead of decoding the cached full-size image"
         );
     }
 
