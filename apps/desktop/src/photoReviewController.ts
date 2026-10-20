@@ -9,6 +9,8 @@ export type PhotoFeedback = {
   from: number;
 };
 type Mark = { rating: number; flag: PhotoFlag };
+export const hasRaw = (photo: Photo) =>
+  photo.files.some((f) => f.kind === "raw");
 type Dependencies = {
   save: (id: string, mark: Mark) => Promise<Photo>;
   undo: () => Promise<Photo | null>;
@@ -24,6 +26,7 @@ export class PhotoReviewController {
   photos: Photo[];
   current: string | null;
   pending = 0;
+  rawOnly: boolean;
   private committed = new Map<string, Photo>();
   private latest = new Map<string, number>();
   private sequence = 0;
@@ -35,15 +38,29 @@ export class PhotoReviewController {
     photos: Photo[],
     current: string | null,
     private deps: Dependencies,
+    rawOnly = false,
   ) {
     this.photos = photos;
-    this.current = photos.some((p) => p.id === current)
+    this.rawOnly = rawOnly;
+    this.current = photos.some(
+      (p) => p.id === current && (!rawOnly || hasRaw(p)),
+    )
       ? current
-      : (photos[0]?.id ?? null);
+      : (photos.find((p) => !rawOnly || hasRaw(p))?.id ?? null);
     for (const photo of photos) this.committed.set(photo.id, photo);
   }
   get photo() {
-    return this.photos.find((p) => p.id === this.current);
+    return this.photos.find(
+      (p) => p.id === this.current && (!this.rawOnly || hasRaw(p)),
+    );
+  }
+  setRawOnly(value: boolean) {
+    this.rawOnly = value;
+    this.select(
+      this.photo?.id ??
+        this.photos.find((p) => !value || hasRaw(p))?.id ??
+        null,
+    );
   }
   activate() {
     this.disposed = false;
@@ -54,7 +71,10 @@ export class PhotoReviewController {
   select(id: string | null) {
     this.navigation++;
     clearTimeout(this.timer);
-    this.current = id;
+    this.current =
+      id && this.rawOnly && !this.photos.some((p) => p.id === id && hasRaw(p))
+        ? (this.photos.find(hasRaw)?.id ?? null)
+        : id;
     this.deps.feedback(null);
     this.deps.changed();
   }

@@ -3,8 +3,13 @@ const cache = new Map<string, PhotoPreview>();
 const inflight = new Map<string, Promise<PhotoPreview>>();
 const budget = 32 * 1024 * 1024;
 let bytes = 0;
-export function photoPreview(id: string, original = false, thumbnail = false) {
-  const key = `${id}:${original}:${thumbnail}`;
+export function photoPreview(
+  id: string,
+  original = false,
+  thumbnail = false,
+  rawOnly = false,
+) {
+  const key = `${id}:${original}:${thumbnail}:${rawOnly}`;
   const cached = cache.get(key);
   if (cached) {
     cache.delete(key);
@@ -14,7 +19,7 @@ export function photoPreview(id: string, original = false, thumbnail = false) {
   const pending = inflight.get(key);
   if (pending) return pending;
   const request = reviewApi
-    .preview(id, original, thumbnail)
+    .preview(id, original, thumbnail, rawOnly)
     .then((value) => {
       if (value.content.length < budget) {
         cache.set(key, value);

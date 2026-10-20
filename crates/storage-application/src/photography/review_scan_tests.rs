@@ -111,6 +111,7 @@ fn input(root: StorageLocator) -> PhotoReviewInput {
         jpg: root,
         raw: None,
         directory: true,
+        raw_only: None,
     }
 }
 
@@ -155,7 +156,7 @@ async fn raw_only_scan_reads_no_photo_contents_and_previews_are_lazy() {
     assert_eq!(reopened.photo_ids, session.photo_ids);
     assert_eq!(probe.primary_reads.load(Ordering::SeqCst), 0);
     let preview = service
-        .photo_preview(session.photo_ids[0], false, false)
+        .photo_preview(session.photo_ids[0], false, false, false)
         .await
         .unwrap();
     assert_eq!(preview.mime, "image/jpeg");
@@ -276,5 +277,104 @@ async fn cancelling_a_stalled_listing_releases_scan_without_publishing() {
             .photo_ids
             .len(),
         1
+    );
+}
+
+#[tokio::test]
+async fn raw_view_uses_raw_preview_and_persists_without_changing_photo_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let (service, root, _) = setup(dir.path()).await;
+    for name in ["pair.NEF", "raw.NEF"] {
+        std::fs::write(
+            dir.path().join("photos").join(name),
+            crate::browsing::nef::fixture(true, false),
+        )
+        .unwrap();
+    }
+    for name in ["pair.JPG", "jpg.JPG"] {
+        image::RgbImage::new(32, 16)
+            .save(dir.path().join("photos").join(name))
+            .unwrap();
+    }
+    let mut request = input(root.clone());
+    request.raw_only = Some(true);
+    let session = service
+        .photo_scan_review(Uuid::new_v4(), request, Arc::new(|_| {}))
+        .await
+        .unwrap();
+    assert!(session.position.raw_only);
+    assert_eq!(
+        session.photo_ids.len(),
+        3,
+        "view options must not remove photos from the shared journal"
+    );
+    let catalog = service.photo_catalog().await.unwrap();
+    let paired = catalog
+        .photos
+        .iter()
+        .find(|p| p.files.len() == 2)
+        .unwrap()
+        .id;
+    let jpg_only = catalog
+        .photos
+        .iter()
+        .find(|p| p.original_path == "jpg.JPG")
+        .unwrap()
+        .id;
+    let jpg = service
+        .photo_preview(paired, true, false, false)
+        .await
+        .unwrap();
+    let raw = service
+        .photo_preview(paired, true, false, true)
+        .await
+        .unwrap();
+    assert!(!jpg.embedded);
+    assert!(raw.embedded);
+    assert_eq!((jpg.width, jpg.height), (32, 16));
+    assert_eq!((raw.width, raw.height), (200, 400));
+    assert!(service
+        .photo_preview(jpg_only, false, false, true)
+        .await
+        .is_err());
+    service
+        .photo_mark(session.id, paired, 4, PhotoFlag::Pick)
+        .await
+        .unwrap();
+    let restored = service
+        .photo_open_directory_review(root.clone())
+        .await
+        .unwrap();
+    assert!(restored.position.raw_only);
+    assert_eq!(restored.photo_ids, session.photo_ids);
+    let mut request = input(root);
+    request.raw_only = Some(false);
+    let all = service
+        .photo_scan_review(Uuid::new_v4(), request, Arc::new(|_| {}))
+        .await
+        .unwrap();
+    assert!(!all.position.raw_only);
+    assert_eq!(all.photo_ids, session.photo_ids);
+    let catalog = service.photo_catalog().await.unwrap();
+    assert_eq!(
+        catalog
+            .photos
+            .iter()
+            .find(|p| p.id == paired)
+            .unwrap()
+            .rating,
+        4
+    );
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(dir.path().join("photos/.filo/review.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["session"]["position"]["raw_only"], false);
+    let mut position = manifest["session"]["position"].clone();
+    position.as_object_mut().unwrap().remove("raw_only");
+    assert!(
+        !serde_json::from_value::<PhotoReviewPosition>(position)
+            .unwrap()
+            .raw_only
     );
 }

@@ -21,27 +21,34 @@ import {
 } from "./photoApi";
 import {
   PhotoReviewController,
+  hasRaw,
   photoKeyAction,
   type PhotoFeedback as Feedback,
 } from "./photoReviewController";
 import { PhotoFeedback } from "./PhotoFeedback";
 import { photoPreview } from "./photoPreviewCache";
 
-function Thumbnail({ photo }: { photo: Photo }) {
-  const [image, setImage] = useState<PhotoPreview | null>(null);
+function Thumbnail({ photo, rawOnly }: { photo: Photo; rawOnly: boolean }) {
+  const [image, setImage] = useState<{
+    preview: PhotoPreview;
+    rawOnly: boolean;
+  } | null>(null);
   useEffect(() => {
     let live = true;
-    void photoPreview(photo.id, false, true)
+    void photoPreview(photo.id, false, true, rawOnly)
       .then((value) => {
-        if (live) setImage(value);
+        if (live) setImage({ preview: value, rawOnly });
       })
       .catch(() => {});
     return () => {
       live = false;
     };
-  }, [photo.id]);
-  return image ? (
-    <img src={`data:${image.mime};base64,${image.content}`} alt="" />
+  }, [photo.id, rawOnly]);
+  return image && image.rawOnly === rawOnly ? (
+    <img
+      src={`data:${image.preview.mime};base64,${image.preview.content}`}
+      alt=""
+    />
   ) : (
     <span className="photo-thumbnail-placeholder">预览</span>
   );
@@ -91,23 +98,29 @@ export function PhotoReview({
           feedback: (value) => setFeedback(document.hidden ? null : value),
           error: (message, retry) => setFailure({ message, retry }),
         },
+        session.position.raw_only ?? false,
       ),
   );
   const [filter, setFilter] = useState(session.position.filter || "all");
   const [minimum, setMinimum] = useState(session.position.minimum_rating);
   const [auto, setAuto] = useState(session.position.auto_advance);
   const [original, setOriginal] = useState(false);
+  const rawOnly = controller.rawOnly;
   const [fullscreen, setFullscreen] = useState(false);
   const [image, setImage] = useState<{
     id: string;
     preview: PhotoPreview;
     original: boolean;
+    rawOnly: boolean;
   } | null>(null);
   const [previewFailure, setPreviewFailure] = useState("");
   const [previewAttempt, retryPreview] = useReducer((n) => n + 1, 0);
   const container = useRef<HTMLElement>(null);
   const positionRef = useRef<PhotoPosition | null>(null);
   const photo = controller.photo;
+  const photoPath = rawOnly
+    ? photo?.files.find((f) => f.kind === "raw")?.path
+    : photo?.original_path;
   const matches = (p: Photo) =>
     p.rating >= minimum &&
     (filter === "all" ||
@@ -115,7 +128,8 @@ export function PhotoReview({
       (filter === "pick" && p.flag === "pick") ||
       (filter === "reject" && p.flag === "reject"));
   const visible = controller.photos.filter(
-    (p) => matches(p) || p.id === controller.current,
+    (p) =>
+      (!rawOnly || hasRaw(p)) && (matches(p) || p.id === controller.current),
   );
   const ids = visible.map((p) => p.id);
   const index = ids.indexOf(controller.current ?? "");
@@ -165,6 +179,7 @@ export function PhotoReview({
       if (action.type === "undo") {
         setFilter("all");
         setMinimum(0);
+        controller.setRawOnly(false);
         controller.undo();
       }
       if (action.type === "escape") {
@@ -199,6 +214,7 @@ export function PhotoReview({
       filter,
       minimum_rating: minimum,
       auto_advance: auto,
+      raw_only: rawOnly,
     };
     const timer = setTimeout(() => {
       if (positionRef.current)
@@ -210,14 +226,22 @@ export function PhotoReview({
           );
     }, 500);
     return () => clearTimeout(timer);
-  }, [controller.current, filter, minimum, auto, session.id, onPositionSaved]);
+  }, [
+    controller.current,
+    filter,
+    minimum,
+    auto,
+    rawOnly,
+    session.id,
+    onPositionSaved,
+  ]);
   useEffect(() => {
     let live = true;
     setPreviewFailure("");
     if (!photo) return;
-    void photoPreview(photo.id, original)
+    void photoPreview(photo.id, original, false, rawOnly)
       .then((preview) => {
-        if (live) setImage({ id: photo.id, preview, original });
+        if (live) setImage({ id: photo.id, preview, original, rawOnly });
       })
       .catch((error) => {
         if (live) setPreviewFailure(errorMessage(error));
@@ -225,18 +249,15 @@ export function PhotoReview({
     return () => {
       live = false;
     };
-  }, [photo?.id, original, previewAttempt]);
+  }, [photo?.id, original, rawOnly, previewAttempt]);
   useEffect(() => {
-    const selected = controller.photos.findIndex(
-      (p) => p.id === controller.current,
-    );
-    for (const p of [
-      controller.photos[selected - 1],
-      controller.photos[selected + 1],
-    ])
-      if (p) void photoPreview(p.id).catch(() => {});
-  }, [controller, controller.current]);
-  const shownImage = image?.id === photo?.id ? image : null;
+    const source = controller.photos.filter((p) => !rawOnly || hasRaw(p));
+    const selected = source.findIndex((p) => p.id === controller.current);
+    for (const p of [source[selected - 1], source[selected + 1]])
+      if (p) void photoPreview(p.id, false, false, rawOnly).catch(() => {});
+  }, [controller, controller.current, rawOnly]);
+  const shownImage =
+    image?.id === photo?.id && image?.rawOnly === rawOnly ? image : null;
   const mark = (rating: number, flag = photo?.flag ?? "none") =>
     controller.mark({ rating, flag }, auto, () => step(1));
   return (
@@ -255,6 +276,7 @@ export function PhotoReview({
             controller.select(
               controller.photos.find(
                 (p) =>
+                  (!rawOnly || hasRaw(p)) &&
                   p.rating >= minimum &&
                   (e.target.value === "all" ||
                     (e.target.value === "unreviewed" && !p.reviewed) ||
@@ -277,6 +299,7 @@ export function PhotoReview({
             controller.select(
               controller.photos.find(
                 (p) =>
+                  (!rawOnly || hasRaw(p)) &&
                   p.rating >= value &&
                   (filter === "all" ||
                     (filter === "unreviewed" && !p.reviewed) ||
@@ -292,6 +315,14 @@ export function PhotoReview({
             </option>
           ))}
         </select>
+        <label className="photo-auto">
+          <input
+            type="checkbox"
+            checked={rawOnly}
+            onChange={(e) => controller.setRawOnly(e.target.checked)}
+          />
+          仅查看 RAW
+        </label>
         <label className="photo-auto">
           <input
             type="checkbox"
@@ -335,7 +366,7 @@ export function PhotoReview({
         {shownImage ? (
           <img
             src={`data:${shownImage.preview.mime};base64,${shownImage.preview.content}`}
-            alt={photo?.original_path}
+            alt={photoPath}
             style={
               original && shownImage.original
                 ? {
@@ -346,7 +377,13 @@ export function PhotoReview({
             }
           />
         ) : (
-          <p>{photo ? "正在读取预览…" : "没有符合筛选条件的照片"}</p>
+          <p>
+            {photo
+              ? "正在读取预览…"
+              : rawOnly && !controller.photos.some(hasRaw)
+                ? "此目录没有 RAW 照片"
+                : "没有符合筛选条件的照片"}
+          </p>
         )}
         {previewFailure && (
           <div className="photo-preview-error" role="alert">
@@ -439,6 +476,7 @@ export function PhotoReview({
           onClick={() => {
             setFilter("all");
             setMinimum(0);
+            controller.setRawOnly(false);
             controller.undo();
           }}
         >
@@ -461,7 +499,7 @@ export function PhotoReview({
         </span>
       </div>
       <div className="photo-image-info">
-        <span>{photo?.original_path}</span>
+        <span>{photoPath}</span>
         <span>
           {shownImage &&
             `${shownImage.preview.width} × ${shownImage.preview.height}${shownImage.preview.embedded ? " · NEF 内嵌预览，完整 RAW 请在 LRC 检查" : original && !shownImage.original ? " · 正在读取原尺寸…" : ""}`}
@@ -473,12 +511,12 @@ export function PhotoReview({
           .map((p) => (
             <button
               key={p.id}
-              aria-label={`查看 ${p.original_path}`}
+              aria-label={`查看 ${rawOnly ? p.files.find((f) => f.kind === "raw")?.path : p.original_path}`}
               aria-current={p.id === photo?.id}
               className={p.id === photo?.id ? "current" : ""}
               onClick={() => controller.select(p.id)}
             >
-              <Thumbnail photo={p} />
+              <Thumbnail photo={p} rawOnly={rawOnly} />
               <span className="photo-filmstrip-mark">
                 {p.flag === "pick" && (
                   <Flag size={12} className={p.flag} fill="currentColor" />

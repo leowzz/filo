@@ -226,6 +226,10 @@
   gap: 8px;
   line-height: 1.5;
 }
+.photo-import-fields .photo-review-option {
+  flex-direction: row;
+  align-items: center;
+}
 .photo-import-fields input:not([type="checkbox"]),
 .photo-import-fields select,
 .photo-date-resolution input {

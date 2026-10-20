@@ -113,6 +113,7 @@ impl StorageService {
         photo_id: Uuid,
         original: bool,
         thumbnail: bool,
+        raw_only: bool,
     ) -> StorageResult<PhotoPreview> {
         let catalog = self.photo_catalog().await?;
         let photo = catalog
@@ -124,13 +125,23 @@ impl StorageService {
         let file = photo
             .files
             .iter()
-            .find(|f| f.kind == PhotoFileKind::Jpg && (self.photo_review_workspace || f.verified))
+            .find(|f| {
+                !raw_only
+                    && f.kind == PhotoFileKind::Jpg
+                    && (self.photo_review_workspace || f.verified)
+            })
             .or_else(|| {
                 photo.files.iter().find(|f| {
                     f.kind == PhotoFileKind::Raw && (self.photo_review_workspace || f.verified)
                 })
             })
-            .ok_or_else(|| invalid("照片尚未归档，请先完成导入"))?;
+            .ok_or_else(|| {
+                invalid(if raw_only {
+                    "此照片没有可查看的 RAW 文件"
+                } else {
+                    "照片尚未归档，请先完成导入"
+                })
+            })?;
         let slots = if thumbnail {
             &self.thumbnail_slots
         } else {

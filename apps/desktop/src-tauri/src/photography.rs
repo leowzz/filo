@@ -43,7 +43,7 @@ pub async fn photo_resolve_date(service: State<'_, StorageService>, session_id: 
 pub async fn review_mark(service: State<'_, StorageService>, session_id: Uuid, photo_id: Uuid, rating: u8, flag: PhotoFlag) -> StorageResult<Photo> { service.photo_review_workspace().photo_mark(session_id, photo_id, rating, flag).await }
 pub async fn review_undo(service: State<'_, StorageService>, session_id: Uuid) -> StorageResult<Option<Photo>> { service.photo_review_workspace().photo_undo(session_id).await }
 pub async fn review_save_position(service: State<'_, StorageService>, session_id: Uuid, position: PhotoReviewPosition) -> StorageResult<()> { service.photo_review_workspace().photo_save_position(session_id, position).await }
-pub async fn review_preview(service: State<'_, StorageService>, photo_id: Uuid, original: bool, thumbnail: bool) -> StorageResult<PhotoPreview> { service.photo_review_workspace().photo_preview(photo_id, original, thumbnail).await }
+pub async fn review_preview(service: State<'_, StorageService>, photo_id: Uuid, original: bool, thumbnail: bool, raw_only: Option<bool>) -> StorageResult<PhotoPreview> { service.photo_review_workspace().photo_preview(photo_id, original, thumbnail, raw_only.unwrap_or(false)).await }
 pub async fn photo_sync(service: State<'_, StorageService>, session_id: Uuid) -> StorageResult<()> { service.photo_sync(session_id).await }
 pub async fn photo_restore(service: State<'_, StorageService>, jpg: StorageLocator, raw: StorageLocator) -> StorageResult<usize> { service.photo_restore(jpg, raw).await }
 pub async fn review_prepare_lrc(service: State<'_, StorageService>, session_id: Uuid) -> StorageResult<PhotoHandoff> { service.photo_review_workspace().photo_prepare_lrc(session_id).await }

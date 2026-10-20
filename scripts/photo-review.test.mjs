@@ -83,3 +83,61 @@ test("undo returns to its photo and a complete batch can exceed 200 photos",asyn
   const {controller}=setup(photos); controller.step(240,photos.map(p=>p.id)); assert.equal(controller.current,"240");
   controller.undo(); await controller.settle(); assert.equal(controller.current,"a"); controller.dispose();
 });
+
+test("RAW view skips JPG-only photos and preserves shared marks when toggled", async () => {
+  const photos = [
+    {...photo("jpg"), files:[{kind:"jpg"}]},
+    {...photo("pair"), files:[{kind:"jpg"},{kind:"raw"}]},
+    {...photo("raw"), files:[{kind:"raw"}]},
+  ];
+  const {controller} = setup(photos);
+  controller.mark({rating:4,flag:"pick"},false,()=>{});
+  await controller.settle();
+  controller.setRawOnly(true);
+  assert.equal(controller.current,"pair");
+  controller.select("jpg");
+  assert.equal(controller.current,"pair");
+  controller.step(1,["pair","raw"]);
+  assert.equal(controller.current,"raw");
+  controller.setRawOnly(false);
+  controller.select("jpg");
+  assert.equal(controller.photo.rating,4);
+  assert.equal(controller.photo.flag,"pick");
+  assert.deepEqual(controller.photos.map(p=>p.id),["jpg","pair","raw"]);
+  controller.dispose();
+});
+
+test("a saved RAW view restores to a RAW photo and an empty RAW view can be cleared", () => {
+  const deps = {save:async()=>{},undo:async()=>null,changed:()=>{},saved:()=>{},feedback:()=>{},error:()=>{}};
+  const jpg = {...photo("jpg"),files:[{kind:"jpg"}]};
+  const raw = {...photo("raw"),files:[{kind:"raw"}]};
+  const restored = new PhotoReviewController([jpg,raw],jpg.id,deps,true);
+  assert.equal(restored.current,raw.id);
+  assert.equal(restored.rawOnly,true);
+  const empty = new PhotoReviewController([jpg],jpg.id,deps,true);
+  assert.equal(empty.current,null);
+  assert.equal(empty.photo,undefined);
+  empty.setRawOnly(false);
+  assert.equal(empty.current,jpg.id);
+});
+
+test("preview cache keeps paired JPG and RAW previews separate",async()=>{
+  const calls=[];
+  globalThis.__filoPreviewTestApi={preview:async(...args)=>{
+    calls.push(args);
+    return {mime:"image/jpeg",content:args.join(":"),width:1,height:1,embedded:args[3]};
+  }};
+  const cacheSource=await readFile(new URL("../apps/desktop/src/photoPreviewCache.ts",import.meta.url),"utf8");
+  const compiled=ts.transpileModule(cacheSource,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText
+    .replace(/import[^;]+from "\.\/photoApi";/,"const reviewApi = globalThis.__filoPreviewTestApi;");
+  const {photoPreview}=await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
+  delete globalThis.__filoPreviewTestApi;
+  const jpg=await photoPreview("paired");
+  const raw=await photoPreview("paired",false,false,true);
+  assert.equal(jpg.embedded,false);
+  assert.equal(raw.embedded,true);
+  assert.notEqual(jpg.content,raw.content);
+  assert.equal(await photoPreview("paired"),jpg);
+  assert.equal(await photoPreview("paired",false,false,true),raw);
+  assert.equal(calls.length,2);
+});

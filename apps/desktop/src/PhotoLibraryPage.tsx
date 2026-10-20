@@ -27,34 +27,26 @@ function OpenReviewDialog({
   onOpened,
 }: {
   onClose: () => void;
-  onOpened: (id: string) => void;
+  onOpened: (id: string) => Promise<void>;
 }) {
-  const [name, setName] = useState("");
-  const [jpg, setJpg] = useState<PhotoDirectory | null>(null);
-  const [raw, setRaw] = useState<PhotoDirectory | null>(null);
-  const directory = jpg ?? raw;
-  const [picking, setPicking] = useState<"jpg" | "raw" | null>(null);
+  const [directory, setDirectory] = useState<PhotoDirectory | null>(null);
+  const [rawOnly, setRawOnly] = useState(false);
+  const [picking, setPicking] = useState(false);
   const scan = useReviewScan();
-  const busy = scan.pending;
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const pick = async (field: "jpg" | "raw") => {
-    setPicking(field);
+  const pick = async () => {
+    setPicking(true);
     setError("");
     try {
-      const value = await pickPhotoDirectory(
-        false,
-        field === "raw" ? "选择 RAW 照片目录" : "选择照片目录（JPG / NEF）",
-      );
+      const value = await pickPhotoDirectory(false, "选择照片目录");
       if (value) {
-        if (field === "raw") setRaw(value);
-        else setJpg(value);
-        if (!name.trim())
-          setName(value.path.split(/[\\/]/).filter(Boolean).pop() ?? "照片");
+        setDirectory(value);
       }
     } catch (error) {
       setError(errorMessage(error));
     } finally {
-      setPicking(null);
+      setPicking(false);
     }
   };
   return (
@@ -69,57 +61,30 @@ function OpenReviewDialog({
       ) : (
         <>
           <div className="photo-import-fields">
-            <label>
-              审图名称
+            <div className="photo-directory-field">
+              <span>照片目录</span>
+              <button
+                className="secondary"
+                disabled={busy || !!picking}
+                onClick={() => void pick()}
+              >
+                <FolderOpen size={16} />
+                <span>
+                  {picking
+                    ? "正在选择目录…"
+                    : (directory?.path ?? "选择照片目录")}
+                </span>
+              </button>
+            </div>
+            <label className="photo-review-option">
               <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                disabled={busy || !!picking}
+                type="checkbox"
+                checked={rawOnly}
+                disabled={picking}
+                onChange={(e) => setRawOnly(e.target.checked)}
               />
+              仅查看 RAW
             </label>
-            <div className="photo-directory-field">
-              <span>照片目录（JPG / NEF）</span>
-              <button
-                className="secondary"
-                disabled={busy || !!picking}
-                onClick={() => void pick("jpg")}
-              >
-                <FolderOpen size={16} />
-                <span>
-                  {picking === "jpg"
-                    ? "正在选择目录…"
-                    : (jpg?.path ?? "选择已有照片目录")}
-                </span>
-              </button>
-            </div>
-            <div className="photo-directory-field">
-              <span>单独的 RAW 目录（可选）</span>
-              <button
-                className="secondary"
-                disabled={busy || !!picking}
-                onClick={() => void pick("raw")}
-              >
-                <FolderOpen size={16} />
-                <span>
-                  {picking === "raw"
-                    ? "正在选择目录…"
-                    : (raw?.path ?? "NEF 与 JPG 分开存放时选择")}
-                </span>
-              </button>
-              {raw && (
-                <button
-                  disabled={busy || !!picking}
-                  onClick={() => setRaw(null)}
-                >
-                  清除
-                </button>
-              )}
-            </div>
-            <p className="muted">
-              直接审阅已有
-              JPG/NEF。分别选择两个根目录时，按相同相对路径配对；同一目录可同时包含两种格式。
-            </p>
-            {!jpg && raw && <p className="muted">将直接审阅所选 RAW 目录。</p>}
             {error && (
               <p className="form-error" role="alert">
                 {error}
@@ -136,21 +101,24 @@ function OpenReviewDialog({
             </button>
             <button
               className="primary"
-              disabled={busy || !!picking || !directory || !name.trim()}
+              disabled={busy || !!picking || !directory}
               onClick={() => {
                 if (!directory) return;
+                setBusy(true);
                 setError("");
                 void scan
                   .open({
-                    name,
+                    name: "",
                     jpg: directory.locator,
-                    raw: jpg ? (raw?.locator ?? null) : null,
-                    directory: false,
+                    raw: null,
+                    directory: true,
+                    raw_only: rawOnly,
                   })
-                  .then((s) => {
-                    if (s) onOpened(s.id);
+                  .then(async (s) => {
+                    if (s) await onOpened(s.id);
                   })
-                  .catch((error) => setError(errorMessage(error)));
+                  .catch((error) => setError(errorMessage(error)))
+                  .finally(() => setBusy(false));
               }}
             >
               {busy ? "正在读取照片目录…" : "开始审图"}
@@ -245,15 +213,6 @@ export function PhotoLibraryPage() {
       setBusy(false);
     }
   };
-  const restore = async () => {
-    const jpg = await pickPhotoDirectory();
-    if (!jpg) return;
-    const raw = await pickPhotoDirectory();
-    if (!raw) return;
-    if (!(await reviewApi.restore(jpg.locator, raw.locator)))
-      throw new Error("所选 RAW 目录下没有已同步的审图记录");
-    setSelected(null);
-  };
   const status = session?.directory
     ? "进度保存在照片目录的 .filo 中"
     : syncing
@@ -315,13 +274,6 @@ export function PhotoLibraryPage() {
           <h2>审图记录</h2>
         )}
         <div className="photo-page-action-spacer" />
-        <button
-          className="secondary"
-          disabled={busy || !desktop}
-          onClick={() => void run(restore)}
-        >
-          从 NAS 恢复审图
-        </button>
         <button
           className="primary"
           disabled={busy || !desktop}
@@ -518,12 +470,12 @@ export function PhotoLibraryPage() {
       {open && (
         <OpenReviewDialog
           onClose={() => setOpen(false)}
-          onOpened={(id) => {
+          onOpened={async (id) => {
+            await refresh();
             setOpen(false);
             setSelected(id);
             setReview(true);
             setHandoff(null);
-            void refresh();
             void client.invalidateQueries({ queryKey: ["volumes"] });
           }}
         />

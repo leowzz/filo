@@ -45,6 +45,7 @@ pub struct PhotoReviewPosition {
     pub filter: String,
     pub minimum_rating: u8,
     pub auto_advance: bool,
+    pub raw_only: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -177,6 +178,8 @@ pub struct PhotoReviewInput {
     pub jpg: StorageLocator,
     pub raw: Option<StorageLocator>,
     pub directory: bool,
+    #[serde(default)]
+    pub raw_only: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]

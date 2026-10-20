@@ -174,7 +174,7 @@ async fn review_opens_existing_files_without_import_and_uses_an_independent_jour
     assert_eq!(catalog.photos[0].files.len(), 2);
     assert!(catalog.photos[0].files.iter().all(|f| !f.verified));
     let id = catalog.photos[0].id;
-    let preview = review.photo_preview(id, true, false).await.unwrap();
+    let preview = review.photo_preview(id, true, false, false).await.unwrap();
     assert!(!preview.embedded);
     assert_eq!((preview.width, preview.height), (32, 16));
     {
@@ -226,6 +226,7 @@ async fn review_covers_over_200_photos_and_portable_sync_restores_on_a_second_co
                 filter: "pick".into(),
                 minimum_rating: 3,
                 auto_advance: true,
+                raw_only: false,
             },
         )
         .await
@@ -475,6 +476,7 @@ async fn directory_review_saves_beside_photos_and_restores_without_local_history
                 filter: "pick".into(),
                 minimum_rating: 4,
                 auto_advance: true,
+                raw_only: false,
             },
         )
         .await

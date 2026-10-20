@@ -86,9 +86,7 @@ impl StorageService {
             None,
             &input.jpg.logical_path,
         );
-        let result = self
-            .open_review(input.name, input.jpg, input.raw, input.directory, &scan)
-            .await;
+        let result = self.open_review(input, &scan).await;
         self.photo_review_scans.lock().await.remove(&request_id);
         result
     }

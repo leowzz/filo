@@ -12,6 +12,7 @@ impl StorageService {
                 jpg: root,
                 raw: None,
                 directory: true,
+                raw_only: None,
             },
             Arc::new(|_| {}),
         )
@@ -217,7 +218,7 @@ mod tests {
             .unwrap();
         assert_eq!(session.photo_ids.len(), 1);
         let preview = review
-            .photo_preview(session.photo_ids[0], false, true)
+            .photo_preview(session.photo_ids[0], false, true, false)
             .await
             .unwrap();
         assert_eq!(preview.mime, "image/jpeg");

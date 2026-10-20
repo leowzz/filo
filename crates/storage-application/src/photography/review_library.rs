@@ -61,6 +61,7 @@ impl StorageService {
                 jpg,
                 raw,
                 directory: false,
+                raw_only: None,
             },
             Arc::new(|_| {}),
         )
@@ -69,12 +70,16 @@ impl StorageService {
 
     pub(super) async fn open_review(
         &self,
-        mut name: String,
-        jpg: StorageLocator,
-        raw: Option<StorageLocator>,
-        directory: bool,
+        input: PhotoReviewInput,
         scan: &ReviewScan,
     ) -> StorageResult<PhotoSession> {
+        let PhotoReviewInput {
+            mut name,
+            jpg,
+            raw,
+            directory,
+            raw_only,
+        } = input;
         if !self.photo_review_workspace {
             return Err(invalid("请从独立的审图工作区打开目录"));
         }
@@ -281,6 +286,9 @@ impl StorageService {
             undo: vec![],
         });
         session.photo_ids.clear();
+        if let Some(raw_only) = raw_only {
+            session.position.raw_only = raw_only;
+        }
         if directory {
             session.revision += 1;
         }

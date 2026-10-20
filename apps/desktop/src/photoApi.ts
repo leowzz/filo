@@ -34,6 +34,7 @@ export type PhotoPosition = {
   filter: string;
   minimum_rating: number;
   auto_advance: boolean;
+  raw_only?: boolean;
 };
 export type PhotoSession = {
   id: string;
@@ -83,6 +84,7 @@ export type PhotoReviewInput = {
   jpg: Locator;
   raw: Locator | null;
   directory: boolean;
+  raw_only?: boolean;
 };
 export type PhotoReviewProgress = {
   stage: "connecting" | "listing" | "pairing" | "saving";
@@ -192,8 +194,18 @@ export const reviewApi = {
     invoke<Photo | null>("review_undo", { sessionId }),
   position: (sessionId: string, position: PhotoPosition) =>
     invoke<void>("review_save_position", { sessionId, position }),
-  preview: (photoId: string, original = false, thumbnail = false) =>
-    invoke<PhotoPreview>("review_preview", { photoId, original, thumbnail }),
+  preview: (
+    photoId: string,
+    original = false,
+    thumbnail = false,
+    rawOnly = false,
+  ) =>
+    invoke<PhotoPreview>("review_preview", {
+      photoId,
+      original,
+      thumbnail,
+      rawOnly,
+    }),
   prepare: (sessionId: string) =>
     invoke<PhotoHandoff>("review_prepare_lrc", { sessionId }),
   open: (sessionId: string, directory: string) =>
