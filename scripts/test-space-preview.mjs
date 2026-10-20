@@ -24,7 +24,14 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
       if (command === 'list_transfers') return [];
       if (command === 'directory_stamp') return '1';
       if (command === 'preview_entry') {
-        window.previewCalls.push(args.locator.logical_path);
+        if (!args.thumbnail) window.previewCalls.push(args.locator.logical_path);
+        if (args.locator.logical_path === 'photo.jpg') {
+          const canvas = document.createElement('canvas');
+          canvas.width = 40; canvas.height = 20;
+          const context = canvas.getContext('2d');
+          context.fillStyle = '#396f56'; context.fillRect(0, 0, 40, 20);
+          return { kind: 'image', mime: 'image/jpeg', content: canvas.toDataURL('image/jpeg').split(',')[1], truncated: false };
+        }
         return { kind: 'text', mime: 'text/plain', content: 'File contents', truncated: false };
       }
       if (command === 'list_entries_page') {
@@ -34,7 +41,8 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
           { name: 'b.txt', kind: 'file', size: 2048 },
           { name: 'empty.txt', kind: 'file', size: 0 },
           { name: 'unknown.txt', kind: 'file', size: null },
-          { name: 'unknown2.txt', kind: 'file', size: null }
+          { name: 'unknown2.txt', kind: 'file', size: null },
+          { name: 'photo.jpg', kind: 'file', size: 1024 }
         ].map(entry => ({ ...entry, modified_at: null, locator: {
           volume_id: volume.id, logical_path: entry.name, version_id: null
         }})).filter(entry => entry.name.includes(args.options.search));
@@ -111,7 +119,24 @@ assert.equal(
   ),
   "File contents",
 );
-await close();
+await page.evaluate(() => {
+  document.activeElement.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: " ",
+      code: "Space",
+      repeat: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+});
+assert.equal(
+  await page.evaluate(() => !!document.querySelector("dialog[open]")),
+  true,
+  "Holding the opening space key must not immediately close the preview",
+);
+await page.keyboard.press("Space");
+await page.waitForSelector("dialog[open]", { state: "detached" });
 assert.equal(
   await page.evaluate(
     () => document.querySelector('tr[aria-selected="true"]').dataset.entryPath,
@@ -190,7 +215,46 @@ assert.equal(
   "Space activates focused controls normally",
 );
 await page.keyboard.press("Escape");
+
+await page.waitForFunction(() => {
+  const thumbnail = document.querySelector(
+    '[data-entry-path="photo.jpg"] .file-thumbnail',
+  );
+  return thumbnail?.complete && thumbnail.naturalWidth === 40;
+});
+assert.match(
+  await page.evaluate(
+    () =>
+      document.querySelector('[data-entry-path="photo.jpg"] .file-thumbnail')
+        .src,
+  ),
+  /^data:image\/jpeg;base64,/,
+);
+await select("photo.jpg");
+await page.keyboard.press("Space");
+await page.waitForFunction(() => {
+  const image = document.querySelector(".image-preview");
+  return image?.complete && image.naturalWidth === 40;
+});
+assert.match(
+  await page.evaluate(() => document.querySelector(".image-preview").src),
+  /^data:image\/jpeg;base64,/,
+);
+await page.focus("dialog[open]");
+await page.keyboard.press("Space");
+await page.waitForSelector("dialog[open]", { state: "detached" });
+await page.focus(".file-area");
+await page.keyboard.press("Space");
+await page.waitForSelector(".image-preview");
+assert.equal(
+  await page.evaluate(
+    () => window.previewCalls.filter((path) => path === "photo.jpg").length,
+  ),
+  1,
+  "Reopening a fresh image preview reuses memory cache without another IPC request",
+);
+await close();
 console.log(
-  "PASS: single/multi space preview, preserved selection, count and total size, no content fetch for summary, toolbar/menu, unknown/zero sizes, mixed selection, input/control/empty-selection guards, 1200px/960px layout",
+  "PASS: single/multi space preview, space closes from navigation controls and dialog body, repeats are ignored, preserved selection, JPEG rendering and repeated-open cache reuse, count and total size, no content fetch for summary, toolbar/menu, unknown/zero sizes, mixed selection, input/control/empty-selection guards, 1200px/960px layout",
 );
 if (!globalThis.filoKeepBrowser) await task.finish({ keep: [] });

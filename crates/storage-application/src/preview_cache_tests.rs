@@ -331,6 +331,71 @@ async fn ordinary_and_photo_previews_share_disk_cache_and_revalidate_sources() {
 }
 
 #[tokio::test]
+async fn space_image_previews_are_written_to_disk_and_reused_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let photos = dir.path().join("photos");
+    fs::create_dir(&photos).unwrap();
+    fs::write(
+        photos.join("photo.NEF"),
+        crate::browsing::nef::fixture(false, false),
+    )
+    .unwrap();
+    let repository = storage_repository::Repository::open(&dir.path().join("settings.sqlite"))
+        .await
+        .unwrap();
+    let service =
+        crate::StorageService::new(repository.clone()).with_preview_cache(open(&dir).await);
+    let volume = service.add_selected_directory(photos, true).await.unwrap();
+    let locator = StorageLocator {
+        volume_id: volume.id,
+        logical_path: "photo.NEF".into(),
+        version_id: None,
+    };
+    let source = service
+        .backend(volume.id)
+        .await
+        .unwrap()
+        .stat(&locator)
+        .await
+        .unwrap();
+    let mut previews = Vec::new();
+    for thumbnail in [false, true] {
+        let preview = service
+            .preview_entry(locator.clone(), thumbnail)
+            .await
+            .unwrap();
+        let path = dir.path().join(format!(
+            "application-cache/previews/{}.cache",
+            key(&source, &format!("entry:image-v2:{thumbnail}")).unwrap()
+        ));
+        let saved: Preview = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(saved.mime, "image/jpeg");
+        assert_eq!(
+            saved.content, preview.content,
+            "persist the actual image bytes"
+        );
+        previews.push(preview);
+    }
+    drop(service);
+
+    // Fresh service and cache instances cannot reuse any decoded or in-memory preview.
+    let reopened = crate::StorageService::new(repository).with_preview_cache(open(&dir).await);
+    let _previews_busy = reopened.preview_slots.acquire_many(2).await.unwrap();
+    let _thumbnails_busy = reopened.thumbnail_slots.acquire().await.unwrap();
+    for (thumbnail, expected) in [false, true].into_iter().zip(previews) {
+        let cached = tokio::time::timeout(
+            Duration::from_secs(1),
+            reopened.preview_entry(locator.clone(), thumbnail),
+        )
+        .await
+        .expect("space preview must read persisted cache without regenerating the image")
+        .unwrap();
+        assert_eq!(cached.mime, expected.mime);
+        assert_eq!(cached.content, expected.content);
+    }
+}
+
+#[tokio::test]
 async fn cached_previews_do_not_wait_for_busy_image_processing_slots() {
     let dir = tempfile::tempdir().unwrap();
     let photos = dir.path().join("photos");

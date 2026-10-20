@@ -135,7 +135,11 @@ impl StorageService {
         if entry.kind != StorageEntryKind::File {
             return Err(error("请选择普通文件进行预览"));
         }
-        let variant = format!("entry:{thumbnail}");
+        let variant = if is_image {
+            format!("entry:image-v2:{thumbnail}")
+        } else {
+            format!("entry:{thumbnail}")
+        };
         let cache_key = crate::preview_cache::key(&entry, &variant);
         if let (Some(cache), Some(key)) = (&self.preview_cache, &cache_key) {
             if let Some(preview) = cache.get(key).await {
@@ -176,39 +180,51 @@ impl StorageService {
         }
         bytes.truncate(limit as usize);
         let preview = if is_image {
-            let content = tokio::task::spawn_blocking(move || -> StorageResult<String> {
-                let mut reader = image::ImageReader::new(Cursor::new(bytes))
-                    .with_guessed_format()
-                    .map_err(|_| error("图片格式无法识别"))?;
-                let mut limits = image::Limits::default();
-                limits.max_image_width = Some(16000);
-                limits.max_image_height = Some(16000);
-                limits.max_alloc = Some(if is_nef {
-                    256 * 1024 * 1024
-                } else {
-                    128 * 1024 * 1024
-                });
-                reader.limits(limits);
-                let image = reader
-                    .decode()
-                    .map_err(|_| error("图片损坏、过大或格式不受支持"))?;
-                let mut image = if thumbnail {
-                    image.thumbnail(80, 80)
-                } else {
-                    image.thumbnail(2400, 2400)
-                };
-                image.apply_orientation(orientation);
-                let mut output = Cursor::new(Vec::new());
-                image
-                    .write_to(&mut output, image::ImageFormat::Png)
-                    .map_err(|_| error("无法生成图片预览"))?;
-                Ok(STANDARD.encode(output.into_inner()))
-            })
-            .await
-            .map_err(|_| error("预览任务中断"))??;
+            let (mime, content) =
+                tokio::task::spawn_blocking(move || -> StorageResult<(String, String)> {
+                    let mut reader = image::ImageReader::new(Cursor::new(bytes))
+                        .with_guessed_format()
+                        .map_err(|_| error("图片格式无法识别"))?;
+                    let jpeg = reader.format() == Some(image::ImageFormat::Jpeg);
+                    let mut limits = image::Limits::default();
+                    limits.max_image_width = Some(16000);
+                    limits.max_image_height = Some(16000);
+                    limits.max_alloc = Some(if is_nef {
+                        256 * 1024 * 1024
+                    } else {
+                        128 * 1024 * 1024
+                    });
+                    reader.limits(limits);
+                    let image = reader
+                        .decode()
+                        .map_err(|_| error("图片损坏、过大或格式不受支持"))?;
+                    let max_dimension = if thumbnail { 80 } else { 2400 };
+                    let mut image =
+                        if image.width() > max_dimension || image.height() > max_dimension {
+                            image.thumbnail(max_dimension, max_dimension)
+                        } else {
+                            image
+                        };
+                    image.apply_orientation(orientation);
+                    let mut output = Cursor::new(Vec::new());
+                    let mime = if jpeg {
+                        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output, 88)
+                            .encode_image(&image)
+                            .map_err(|_| error("无法生成图片预览"))?;
+                        "image/jpeg"
+                    } else {
+                        image
+                            .write_to(&mut output, image::ImageFormat::Png)
+                            .map_err(|_| error("无法生成图片预览"))?;
+                        "image/png"
+                    };
+                    Ok((mime.into(), STANDARD.encode(output.into_inner())))
+                })
+                .await
+                .map_err(|_| error("预览任务中断"))??;
             Preview {
                 kind: "image".into(),
-                mime: "image/png".into(),
+                mime,
                 content,
                 truncated: false,
             }
@@ -456,6 +472,55 @@ async fn search_file(
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn photo_previews_use_jpeg_without_upscaling_and_png_keeps_transparency() {
+        let dir = tempfile::tempdir().unwrap();
+        image::RgbImage::from_pixel(400, 200, image::Rgb([220, 40, 20]))
+            .save(dir.path().join("photo.jpg"))
+            .unwrap();
+        let transparent = image::RgbaImage::from_pixel(20, 10, image::Rgba([50, 100, 150, 64]));
+        transparent.save(dir.path().join("alpha.png")).unwrap();
+        let service = StorageService::new(
+            Repository::open(&dir.path().join("test.sqlite"))
+                .await
+                .unwrap(),
+        );
+        let volume = service
+            .add_selected_directory(dir.path().into(), true)
+            .await
+            .unwrap();
+        for (path, thumbnail, mime, dimensions) in [
+            ("photo.jpg", false, "image/jpeg", (400, 200)),
+            ("photo.jpg", true, "image/jpeg", (80, 40)),
+            ("alpha.png", false, "image/png", (20, 10)),
+            ("alpha.png", true, "image/png", (20, 10)),
+        ] {
+            let preview = service
+                .preview_entry(
+                    StorageLocator {
+                        volume_id: volume.id,
+                        logical_path: path.into(),
+                        version_id: None,
+                    },
+                    thumbnail,
+                )
+                .await
+                .unwrap();
+            assert_eq!(preview.mime, mime);
+            let bytes = STANDARD.decode(preview.content).unwrap();
+            let decoded = image::load_from_memory(&bytes).unwrap();
+            assert_eq!((decoded.width(), decoded.height()), dimensions);
+            if mime == "image/png" {
+                assert_eq!(decoded.to_rgba8(), transparent);
+            } else {
+                assert_eq!(
+                    image::guess_format(&bytes).unwrap(),
+                    image::ImageFormat::Jpeg
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn nef_preview_and_thumbnail_preserve_orientation_above_regular_image_limit() {
         let dir = tempfile::tempdir().unwrap();
         let db = tempfile::tempdir().unwrap();
@@ -477,13 +542,13 @@ mod tests {
             logical_path: path.into(),
             version_id: None,
         };
-        for (thumbnail, dimensions) in [(false, (1200, 2400)), (true, (40, 80))] {
+        for (thumbnail, dimensions) in [(false, (200, 400)), (true, (20, 40))] {
             let preview = service
                 .preview_entry(loc("photo.NEF"), thumbnail)
                 .await
                 .unwrap();
             assert_eq!(preview.kind, "image");
-            assert_eq!(preview.mime, "image/png");
+            assert_eq!(preview.mime, "image/jpeg");
             assert!(!preview.truncated);
             let image =
                 image::load_from_memory(&STANDARD.decode(preview.content).unwrap()).unwrap();

@@ -100,7 +100,25 @@ export function PreviewDialog({
       }
       onClose={onClose}
       onKeyDown={(event) => {
-        if (event.altKey || event.metaKey || event.ctrlKey) return;
+        if (
+          event.defaultPrevented ||
+          event.nativeEvent.isComposing ||
+          event.altKey ||
+          event.metaKey ||
+          event.ctrlKey
+        )
+          return;
+        if (event.key === " ") {
+          if (
+            event.target instanceof Element &&
+            event.target.closest("input, textarea, select, [contenteditable]")
+          )
+            return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (!event.repeat) onClose();
+          return;
+        }
         if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
         const next = nextSibling(
           siblings,
@@ -301,7 +319,7 @@ export function Thumbnail({ entry }: { entry: Entry }) {
     <img
       className="file-thumbnail"
       alt=""
-      src={`data:image/png;base64,${query.data.content}`}
+      src={`data:${query.data.mime};base64,${query.data.content}`}
     />
   ) : (
     <EntryIcon entry={entry} />
