@@ -225,7 +225,13 @@ impl PreviewCache {
                 return None;
             }
             // mtime records LRU access across restarts; the expiry is sliding.
-            fs::File::open(path).ok()?.set_modified(now).ok()?;
+            // Windows requires a writable handle to update file timestamps.
+            fs::File::options()
+                .write(true)
+                .open(path)
+                .ok()?
+                .set_modified(now)
+                .ok()?;
             cache.entries.get_mut(&key)?.accessed = now;
             value
         })

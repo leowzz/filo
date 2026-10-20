@@ -17,7 +17,9 @@ fn age(cache: &PreviewCache, name: &str, seconds: u64) {
     let mut cache = cache.0.lock().unwrap();
     let key = id(name);
     let time = SystemTime::now() - Duration::from_secs(seconds);
-    fs::File::open(cache.root.join(format!("{key}.cache")))
+    fs::File::options()
+        .write(true)
+        .open(cache.root.join(format!("{key}.cache")))
         .unwrap()
         .set_modified(time)
         .unwrap();
@@ -58,7 +60,7 @@ async fn defaults_and_lru_survive_restart_and_use_a_separate_directory() {
     assert_eq!(cache.get::<String>(&id("c")).await.as_deref(), Some("cccc"));
     let info = cache.info().await.unwrap();
     assert_eq!(info.used_bytes, 12);
-    assert!(info.directory.ends_with("application-cache/previews"));
+    assert!(Path::new(&info.directory).ends_with("application-cache/previews"));
     assert!(!dir.path().join("photos/.filo").exists());
 }
 
