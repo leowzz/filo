@@ -11,6 +11,7 @@ mod metadata;
 mod model;
 mod planning;
 mod review;
+mod review_dates;
 mod review_library;
 mod review_scan;
 mod sync;

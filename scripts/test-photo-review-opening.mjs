@@ -6,7 +6,6 @@ const page = task.page("p1");
 await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
   source: `(() => {
     window.isTauri = true;
-    sessionStorage.setItem('filo.photography-tab', 'review');
     window.openCalls = [];
     window.pickCalls = [];
     window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {unregisterListener: () => {}};
@@ -33,7 +32,7 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
   })();`,
 });
 await page.goto("http://127.0.0.1:1420");
-await page.click('.main-nav button:has-text("摄影")');
+await page.click('.main-nav button:has-text("审图")');
 await page.waitForSelector(
   '.photo-page-actions button:has-text("打开照片目录")',
 );

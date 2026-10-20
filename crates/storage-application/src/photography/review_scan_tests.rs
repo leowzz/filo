@@ -7,6 +7,9 @@ struct ProbeBackend {
     primary_reads: AtomicUsize,
     block_listing: AtomicBool,
     listing_started: tokio::sync::Notify,
+    block_primary: AtomicBool,
+    primary_started: tokio::sync::Notify,
+    primary_resume: tokio::sync::Notify,
 }
 
 #[tokio::test(start_paused = true)]
@@ -65,6 +68,10 @@ impl StorageBackend for ProbeBackend {
     ) -> StorageResult<Vec<u8>> {
         if !entry.name.ends_with(".json") {
             self.primary_reads.fetch_add(1, Ordering::SeqCst);
+            if self.block_primary.load(Ordering::SeqCst) {
+                self.primary_started.notify_one();
+                self.primary_resume.notified().await;
+            }
         }
         self.inner.read_range(entry, range).await
     }
@@ -88,6 +95,9 @@ async fn setup(path: &std::path::Path) -> (StorageService, StorageLocator, Arc<P
         primary_reads: AtomicUsize::new(0),
         block_listing: AtomicBool::new(false),
         listing_started: tokio::sync::Notify::new(),
+        block_primary: AtomicBool::new(false),
+        primary_started: tokio::sync::Notify::new(),
+        primary_resume: tokio::sync::Notify::new(),
     });
     service
         .temporary_backends
@@ -177,6 +187,146 @@ fn tiff(date: &str) -> Vec<u8> {
 }
 
 #[tokio::test]
+async fn capture_times_load_only_on_demand_and_cache_missing_dates_until_files_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let (service, root, probe) = setup(dir.path()).await;
+    let mut late = tiff("2026:10:19");
+    late[43..51].copy_from_slice(b"23:59:00");
+    std::fs::write(dir.path().join("photos/late.NEF"), &late).unwrap();
+    std::fs::write(dir.path().join("photos/early.NEF"), tiff("2026:10:19")).unwrap();
+    std::fs::write(dir.path().join("photos/missing.NEF"), [0; 96]).unwrap();
+    let session = service
+        .photo_open_directory_review(root.clone())
+        .await
+        .unwrap();
+    assert_eq!(probe.primary_reads.load(Ordering::SeqCst), 0);
+    let load = || service.photo_load_capture_times(Uuid::new_v4(), session.id, Arc::new(|_| {}));
+    let times = load().await.unwrap();
+    assert_eq!(probe.primary_reads.load(Ordering::SeqCst), 3);
+    let catalog = service.photo_catalog().await.unwrap();
+    for photo in &catalog.photos {
+        assert!(photo.capture_time_loaded);
+        let time = &times
+            .iter()
+            .find(|t| t.id == photo.id)
+            .unwrap()
+            .capture_time;
+        assert_eq!(time, &photo.capture_time);
+        match photo.original_path.as_str() {
+            "late.NEF" => assert_eq!(time.as_deref(), Some("2026:10:19 23:59:00")),
+            "early.NEF" => assert_eq!(time.as_deref(), Some("2026:10:19 12:00:00")),
+            "missing.NEF" => assert!(time.is_none()),
+            _ => unreachable!(),
+        }
+    }
+    load().await.unwrap();
+    service
+        .photo_open_directory_review(root.clone())
+        .await
+        .unwrap();
+    load().await.unwrap();
+    assert_eq!(probe.primary_reads.load(Ordering::SeqCst), 3);
+    service
+        .photo_save_position(
+            session.id,
+            PhotoReviewPosition {
+                current: Some(session.photo_ids[0]),
+                sort: PhotoSort::CaptureDesc,
+                filter: "none".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    let progress: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(dir.path().join("photos/.filo/review.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(progress.as_object().unwrap().len(), 2);
+    assert_eq!(progress["sort"], "capture_desc");
+    let reopened = service
+        .photo_open_directory_review(root.clone())
+        .await
+        .unwrap();
+    assert!(matches!(reopened.position.sort, PhotoSort::CaptureDesc));
+    assert_eq!(reopened.position.filter, "none");
+    let mut changed = tiff("2026:10:20");
+    changed.push(0); // Changes the cached file revision even on coarse clocks.
+    std::fs::write(dir.path().join("photos/late.NEF"), changed).unwrap();
+    service.photo_open_directory_review(root).await.unwrap();
+    load().await.unwrap();
+    assert_eq!(probe.primary_reads.load(Ordering::SeqCst), 4);
+    let catalog = service.photo_catalog().await.unwrap();
+    assert_eq!(
+        catalog
+            .photos
+            .iter()
+            .find(|p| p.original_path == "late.NEF")
+            .unwrap()
+            .capture_time
+            .as_deref(),
+        Some("2026:10:20 12:00:00")
+    );
+    assert!(!dir.path().join("photos/late.xmp").exists());
+}
+
+#[tokio::test]
+async fn capture_time_loading_merges_concurrent_marks_and_can_be_cancelled() {
+    let dir = tempfile::tempdir().unwrap();
+    let (service, root, probe) = setup(dir.path()).await;
+    std::fs::write(dir.path().join("photos/a.NEF"), tiff("2026:10:19")).unwrap();
+    let session = service.photo_open_directory_review(root).await.unwrap();
+    probe.block_primary.store(true, Ordering::SeqCst);
+    let worker = service.clone();
+    let request = Uuid::new_v4();
+    let session_id = session.id;
+    let loading = tokio::spawn(async move {
+        worker
+            .photo_load_capture_times(request, session_id, Arc::new(|_| {}))
+            .await
+    });
+    probe.primary_started.notified().await;
+    // Slow header I/O must not block marking the current photo.
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        service.photo_mark(session.id, session.photo_ids[0], 4, PhotoFlag::Pick),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    probe.primary_resume.notify_one();
+    loading.await.unwrap().unwrap();
+    let catalog = service.photo_catalog().await.unwrap();
+    assert_eq!(catalog.photos[0].rating, 4);
+    assert_eq!(catalog.photos[0].flag, PhotoFlag::Pick);
+    assert!(catalog.photos[0].capture_time_loaded);
+    assert_eq!(catalog.sessions[0].undo.len(), 1);
+    // Reset only the metadata cache to exercise cancellation of a blocked read.
+    let _guard = service.photo_lock.lock().await;
+    let (revision, mut catalog) = service.load_photos().await.unwrap();
+    catalog.photos[0].capture_time_loaded = false;
+    service.save_photos(revision, &catalog).await.unwrap();
+    drop(_guard);
+    let worker = service.clone();
+    let request = Uuid::new_v4();
+    let loading = tokio::spawn(async move {
+        worker
+            .photo_load_capture_times(request, session_id, Arc::new(|_| {}))
+            .await
+    });
+    probe.primary_started.notified().await;
+    service.photo_cancel_review_scan(request).await.unwrap();
+    let error = loading.await.unwrap().unwrap_err();
+    assert_eq!(error.code, StorageErrorCode::Cancelled);
+    assert!(!service.photo_catalog().await.unwrap().photos[0].capture_time_loaded);
+    assert!(!service
+        .photo_review_scans
+        .lock()
+        .await
+        .contains_key(&request));
+}
+
+#[tokio::test]
 async fn unchanged_pairs_reuse_validation_including_conflicts() {
     let dir = tempfile::tempdir().unwrap();
     let (service, root, probe) = setup(dir.path()).await;
@@ -199,6 +349,22 @@ async fn unchanged_pairs_reuse_validation_including_conflicts() {
     );
     assert_eq!(probe.primary_reads.load(Ordering::SeqCst), 4);
     let catalog = service.photo_catalog().await.unwrap();
+    for photo in &catalog.photos {
+        assert!(photo.capture_time_loaded);
+        assert_eq!(
+            photo.capture_time.as_deref(),
+            Some(if photo.original_path == "split.JPG" {
+                "2026:10:19 12:00:00"
+            } else {
+                "2026:10:18 12:00:00"
+            })
+        );
+    }
+    service
+        .photo_load_capture_times(Uuid::new_v4(), first.id, Arc::new(|_| {}))
+        .await
+        .unwrap();
+    assert_eq!(probe.primary_reads.load(Ordering::SeqCst), 4);
     let paired = catalog
         .photos
         .iter()

@@ -135,7 +135,7 @@ impl StorageService {
         {
             return Err(invalid("当前位置不属于此批次"));
         }
-        if !["", "all", "pick", "reject"].contains(&position.filter.as_str()) {
+        if !["", "all", "none", "pick", "reject"].contains(&position.filter.as_str()) {
             position.filter = "all".into();
         }
         position.minimum_rating = position.minimum_rating.min(5);

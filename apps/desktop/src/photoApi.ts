@@ -4,6 +4,8 @@ import { desktop } from "./api";
 import type { Locator } from "./types";
 
 export type PhotoFlag = "none" | "pick" | "reject";
+export type PhotoSort =
+  "name_asc" | "name_desc" | "capture_asc" | "capture_desc";
 export type PhotoFile = {
   id: string;
   kind: "raw" | "jpg" | "xmp" | "acr";
@@ -19,6 +21,8 @@ export type Photo = {
   archive_id: string;
   original_path: string;
   capture_date: string | null;
+  capture_time?: string | null;
+  capture_time_loaded?: boolean;
   issues: string[];
   files: PhotoFile[];
   rating: number;
@@ -30,7 +34,7 @@ export type Photo = {
 };
 export type PhotoPosition = {
   current: string | null;
-  sort?: "name_asc" | "name_desc";
+  sort?: PhotoSort;
   filter: string;
   minimum_rating: number;
   auto_advance: boolean;
@@ -172,6 +176,18 @@ export const reviewApi = {
   },
   cancelScan: (requestId: string) =>
     invoke<void>("review_cancel_scan", { requestId }),
+  captureTimes: (
+    requestId: string,
+    sessionId: string,
+    onProgress: (progress: PhotoReviewProgress) => void,
+  ) => {
+    const channel = new Channel<PhotoReviewProgress>();
+    channel.onmessage = onProgress;
+    return invoke<{ id: string; capture_time: string | null }[]>(
+      "review_load_capture_times",
+      { requestId, sessionId, onProgress: channel },
+    );
+  },
   openDirectory: (root: Locator) =>
     invoke<PhotoSession>("review_open_directory", { root }),
   catalog: () =>

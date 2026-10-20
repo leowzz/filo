@@ -12,23 +12,6 @@
   max-height: 5em;
   overflow: auto;
 }
-.photo-workspace-tabs {
-  display: flex;
-  flex-shrink: 0;
-  gap: 18px;
-  padding: 0 24px;
-  border-bottom: 1px solid var(--line);
-}
-.photo-workspace-tabs button {
-  min-height: 46px;
-  padding: 0 4px;
-  border-bottom: 2px solid transparent;
-  color: var(--muted);
-}
-.photo-workspace-tabs button[aria-current="true"] {
-  border-color: var(--accent);
-  color: var(--accent);
-}
 .photo-workspace-body {
   flex: 1;
   min-height: 0;
@@ -429,6 +412,34 @@
   display: flex;
   align-items: center;
   gap: 5px;
+  font-size: 12px;
+}
+.photo-quick-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.photo-quick-filters button {
+  padding: 5px 8px;
+  color: #aeb8c8;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  white-space: nowrap;
+}
+.photo-quick-filters button[aria-pressed="true"] {
+  color: #d8e7ff;
+  border-color: #7da4d45c;
+  background: #7da4d426;
+}
+.photo-date-progress {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 6px 16px;
+  color: #bcc9db;
   font-size: 12px;
 }
 .photo-stage {

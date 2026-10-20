@@ -8,7 +8,6 @@ const page = task.page("p1");
 await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
   source: `(() => {
     window.isTauri = true;
-    sessionStorage.setItem('filo.photography-tab', 'review');
     const volume = (id, read_only = false) => ({id, connection_id: id, name: id, read_only,
       root: {type: 's3', bucket: 'photos', prefix: ''},
       capabilities: {hierarchy: 'virtual_prefix', rename: 'unsupported', create_directory: !read_only,
@@ -170,7 +169,7 @@ assert.equal(
 );
 await page.click('.photo-review-toolbar button:has-text("返回文件夹")');
 // Recent folder reviews must not start a save/refetch loop in the library UI.
-await page.click('.main-nav button:has-text("摄影")');
+await page.click('.main-nav button:has-text("审图")');
 if (
   await page.evaluate(
     () => !!document.querySelector(".photo-session-list button"),

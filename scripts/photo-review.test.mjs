@@ -6,18 +6,46 @@ const require = createRequire(new URL("../apps/desktop/package.json", import.met
 const ts = require("typescript");
 const source = await readFile(new URL("../apps/desktop/src/photoReviewController.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } });
-const { PhotoReviewController, photoKeyAction } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const { PhotoReviewController, photoKeyAction, sortPhotos, matchesPhoto } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 const photo = (id, rating = 0) => ({ id, original_path: `${id}.NEF`, rating, flag: "none", revision: 0 });
 function setup(photos = [photo("a"), photo("b")], save = async (id, mark) => ({ ...photos.find(p => p.id === id), ...mark, })) {
   const feedback = [], errors = [], calls = [];
   const controller = new PhotoReviewController(photos, photos[0].id, {
     save: (id, mark) => { calls.push({id,...mark}); return save(id,mark); },
-    undo: async () => photo("a", 2), changed: () => {}, saved: () => {}, feedback: f => feedback.push(f), error: (message,retry) => errors.push({message,retry}),
+    undo: async () => photo("a", 2), changed: () => {}, saved: () => {}, feedback: f => feedback.push(f), error: (message,retry,reload) => errors.push({message,retry,reload}),
   });
   return { controller, feedback, errors, calls };
 }
 const key = (code, key, extra = {}) => ({ code,key,repeat:false,altKey:false,ctrlKey:false,metaKey:false,shiftKey:false,...extra });
 const delay = ms => new Promise(resolve => setTimeout(resolve,ms));
+
+test("review sorts natural filenames and complete capture times with missing dates last", () => {
+  const photos = [
+    {...photo("ten"), original_path:"a/10.NEF", capture_time:"2026:10:19 10:00:00"},
+    {...photo("two"), original_path:"z/2.NEF", capture_time:"2026:10:19 09:00:00"},
+    {...photo("one"), original_path:"b/1.NEF", capture_time:"2026:10:19 10:00:00"},
+    {...photo("missing"), original_path:"0.NEF", capture_date:"2026-10-18", capture_time:null},
+  ];
+  const ids = sort => sortPhotos(photos,sort).map(p=>p.id);
+  assert.deepEqual(ids("name_asc"),["missing","one","two","ten"]);
+  assert.deepEqual(ids("name_desc"),["ten","two","one","missing"]);
+  assert.deepEqual(ids("capture_asc"),["two","one","ten","missing"]);
+  assert.deepEqual(ids("capture_desc"),["one","ten","two","missing"]);
+  assert.deepEqual(photos.map(p=>p.id),["ten","two","one","missing"]);
+});
+
+test("workflow filters distinguish unflagged photos from ratings and rated photos from flags", () => {
+  const photos = [photo("unrated"),photo("unflagged-rated",5),
+    {...photo("picked"),flag:"pick"},{...photo("picked-rated",4),flag:"pick"},
+    {...photo("rejected-rated",3),flag:"reject"}];
+  const ids = (filter,minimum) => photos.filter(p=>matchesPhoto(p,filter,minimum)).map(p=>p.id);
+  assert.deepEqual(ids("none",0),["unrated","unflagged-rated"]);
+  assert.deepEqual(ids("pick",0),["picked","picked-rated"]);
+  assert.deepEqual(ids("all",3),["unflagged-rated","picked-rated","rejected-rated"]);
+  assert.deepEqual(ids("pick",4),["picked-rated"]);
+  assert.deepEqual(ids("none",4),["unflagged-rated"]);
+  assert.deepEqual(ids("reject",5),[]);
+});
 
 test("keyboard distinguishes relative adjustments, explicit advance, modifiers and repeats", () => {
   assert.deepEqual(photoKeyAction(key("BracketRight","]"),true),{type:"rating",value:1,relative:true,advance:false});
@@ -54,6 +82,21 @@ test("latest save failure restores durable state and offers a photo-specific ret
   assert.equal(controller.photo.rating,0); assert.equal(controller.current,"a"); assert.equal(feedback.filter(Boolean).length,0);
   assert.match(errors.at(-1).message,/a.NEF.*disk full/); fail=false; errors.at(-1).retry(); await controller.settle();
   assert.equal(controller.photo.rating,5); assert.equal(controller.photo.flag,"reject"); controller.dispose();
+});
+
+test("a conflicting directory mark requests reload instead of repeatedly retrying stale state", async () => {
+  const {controller,calls,errors} = setup(undefined,async()=>{
+    throw {code:"conflict",message:"目录中的审图进度已被其他窗口或电脑更新，请重新进入审图后重试"};
+  });
+  controller.mark({rating:5,flag:"pick"},true,()=>controller.select("b"));
+  await controller.settle();
+  assert.equal(controller.current,"a");
+  assert.equal(controller.photo.rating,0);
+  assert.equal(controller.photo.flag,"none");
+  assert.equal(calls.length,1);
+  assert.equal(errors.at(-1).reload,true);
+  assert.equal(typeof errors.at(-1).retry,"function");
+  controller.dispose();
 });
 
 test("manual navigation suppresses late feedback and automatic navigation", async () => {

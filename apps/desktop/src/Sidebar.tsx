@@ -1,9 +1,10 @@
 import {
   ArrowDownUp,
   Cloud,
-  Camera,
+  Copy,
   HardDrive,
   LayoutGrid,
+  Images,
   LockKeyhole,
   Network,
   Plus,
@@ -40,12 +41,29 @@ export function Sidebar({
       <nav className="main-nav" aria-label="主导航">
         <button
           className={
-            state.page === "photography" ? "nav-item active" : "nav-item"
+            state.page === "photo-library" || state.page === "photo-review"
+              ? "nav-item active"
+              : "nav-item"
           }
-          onClick={() => state.setPage("photography")}
+          aria-current={
+            state.page === "photo-library" || state.page === "photo-review"
+              ? "page"
+              : undefined
+          }
+          onClick={() => state.setPage("photo-library")}
         >
-          <Camera size={17} />
-          摄影
+          <Images size={17} />
+          审图
+        </button>
+        <button
+          className={
+            state.page === "photo-import" ? "nav-item active" : "nav-item"
+          }
+          aria-current={state.page === "photo-import" ? "page" : undefined}
+          onClick={() => state.setPage("photo-import")}
+        >
+          <Copy size={17} />
+          拷卡
         </button>
         <button
           className={state.page === "overview" ? "nav-item active" : "nav-item"}

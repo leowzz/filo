@@ -50,6 +50,27 @@ impl ReviewScan {
 }
 
 impl StorageService {
+    pub async fn photo_load_capture_times(
+        &self,
+        request_id: Uuid,
+        session_id: Uuid,
+        observer: Arc<dyn Fn(PhotoReviewProgress) + Send + Sync>,
+    ) -> StorageResult<Vec<PhotoCaptureTime>> {
+        let token = CancellationToken::new();
+        {
+            let mut scans = self.photo_review_scans.lock().await;
+            if scans.contains_key(&request_id) {
+                return Err(conflict("拍摄日期正在读取"));
+            }
+            scans.insert(request_id, token.clone());
+        }
+        let scan = ReviewScan { token, observer };
+        scan.progress(PhotoReviewStage::Connecting, 0, 0, None, "");
+        let result = self.load_capture_times(session_id, &scan).await;
+        self.photo_review_scans.lock().await.remove(&request_id);
+        result
+    }
+
     pub async fn photo_cancel_review_scan(&self, request_id: Uuid) -> StorageResult<()> {
         if let Some(token) = self.photo_review_scans.lock().await.get(&request_id) {
             token.cancel();

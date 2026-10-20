@@ -22,12 +22,16 @@ import {
   type Photo,
   type PhotoPosition,
   type PhotoPreview,
+  type PhotoReviewProgress,
   type PhotoSession,
 } from "./photoApi";
 import {
   PhotoReviewController,
   hasRaw,
   photoKeyAction,
+  sortPhotos,
+  matchesPhoto,
+  isReviewConflict,
   type PhotoFeedback as Feedback,
 } from "./photoReviewController";
 import { PhotoFeedback } from "./PhotoFeedback";
@@ -39,7 +43,13 @@ import {
   previewBehind,
 } from "./photoPreviewCache";
 
-const photoNameOrder = new Intl.Collator(undefined, { numeric: true }).compare;
+const quickFilters = [
+  { label: "全部", filter: "all", minimum: 0 },
+  { label: "无旗标", filter: "none", minimum: 0 },
+  { label: "保留", filter: "pick", minimum: 0 },
+  { label: "待删除", filter: "reject", minimum: 0 },
+  { label: "≥3 星", filter: "all", minimum: 3 },
+];
 
 function Thumbnail({ photo, rawOnly }: { photo: Photo; rawOnly: boolean }) {
   const [image, setImage] = useState<{
@@ -86,6 +96,7 @@ export function PhotoReview({
   onSaved,
   onBack,
   onPositionSaved,
+  onReload,
   backLabel = "审图记录",
 }: {
   session: PhotoSession;
@@ -93,6 +104,7 @@ export function PhotoReview({
   onSaved: (photo: Photo) => void;
   onBack: () => void;
   onPositionSaved: () => void;
+  onReload?: () => Promise<void>;
   backLabel?: string;
 }) {
   const [, render] = useReducer((n) => n + 1, 0);
@@ -100,23 +112,34 @@ export function PhotoReview({
   const [failure, setFailure] = useState<{
     message: string;
     retry: (() => void) | null;
+    kind?: "dates";
+    reload?: boolean;
   }>({ message: "", retry: null });
+  const [reloading, setReloading] = useState(false);
+  const reloadRef = useRef(false);
+  const positionWrites = useRef(new Set<Promise<void>>());
+  const writePosition = (position: PhotoPosition) => {
+    const write = reviewApi.position(session.id, position);
+    positionWrites.current.add(write);
+    void write.then(
+      () => positionWrites.current.delete(write),
+      () => positionWrites.current.delete(write),
+    );
+    return write;
+  };
   const callbacks = useRef({ onSaved });
   callbacks.current = { onSaved };
   const [controller] = useState(
     () =>
       new PhotoReviewController(
-        photos
-          .filter(
+        sortPhotos(
+          photos.filter(
             (p) =>
               !p.excluded &&
               p.files.some((f) => f.kind === "jpg" || f.kind === "raw"),
-          )
-          .sort(
-            (a, b) =>
-              photoNameOrder(a.original_path, b.original_path) *
-              (session.position.sort === "name_desc" ? -1 : 1),
           ),
+          session.position.sort ?? "name_asc",
+        ),
         session.position.current,
         {
           save: (id, mark) =>
@@ -124,21 +147,43 @@ export function PhotoReview({
           undo: () => reviewApi.undo(session.id),
           changed: render,
           saved: (photo) => {
-            setFailure({ message: "", retry: null });
+            setFailure((previous) =>
+              previous.kind === "dates"
+                ? previous
+                : { message: "", retry: null },
+            );
             callbacks.current.onSaved(photo);
           },
           feedback: (value) => setFeedback(document.hidden ? null : value),
-          error: (message, retry) => setFailure({ message, retry }),
+          error: (message, retry, reload) =>
+            setFailure((previous) =>
+              !message && previous.kind === "dates"
+                ? previous
+                : { message, retry, reload },
+            ),
         },
         session.position.raw_only ?? false,
       ),
   );
   const [filter, setFilter] = useState(
-    ["pick", "reject"].includes(session.position.filter)
+    ["none", "pick", "reject"].includes(session.position.filter)
       ? session.position.filter
       : "all",
   );
   const [sort, setSort] = useState(session.position.sort ?? "name_asc");
+  const [captureTimes, setCaptureTimes] = useState<
+    Record<string, string | null>
+  >(() =>
+    Object.fromEntries(
+      photos
+        .filter((p) => p.capture_time_loaded)
+        .map((p) => [p.id, p.capture_time ?? null]),
+    ),
+  );
+  const [dateProgress, setDateProgress] = useState<PhotoReviewProgress | null>(
+    null,
+  );
+  const [dateAttempt, retryDates] = useReducer((n) => n + 1, 0);
   const [minimum, setMinimum] = useState(session.position.minimum_rating);
   const [auto, setAuto] = useState(session.position.auto_advance);
   const [original, setOriginal] = useState(false);
@@ -160,20 +205,30 @@ export function PhotoReview({
   const photoPath = rawOnly
     ? photo?.files.find((f) => f.kind === "raw")?.path
     : photo?.original_path;
-  const matches = (p: Photo) =>
-    p.rating >= minimum &&
-    (filter === "all" ||
-      (filter === "pick" && p.flag === "pick") ||
-      (filter === "reject" && p.flag === "reject"));
-  const ordered = [...controller.photos].sort(
-    (a, b) =>
-      photoNameOrder(a.original_path, b.original_path) *
-      (sort === "name_desc" ? -1 : 1),
+  const ordered = sortPhotos(
+    controller.photos.map((p) => ({
+      ...p,
+      capture_time: Object.hasOwn(captureTimes, p.id)
+        ? captureTimes[p.id]
+        : p.capture_time,
+    })),
+    sort,
   );
   const visible = ordered.filter(
     (p) =>
-      (!rawOnly || hasRaw(p)) && (matches(p) || p.id === controller.current),
+      (!rawOnly || hasRaw(p)) &&
+      (matchesPhoto(p, filter, minimum) || p.id === controller.current),
   );
+  const changeFilter = (nextFilter: string, nextMinimum: number) => {
+    setFilter(nextFilter);
+    setMinimum(nextMinimum);
+    controller.select(
+      ordered.find(
+        (p) =>
+          (!rawOnly || hasRaw(p)) && matchesPhoto(p, nextFilter, nextMinimum),
+      )?.id ?? null,
+    );
+  };
   const ids = visible.map((p) => p.id);
   const index = ids.indexOf(controller.current ?? "");
   const previewIds = ids
@@ -183,17 +238,39 @@ export function PhotoReview({
   const actions = useRef({ step, photo, ids, original, auto, onBack });
   actions.current = { step, photo, ids, original, auto, onBack };
   const back = async () => {
+    if (reloadRef.current) return;
     await controller.settle();
     if (positionRef.current) {
       try {
-        await reviewApi.position(session.id, positionRef.current);
+        await writePosition(positionRef.current);
         onPositionSaved();
       } catch (error) {
-        setFailure({ message: errorMessage(error), retry: () => void back() });
+        setFailure({
+          message: errorMessage(error),
+          retry: () => void back(),
+          reload: isReviewConflict(error),
+        });
         return;
       }
     }
     onBack();
+  };
+  const reload = async () => {
+    if (!onReload || reloadRef.current) return;
+    reloadRef.current = true;
+    setReloading(true);
+    controller.dispose();
+    try {
+      await controller.settle();
+      await Promise.allSettled([...positionWrites.current]);
+      await onReload();
+    } catch (error) {
+      setFailure({ message: errorMessage(error), retry: null, reload: true });
+    } finally {
+      controller.activate();
+      reloadRef.current = false;
+      setReloading(false);
+    }
   };
   const exit = useRef(back);
   exit.current = back;
@@ -208,6 +285,7 @@ export function PhotoReview({
   }, []);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
+      if (reloadRef.current) return;
       if (
         (event.target instanceof Element &&
           event.target.closest(
@@ -263,13 +341,19 @@ export function PhotoReview({
       raw_only: rawOnly,
     };
     const timer = setTimeout(() => {
-      if (positionRef.current)
-        void reviewApi
-          .position(session.id, positionRef.current)
-          .then(onPositionSaved)
-          .catch((error) =>
-            setFailure({ message: errorMessage(error), retry: null }),
-          );
+      if (positionRef.current && !reloadRef.current)
+        void writePosition(positionRef.current)
+          .then(() => {
+            if (!reloadRef.current) onPositionSaved();
+          })
+          .catch((error) => {
+            if (!reloadRef.current)
+              setFailure({
+                message: errorMessage(error),
+                retry: null,
+                reload: isReviewConflict(error),
+              });
+          });
     }, 500);
     return () => clearTimeout(timer);
   }, [
@@ -290,6 +374,55 @@ export function PhotoReview({
     );
   }, [previewIds, photo?.id, rawOnly]);
   useEffect(() => () => photoPreviews.clearWindow(), []);
+  const needsDates =
+    sort.startsWith("capture") &&
+    controller.photos.some((p) => !Object.hasOwn(captureTimes, p.id));
+  useEffect(() => {
+    if (!needsDates) {
+      setDateProgress(null);
+      return;
+    }
+    let live = true;
+    const requestId = crypto.randomUUID();
+    setDateProgress({
+      stage: "connecting",
+      found: 0,
+      completed: 0,
+      total: null,
+      path: "",
+    });
+    void reviewApi
+      .captureTimes(requestId, session.id, (progress) => {
+        if (live) setDateProgress(progress);
+        else void reviewApi.cancelScan(requestId).catch(() => {});
+      })
+      .then((times) => {
+        if (!live) return;
+        setCaptureTimes((previous) => ({
+          ...previous,
+          ...Object.fromEntries(times.map((p) => [p.id, p.capture_time])),
+        }));
+        setDateProgress(null);
+        setFailure((previous) =>
+          previous.kind === "dates" ? { message: "", retry: null } : previous,
+        );
+      })
+      .catch((error) => {
+        if (live) {
+          setDateProgress(null);
+          setFailure({
+            message: `读取拍摄日期失败：${errorMessage(error)}`,
+            retry: retryDates,
+            kind: "dates",
+            reload: isReviewConflict(error),
+          });
+        }
+      });
+    return () => {
+      live = false;
+      void reviewApi.cancelScan(requestId).catch(() => {});
+    };
+  }, [needsDates, session.id, dateAttempt]);
   useEffect(() => {
     if (!cacheDebug) return;
     const list = filmstrip.current;
@@ -356,41 +489,27 @@ export function PhotoReview({
         >
           <option value="name_asc">文件名升序</option>
           <option value="name_desc">文件名降序</option>
+          <option value="capture_asc">拍摄日期升序</option>
+          <option value="capture_desc">拍摄日期降序</option>
         </select>
-        <select
-          aria-label="审图筛选"
-          value={filter}
-          onChange={(e) => {
-            setFilter(e.target.value);
-            controller.select(
-              ordered.find(
-                (p) =>
-                  (!rawOnly || hasRaw(p)) &&
-                  p.rating >= minimum &&
-                  (e.target.value === "all" || e.target.value === p.flag),
-              )?.id ?? null,
-            );
-          }}
-        >
-          <option value="all">全部</option>
-          <option value="pick">保留</option>
-          <option value="reject">待删除</option>
-        </select>
+        <div className="photo-quick-filters" role="group" aria-label="快捷筛选">
+          {quickFilters.map((preset) => (
+            <button
+              key={preset.label}
+              aria-pressed={
+                filter === preset.filter &&
+                (preset.filter !== "all" || minimum === preset.minimum)
+              }
+              onClick={() => changeFilter(preset.filter, preset.minimum)}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
         <select
           aria-label="星级门槛"
           value={minimum}
-          onChange={(e) => {
-            const value = Number(e.target.value);
-            setMinimum(value);
-            controller.select(
-              ordered.find(
-                (p) =>
-                  (!rawOnly || hasRaw(p)) &&
-                  p.rating >= value &&
-                  (filter === "all" || filter === p.flag),
-              )?.id ?? null,
-            );
-          }}
+          onChange={(e) => changeFilter(filter, Number(e.target.value))}
         >
           <option value={0}>所有星级</option>
           {[1, 2, 3, 4, 5].map((n) => (
@@ -403,7 +522,20 @@ export function PhotoReview({
           <input
             type="checkbox"
             checked={rawOnly}
-            onChange={(e) => controller.setRawOnly(e.target.checked)}
+            onChange={(e) => {
+              const value = e.target.checked;
+              const current = controller.current;
+              const eligible = ordered.filter(
+                (p) =>
+                  (!value || hasRaw(p)) && matchesPhoto(p, filter, minimum),
+              );
+              controller.setRawOnly(value);
+              controller.select(
+                eligible.find((p) => p.id === current)?.id ??
+                  eligible[0]?.id ??
+                  null,
+              );
+            }}
           />
           仅查看 RAW
         </label>
@@ -431,10 +563,25 @@ export function PhotoReview({
           {fullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
         </button>
       </div>
+      {dateProgress && (
+        <div className="photo-date-progress" role="status">
+          正在读取拍摄日期
+          {dateProgress.total != null
+            ? ` · ${dateProgress.completed} / ${dateProgress.total}`
+            : "…"}
+          <button onClick={() => setSort("name_asc")}>取消读取</button>
+        </div>
+      )}
       {failure.message && (
         <div className="photo-review-error" role="alert">
           {failure.message}
-          {failure.retry && <button onClick={failure.retry}>重试保存</button>}
+          {failure.reload && onReload ? (
+            <button disabled={reloading} onClick={() => void reload()}>
+              {reloading ? "正在重新载入…" : "重新载入目录"}
+            </button>
+          ) : (
+            failure.retry && <button onClick={failure.retry}>重试</button>
+          )}
           <button
             aria-label="关闭错误提示"
             onClick={() => setFailure({ message: "", retry: null })}
@@ -571,7 +718,7 @@ export function PhotoReview({
           {original ? "适应窗口" : "原尺寸"}
         </button>
         <span className="photo-save-status">
-          {failure.message
+          {failure.message && failure.kind !== "dates"
             ? "保存失败"
             : controller.pending
               ? "保存中…"

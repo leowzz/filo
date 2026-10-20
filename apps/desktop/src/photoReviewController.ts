@@ -1,4 +1,33 @@
-import type { Photo, PhotoFlag } from "./photoApi";
+import type { Photo, PhotoFlag, PhotoSort } from "./photoApi";
+
+const photoNameOrder = new Intl.Collator(undefined, { numeric: true }).compare;
+export function sortPhotos(photos: Photo[], sort: PhotoSort) {
+  const descending = sort.endsWith("desc") ? -1 : 1;
+  return [...photos].sort((a, b) => {
+    const name =
+      photoNameOrder(
+        a.original_path.split("/").at(-1) ?? "",
+        b.original_path.split("/").at(-1) ?? "",
+      ) || photoNameOrder(a.original_path, b.original_path);
+    if (sort.startsWith("name")) return name * descending;
+    if (!a.capture_time || !b.capture_time)
+      return a.capture_time ? -1 : b.capture_time ? 1 : name;
+    return (
+      (a.capture_time < b.capture_time
+        ? -1
+        : a.capture_time > b.capture_time
+          ? 1
+          : 0) * descending || name
+    );
+  });
+}
+export const matchesPhoto = (photo: Photo, filter: string, minimum: number) =>
+  photo.rating >= minimum && (filter === "all" || photo.flag === filter);
+export const isReviewConflict = (error: unknown) =>
+  !!error &&
+  typeof error === "object" &&
+  "code" in error &&
+  error.code === "conflict";
 
 export type PhotoFeedback = {
   id: number;
@@ -17,7 +46,11 @@ type Dependencies = {
   changed: () => void;
   saved: (photo: Photo) => void;
   feedback: (feedback: PhotoFeedback | null) => void;
-  error: (message: string, retry: (() => void) | null) => void;
+  error: (
+    message: string,
+    retry: (() => void) | null,
+    reload?: boolean,
+  ) => void;
 };
 
 // Requests are serialized and carry immutable photo IDs and complete desired marks.
@@ -168,6 +201,7 @@ export class PhotoReviewController {
                 this.select(photo.id);
                 this.mark(desired, false, next);
               },
+              isReviewConflict(error),
             );
         }
       } finally {
@@ -205,6 +239,7 @@ export class PhotoReviewController {
           this.deps.error(
             String((error as { message?: string })?.message ?? error),
             () => this.undo(),
+            isReviewConflict(error),
           );
       } finally {
         this.pending--;

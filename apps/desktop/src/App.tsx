@@ -1,5 +1,6 @@
 import { FloatingNotice } from "./FloatingNotice";
-import { PhotographyPage } from "./PhotographyPage";
+import { PhotoLibraryPage } from "./PhotoLibraryPage";
+import { PhotoImportPage } from "./PhotoImportPage";
 import { DirectoryPhotoReview } from "./DirectoryPhotoReview";
 import { reviewApi } from "./photoApi";
 import { useReviewScan } from "./useReviewScan";
@@ -1042,7 +1043,16 @@ export default function App() {
           />
         )}
 
-        {state.page === "photography" && <PhotographyPage volumes={volumes} />}
+        {state.page === "photo-library" && (
+          <div className="photography-page">
+            <PhotoLibraryPage />
+          </div>
+        )}
+        {state.page === "photo-import" && (
+          <div className="photography-page">
+            <PhotoImportPage volumes={volumes} />
+          </div>
+        )}
         {state.page === "transfers" && <TransfersPage volumes={volumes} />}
         {state.page === "settings" && <SettingsPage updater={updater} />}
       </main>

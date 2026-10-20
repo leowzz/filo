@@ -67,7 +67,8 @@ type State = {
     | "browser"
     | "transfers"
     | "settings"
-    | "photography"
+    | "photo-library"
+    | "photo-import"
     | "photo-review";
   history: Location[];
   index: number;

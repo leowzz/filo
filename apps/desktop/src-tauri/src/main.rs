@@ -395,6 +395,7 @@ fn main() {
             photography::review_open_directory,
             photography::review_scan,
             photography::review_cancel_scan,
+            photography::review_load_capture_times,
             photography::review_sync,
             photography::review_restore,
             photography::photo_catalog,

@@ -45,12 +45,11 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {source: `(() => {
 })();`});
 await page.goto("http://127.0.0.1:1420");
 await page.waitForSelector(".sidebar .main-nav");
-await page.click('button:text-is("摄影")');
-await page.waitForSelector('.photo-workspace-tabs');
-await page.click('button:text-is("拷卡")');
+await page.click('.main-nav button:text-is("拷卡")');
+await page.waitForSelector('.photo-workspace-body');
 assert.match(await page.evaluate(()=>document.querySelector('.photo-workspace-body').textContent),/拷卡记录/);
 assert.equal(await page.evaluate(()=>window.copyCatalog.sessions.length),0);
-await page.click('button:text-is("审图")');
+await page.click('.main-nav button:text-is("审图")');
 await page.waitForSelector('.photo-empty');
 assert.equal(await page.evaluate(()=>document.querySelector('.photo-workspace-body').textContent.includes('存储卡')),false);
 await page.click('button:text-is("打开照片目录") >> nth=0');
@@ -87,7 +86,7 @@ assert.equal(await page.evaluate(()=>getComputedStyle(document.querySelector('.p
 await page.click('button:text-is("审图记录")');await page.waitForSelector('.photo-review-summary');
 await page.click('button:text-is("准备 LRC 导入")');await page.waitForSelector('.photo-handoff');
 assert.match(await page.evaluate(()=>document.querySelector('.photo-handoff').textContent),/Add/);
-await page.click('button:text-is("拷卡")');await page.waitForSelector('.photo-empty');
+await page.click('.main-nav button:text-is("拷卡")');await page.waitForSelector('.photo-empty');
 assert.equal(await page.evaluate(()=>window.copyCatalog.sessions.length),0);
 console.log({passed:'independent review, 241 photos, keyboard, saved feedback, undo, boundary advance, save failure/retry, input focus, reduced motion, handoff, viewport',layout});
 console.log(await page.snapshot());

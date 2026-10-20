@@ -18,6 +18,9 @@ pub async fn review_scan(service: State<'_, StorageService>, request_id: Uuid, i
     service.photo_review_workspace().photo_scan_review(request_id, input, std::sync::Arc::new(move |progress| { let _ = on_progress.send(progress); })).await
 }
 pub async fn review_cancel_scan(service: State<'_, StorageService>, request_id: Uuid) -> StorageResult<()> { service.photo_cancel_review_scan(request_id).await }
+pub async fn review_load_capture_times(service: State<'_, StorageService>, request_id: Uuid, session_id: Uuid, on_progress: tauri::ipc::Channel<PhotoReviewProgress>) -> StorageResult<Vec<PhotoCaptureTime>> {
+    service.photo_review_workspace().photo_load_capture_times(request_id, session_id, std::sync::Arc::new(move |progress| { let _ = on_progress.send(progress); })).await
+}
 pub async fn review_sync(service: State<'_, StorageService>, session_id: Uuid) -> StorageResult<()> { service.photo_review_workspace().photo_sync(session_id).await }
 pub async fn review_restore(service: State<'_, StorageService>, jpg: StorageLocator, raw: StorageLocator) -> StorageResult<usize> { service.photo_review_workspace().photo_restore(jpg, raw).await }
 pub async fn photo_catalog(service: State<'_, StorageService>) -> StorageResult<PhotoCatalog> { service.photo_catalog().await }

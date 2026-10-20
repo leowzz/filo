@@ -493,14 +493,23 @@ impl StorageService {
                         observed_revision: Some(revision(entry)),
                     });
                 }
-                let time = raw_meta
-                    .and_then(|m| m.time.as_ref())
-                    .or_else(|| jpg_meta.and_then(|m| m.time.as_ref()));
+                let time = primary
+                    .iter()
+                    .find(|(_, _, kind, _)| *kind == PhotoFileKind::Raw)
+                    .and_then(|(_, _, _, meta)| meta.time.as_ref())
+                    .or_else(|| {
+                        primary
+                            .iter()
+                            .find_map(|(_, _, _, meta)| meta.time.as_ref())
+                    });
                 let photo = Photo {
                     id: Uuid::new_v4(),
                     archive_id,
                     original_path: primary[0].1.clone(),
                     capture_date: time.map(|t| metadata::date(t)),
+                    capture_time: time.cloned(),
+                    capture_time_loaded: kinds.contains(&PhotoFileKind::Raw)
+                        && kinds.contains(&PhotoFileKind::Jpg),
                     issues: if mismatch {
                         vec!["NEF/JPG 元数据有矛盾，已分开审阅".into()]
                     } else {

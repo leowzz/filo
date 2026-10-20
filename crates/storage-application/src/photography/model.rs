@@ -55,6 +55,8 @@ pub enum PhotoSort {
     #[default]
     NameAsc,
     NameDesc,
+    CaptureAsc,
+    CaptureDesc,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -138,6 +140,10 @@ pub struct Photo {
     pub archive_id: Uuid,
     pub original_path: String,
     pub capture_date: Option<String>,
+    #[serde(default)]
+    pub capture_time: Option<String>,
+    #[serde(default)]
+    pub capture_time_loaded: bool,
     pub issues: Vec<String>,
     pub files: Vec<PhotoFile>,
     pub rating: u8,
@@ -147,6 +153,12 @@ pub struct Photo {
     /// None means no sidecar was observed when the photo was planned.
     pub xmp_hash: Option<String>,
     pub xmp_synced_revision: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PhotoCaptureTime {
+    pub id: Uuid,
+    pub capture_time: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

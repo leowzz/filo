@@ -280,7 +280,8 @@ export function AppHeader({
                   overview: "概览",
                   transfers: "传输任务",
                   settings: "设置",
-                  photography: "摄影",
+                  "photo-library": "审图",
+                  "photo-import": "拷卡",
                   "photo-review": "审图",
                 }[state.page]}
           </h1>

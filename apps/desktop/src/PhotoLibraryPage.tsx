@@ -146,6 +146,8 @@ export function PhotoLibraryPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [openingReview, setOpeningReview] = useState(false);
+  const resumeScan = useReviewScan();
   const [handoff, setHandoff] = useState<PhotoHandoff | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const session = query.data?.sessions.find((s) => s.id === selected);
@@ -213,6 +215,34 @@ export function PhotoLibraryPage() {
       setBusy(false);
     }
   };
+  const startReview = async () => {
+    if (!session || busy || syncing || openingReview) return;
+    setOpeningReview(true);
+    setError("");
+    try {
+      if (session.directory) {
+        const reopened = await resumeScan.open({
+          name: session.name,
+          jpg: session.directory,
+          raw: null,
+          directory: true,
+          raw_only: session.position.raw_only,
+        });
+        if (!reopened) {
+          setReview(false);
+          return;
+        }
+        await refresh();
+        setSelected(reopened.id);
+      }
+      setReview(true);
+    } catch (error) {
+      setReview(false);
+      setError(errorMessage(error));
+    } finally {
+      setOpeningReview(false);
+    }
+  };
   const status = session?.directory
     ? "进度保存在照片目录的 .filo 中"
     : syncing
@@ -222,6 +252,12 @@ export function PhotoLibraryPage() {
         : session && session.revision > session.synced_revision
           ? "NAS 待同步"
           : "NAS 已同步";
+  if (openingReview)
+    return (
+      <section className="photo-workspace-body">
+        <ReviewScanStatus scan={resumeScan} />
+      </section>
+    );
   if (review && session)
     return (
       <div className="photo-review-shell">
@@ -246,6 +282,7 @@ export function PhotoLibraryPage() {
           photos={photos}
           onSaved={saved}
           onPositionSaved={scheduleSync}
+          onReload={session.directory ? startReview : undefined}
           onBack={() => {
             setReview(false);
             void refresh();
@@ -372,8 +409,8 @@ export function PhotoLibraryPage() {
             </button>
             <button
               className="primary"
-              disabled={busy}
-              onClick={() => setReview(true)}
+              disabled={busy || syncing}
+              onClick={() => void startReview()}
             >
               继续审图
             </button>

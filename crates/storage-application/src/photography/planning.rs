@@ -406,6 +406,8 @@ impl StorageService {
                     archive_id,
                     original_path: files[0].path.clone(),
                     capture_date: date,
+                    capture_time: time.cloned(),
+                    capture_time_loaded: true,
                     issues,
                     files: files
                         .iter()
