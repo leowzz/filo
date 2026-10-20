@@ -8,6 +8,7 @@ struct ProbeBackend {
     full_reads: AtomicUsize,
     stats: AtomicUsize,
     root_stats: AtomicUsize,
+    range_supported: AtomicBool,
     block_listing: AtomicBool,
     listing_started: tokio::sync::Notify,
     block_primary: AtomicBool,
@@ -76,6 +77,12 @@ impl StorageBackend for ProbeBackend {
         entry: &StorageEntry,
         range: std::ops::Range<u64>,
     ) -> StorageResult<Vec<u8>> {
+        if !self.range_supported.load(Ordering::SeqCst) {
+            return Err(StorageError::new(
+                StorageErrorCode::Unsupported,
+                "测试存储不支持范围读取",
+            ));
+        }
         if !entry.name.ends_with(".json") {
             self.primary_reads.fetch_add(1, Ordering::SeqCst);
             if self.block_primary.load(Ordering::SeqCst) {
@@ -106,6 +113,7 @@ async fn setup(path: &std::path::Path) -> (StorageService, StorageLocator, Arc<P
         full_reads: AtomicUsize::new(0),
         stats: AtomicUsize::new(0),
         root_stats: AtomicUsize::new(0),
+        range_supported: AtomicBool::new(true),
         block_listing: AtomicBool::new(false),
         listing_started: tokio::sync::Notify::new(),
         block_primary: AtomicBool::new(false),
@@ -139,7 +147,7 @@ fn input(root: StorageLocator) -> PhotoReviewInput {
 }
 
 #[tokio::test]
-async fn remote_thumbnails_do_not_read_sources_but_explicit_previews_still_work() {
+async fn remote_thumbnails_use_embedded_ranges_and_skip_full_downloads() {
     let dir = tempfile::tempdir().unwrap();
     let (service, root, probe) = setup(dir.path()).await;
     image::RgbImage::new(32, 16)
@@ -159,30 +167,63 @@ async fn remote_thumbnails_do_not_read_sources_but_explicit_previews_still_work(
         probe.full_reads.load(Ordering::SeqCst),
         probe.primary_reads.load(Ordering::SeqCst),
     );
-    for name in ["image.JPG", "raw.NEF"] {
-        let locator = StorageLocator {
-            logical_path: name.into(),
-            ..root.clone()
-        };
-        let error = service.preview_entry(locator, true).await.err().unwrap();
-        assert_eq!(error.code, StorageErrorCode::Unsupported);
-    }
-    for &id in &session.photo_ids {
-        let error = service
-            .photo_preview(id, false, true, false)
-            .await
-            .unwrap_err();
-        assert_eq!(error.code, StorageErrorCode::Unsupported);
-    }
+    let error = service
+        .preview_entry(
+            StorageLocator {
+                logical_path: "image.JPG".into(),
+                ..root.clone()
+            },
+            true,
+        )
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.code, StorageErrorCode::Unsupported);
+    let thumbnail = service
+        .preview_entry(
+            StorageLocator {
+                logical_path: "raw.NEF".into(),
+                ..root.clone()
+            },
+            true,
+        )
+        .await
+        .unwrap();
+    assert_eq!(thumbnail.mime, "image/jpeg");
     assert_eq!(
-        (
-            probe.stats.load(Ordering::SeqCst),
-            probe.full_reads.load(Ordering::SeqCst),
-            probe.primary_reads.load(Ordering::SeqCst),
-        ),
-        before,
-        "thumbnail requests must not stat, download, or range-read remote files"
+        probe.full_reads.load(Ordering::SeqCst),
+        before.1,
+        "file browser thumbnails must not download complete remote files"
     );
+    let catalog = service.photo_catalog().await.unwrap();
+    let raw = catalog
+        .photos
+        .iter()
+        .find(|p| p.files.iter().any(|f| f.kind == PhotoFileKind::Raw))
+        .unwrap();
+    let thumbnail = service
+        .photo_preview(raw.id, false, true, false)
+        .await
+        .unwrap();
+    assert!(thumbnail.embedded);
+    assert_eq!(thumbnail.width * 2, thumbnail.height);
+    assert_eq!(
+        probe.full_reads.load(Ordering::SeqCst),
+        before.1,
+        "reviewing a remote RAW thumbnail reads its embedded JPEG, never the whole RAW"
+    );
+    assert!(probe.primary_reads.load(Ordering::SeqCst) > before.2);
+    for &id in &session.photo_ids {
+        let result = service.photo_preview(id, false, true, false).await;
+        if id == raw.id {
+            let thumbnail = result.unwrap();
+            assert_eq!(thumbnail.mime, "image/jpeg");
+            assert!(thumbnail.width <= 160 && thumbnail.height <= 160);
+        } else {
+            assert_eq!(result.unwrap_err().code, StorageErrorCode::Unsupported);
+        }
+    }
+    assert_eq!(probe.full_reads.load(Ordering::SeqCst), before.1);
     for name in ["image.JPG", "raw.NEF"] {
         let locator = StorageLocator {
             logical_path: name.into(),
@@ -200,6 +241,99 @@ async fn remote_thumbnails_do_not_read_sources_but_explicit_previews_still_work(
     }
     assert!(probe.full_reads.load(Ordering::SeqCst) > before.1);
     assert!(probe.primary_reads.load(Ordering::SeqCst) > before.2);
+}
+
+#[tokio::test]
+async fn unsupported_range_reads_never_fall_back_to_complete_downloads() {
+    let dir = tempfile::tempdir().unwrap();
+    let (service, root, probe) = setup(dir.path()).await;
+    std::fs::write(
+        dir.path().join("photos/raw.NEF"),
+        crate::browsing::nef::fixture(true, false),
+    )
+    .unwrap();
+    let session = service
+        .photo_open_directory_review(root.clone())
+        .await
+        .unwrap();
+    probe.range_supported.store(false, Ordering::SeqCst);
+    let before = probe.full_reads.load(Ordering::SeqCst);
+    let error = service
+        .preview_entry(
+            StorageLocator {
+                logical_path: "raw.NEF".into(),
+                ..root
+            },
+            true,
+        )
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.code, StorageErrorCode::Unsupported);
+    let error = service
+        .photo_preview(session.photo_ids[0], false, true, false)
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, StorageErrorCode::Unsupported);
+    assert_eq!(probe.full_reads.load(Ordering::SeqCst), before);
+}
+
+#[tokio::test]
+async fn remote_jpg_thumbnails_reuse_cached_previews_without_downloading_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let (service, root, probe) = setup(dir.path()).await;
+    let cache = PreviewCache::open(dir.path().join("cache"), dir.path().join("cache.json"))
+        .await
+        .unwrap();
+    let service = service.with_preview_cache(cache);
+    let path = dir.path().join("photos/image.JPG");
+    image::RgbImage::new(320, 160).save(&path).unwrap();
+    let session = service
+        .photo_open_directory_review(root.clone())
+        .await
+        .unwrap();
+    let locator = StorageLocator {
+        logical_path: "image.JPG".into(),
+        ..root
+    };
+    service.preview_entry(locator.clone(), false).await.unwrap();
+    service
+        .photo_preview(session.photo_ids[0], false, false, false)
+        .await
+        .unwrap();
+    let before = probe.full_reads.load(Ordering::SeqCst);
+    let thumbnail = service.preview_entry(locator.clone(), true).await.unwrap();
+    assert_eq!(thumbnail.mime, "image/jpeg");
+    let thumbnail = service
+        .photo_preview(session.photo_ids[0], false, true, false)
+        .await
+        .unwrap();
+    assert!(thumbnail.width <= 160 && thumbnail.height <= 160);
+    assert_eq!(probe.full_reads.load(Ordering::SeqCst), before);
+
+    image::RgbImage::new(640, 320).save(&path).unwrap();
+    assert_eq!(
+        service
+            .preview_entry(locator, true)
+            .await
+            .err()
+            .unwrap()
+            .code,
+        StorageErrorCode::Unsupported
+    );
+    assert_eq!(
+        service
+            .photo_preview(session.photo_ids[0], false, true, false)
+            .await
+            .unwrap_err()
+            .code,
+        StorageErrorCode::Unsupported
+    );
+    assert_eq!(
+        probe.full_reads.load(Ordering::SeqCst),
+        before,
+        "changed sources invalidate the cache without triggering a full download"
+    );
 }
 
 #[tokio::test]
@@ -534,7 +668,7 @@ async fn cancelling_a_stalled_listing_releases_scan_without_publishing() {
 #[tokio::test]
 async fn raw_view_uses_raw_preview_and_persists_without_changing_photo_identity() {
     let dir = tempfile::tempdir().unwrap();
-    let (service, root, _) = setup(dir.path()).await;
+    let (service, root, probe) = setup(dir.path()).await;
     for name in ["pair.NEF", "raw.NEF"] {
         std::fs::write(
             dir.path().join("photos").join(name),
@@ -572,6 +706,16 @@ async fn raw_view_uses_raw_preview_and_persists_without_changing_photo_identity(
         .find(|p| p.original_path == "jpg.JPG")
         .unwrap()
         .id;
+    let before = probe.full_reads.load(Ordering::SeqCst);
+    let thumbnail = service
+        .photo_preview(paired, false, true, false)
+        .await
+        .unwrap();
+    assert!(
+        thumbnail.embedded,
+        "paired photos use the RAW's small embedded JPEG for thumbnails"
+    );
+    assert_eq!(probe.full_reads.load(Ordering::SeqCst), before);
     let jpg = service
         .photo_preview(paired, true, false, false)
         .await

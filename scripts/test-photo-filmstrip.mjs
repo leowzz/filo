@@ -8,6 +8,8 @@ const page = task.page("p1");
 await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
   source: `(() => {
     window.isTauri = true;
+    sessionStorage.setItem('filo.review-session', 'review');
+    window.skippedThumbnail = false;
     const photos = Array.from({length: 241}, (_, i) => ({
       id: 'p' + i, archive_id: 'archive', original_path: 'DSC_' + (6166 + i) + '.JPG',
       capture_date: null, issues: [], files: [{id: 'f' + i, kind: 'jpg', path: 'DSC_' + (6166 + i) + '.JPG',
@@ -28,6 +30,12 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
         if (command === 'plugin:event|unlisten') return;
         if (command === 'review_catalog') return structuredClone(catalog);
         if (command === 'review_save_position') {session.position = args.position; return;}
+        if (command === 'review_preview' && args.thumbnail && args.photoId === 'p1') {
+          window.skippedThumbnail = true;
+          throw {code:'unsupported',message:'此文件需要完整下载才能生成缩略图'};
+        }
+        if (command === 'review_preview' && args.thumbnail && ['p0', 'p8'].includes(args.photoId))
+          throw {message:'模拟缩略图失败'};
         if (command === 'review_preview') return {mime: 'image/svg+xml',
           content: btoa('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="#4e7088"/></svg>'),
           width: 800, height: 600, embedded: false};
@@ -82,6 +90,41 @@ assert.equal(
   "ordinary review centers without debug mode",
 );
 assert.ok(restored.rendered < 30, "only nearby thumbnails mount");
+await page.waitForSelector('.photo-filmstrip button[aria-current="true"] img');
+await page.waitForFunction(() => window.skippedThumbnail);
+assert.equal(
+  await page.evaluate(
+    () =>
+      document.querySelector(
+        'button[aria-label="查看 DSC_6167.JPG"] .photo-thumbnail-placeholder',
+      )?.textContent,
+  ),
+  "预览",
+  "skipping a full download is not shown as a thumbnail failure",
+);
+await page.waitForFunction(
+  () =>
+    document.querySelector(
+      'button[aria-label="查看 DSC_6166.JPG"] .photo-thumbnail-placeholder',
+    )?.title === "模拟缩略图失败",
+);
+assert.equal(
+  await page.evaluate(
+    () =>
+      document.querySelector(
+        'button[aria-label="查看 DSC_6174.JPG"] .photo-thumbnail-placeholder',
+      ) === null,
+  ),
+  true,
+  "a cached main preview keeps the current thumbnail visible after thumbnail failure",
+);
+assert.equal(
+  await page.evaluate(
+    () =>
+      getComputedStyle(document.querySelector(".photo-filmstrip")).overflowY,
+  ),
+  "hidden",
+);
 for (let i = 0; i < 20; i++) await page.keyboard.press("ArrowRight");
 await page.waitForFunction(centered);
 const advanced = await metrics();

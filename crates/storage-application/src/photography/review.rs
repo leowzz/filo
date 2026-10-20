@@ -186,12 +186,23 @@ impl StorageService {
         let _mutation = self.mutation_lock.read().await;
         let target = file_target(archive, file)?;
         let backend = self.backend(target.volume_id).await?;
-        if thumbnail && backend.is_remote() {
-            return Err(StorageError::new(
-                StorageErrorCode::Unsupported,
-                "远程文件不自动生成缩略图，请打开预览",
-            ));
-        }
+        let file = if thumbnail && backend.is_remote() {
+            photo
+                .files
+                .iter()
+                .find(|f| {
+                    f.kind == PhotoFileKind::Raw && (self.photo_review_workspace || f.verified)
+                })
+                .unwrap_or(file)
+        } else {
+            file
+        };
+        let target = file_target(archive, file)?;
+        let backend = if backend.volume_id() == target.volume_id {
+            backend
+        } else {
+            self.backend(target.volume_id).await?
+        };
         let entry = backend.stat(&target).await?;
         let variant = format!("photo:{original}:{thumbnail}");
         let cache_key = crate::preview_cache::key(&entry, &variant);
@@ -200,12 +211,38 @@ impl StorageService {
                 return Ok(preview);
             }
         }
+        let embedded = file.kind == PhotoFileKind::Raw;
+        let mut cached_source: Option<PhotoPreview> = None;
+        if thumbnail && backend.is_remote() {
+            if let Some(cache) = &self.preview_cache {
+                for variant in ["photo:false:false", "photo:true:false"] {
+                    if let Some(key) = crate::preview_cache::key(&entry, variant) {
+                        cached_source = cache.get(&key).await;
+                        if cached_source.is_some() {
+                            break;
+                        }
+                    }
+                }
+            }
+            if !embedded && cached_source.is_none() {
+                return Err(StorageError::new(
+                    StorageErrorCode::Unsupported,
+                    "此文件需要完整下载才能生成缩略图",
+                ));
+            }
+        }
         let _slot = slots
             .acquire()
             .await
             .map_err(|_| invalid("预览任务已停止"))?;
-        let embedded = file.kind == PhotoFileKind::Raw;
-        let (bytes, orientation) = if embedded {
+        let (bytes, orientation) = if let Some(preview) = cached_source {
+            (
+                STANDARD
+                    .decode(&preview.content)
+                    .map_err(|_| invalid("无法读取缩略图缓存"))?,
+                image::metadata::Orientation::NoTransforms,
+            )
+        } else if embedded {
             crate::browsing::nef::load(backend.as_ref(), &entry, thumbnail, &self.nef_previews)
                 .await?
         } else {

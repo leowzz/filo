@@ -57,28 +57,45 @@ const quickFilters = [
 ];
 
 function Thumbnail({ photo, rawOnly }: { photo: Photo; rawOnly: boolean }) {
+  const cachedPreview = useSyncExternalStore(photoPreviews.subscribe, () =>
+    photoPreviews.peek(photo.id, false, false, rawOnly),
+  );
   const [image, setImage] = useState<{
     preview: PhotoPreview;
     rawOnly: boolean;
   } | null>(null);
+  const [failure, setFailure] = useState("");
   useEffect(() => {
     let live = true;
+    setFailure("");
     void photoPreview(photo.id, false, true, rawOnly)
       .then((value) => {
         if (live) setImage({ preview: value, rawOnly });
       })
-      .catch(() => {});
+      .catch((error) => {
+        if (
+          live &&
+          !(
+            error &&
+            typeof error === "object" &&
+            "code" in error &&
+            error.code === "unsupported"
+          )
+        )
+          setFailure(errorMessage(error));
+      });
     return () => {
       live = false;
     };
   }, [photo.id, rawOnly]);
-  return image && image.rawOnly === rawOnly ? (
-    <img
-      src={`data:${image.preview.mime};base64,${image.preview.content}`}
-      alt=""
-    />
+  const preview =
+    image && image.rawOnly === rawOnly ? image.preview : cachedPreview;
+  return preview ? (
+    <img src={`data:${preview.mime};base64,${preview.content}`} alt="" />
   ) : (
-    <span className="photo-thumbnail-placeholder">预览</span>
+    <span className="photo-thumbnail-placeholder" title={failure || undefined}>
+      {failure ? "加载失败" : "预览"}
+    </span>
   );
 }
 

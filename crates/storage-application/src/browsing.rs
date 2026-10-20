@@ -131,9 +131,6 @@ impl StorageService {
         };
         let _guard = self.mutation_lock.read().await;
         let backend = self.backend(locator.volume_id).await?;
-        if thumbnail && backend.is_remote() {
-            return Err(error("远程文件不自动生成缩略图，请打开预览"));
-        }
         let entry = backend.stat(&locator).await?;
         if entry.kind != StorageEntryKind::File {
             return Err(error("请选择普通文件进行预览"));
@@ -149,8 +146,22 @@ impl StorageService {
                 return Ok(preview);
             }
         }
+        let mut cached_source: Option<Preview> = None;
+        if thumbnail && backend.is_remote() {
+            if let (Some(cache), Some(key)) = (
+                &self.preview_cache,
+                crate::preview_cache::key(&entry, "entry:image-v2:false"),
+            ) {
+                cached_source = cache.get(&key).await;
+            }
+            // NEF reads only its embedded JPEG through bounded range requests.
+            // Other image formats currently need the whole source unless cached.
+            if !is_nef && cached_source.is_none() {
+                return Err(error("此文件需要完整下载才能生成缩略图"));
+            }
+        }
         let _slot = slots.acquire().await.map_err(|_| error("预览任务已停止"))?;
-        let nef_image = if is_nef {
+        let nef_image = if is_nef && cached_source.is_none() {
             Some(nef::load(backend.as_ref(), &entry, thumbnail, &self.nef_previews).await?)
         } else {
             None
@@ -164,7 +175,14 @@ impl StorageService {
         if !is_nef && (is_image || is_pdf) && entry.size.unwrap_or(u64::MAX) > limit {
             return Err(error(too_large));
         }
-        let (mut bytes, orientation) = if let Some(image) = nef_image {
+        let (mut bytes, orientation) = if let Some(preview) = cached_source {
+            (
+                STANDARD
+                    .decode(&preview.content)
+                    .map_err(|_| error("无法读取缩略图缓存"))?,
+                image::metadata::Orientation::NoTransforms,
+            )
+        } else if let Some(image) = nef_image {
             image
         } else {
             (

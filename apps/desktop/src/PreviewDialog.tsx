@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { ChevronUp, ChevronDown } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -303,25 +303,67 @@ function FilePreview({ entry }: { entry: Entry }) {
     </div>
   );
 }
-export function Thumbnail({ entry }: { entry: Entry }) {
+let remoteThumbnailQueue = Promise.resolve();
+function loadRemoteThumbnail(entry: Entry, signal: AbortSignal) {
+  const request = remoteThumbnailQueue.then(() => {
+    signal.throwIfAborted();
+    return browsingApi.preview(entry.locator, true);
+  });
+  remoteThumbnailQueue = request.then(
+    () => {},
+    () => {},
+  );
+  return request;
+}
+
+export function Thumbnail({
+  entry,
+  remote = false,
+}: {
+  entry: Entry;
+  remote?: boolean;
+}) {
   const image =
     entry.kind === "file" && /\.(png|jpe?g|gif|webp|nef)$/i.test(entry.name);
+  const element = useRef<HTMLSpanElement>(null);
+  const [visible, setVisible] = useState(!remote);
+  useEffect(() => {
+    if (!remote) {
+      setVisible(true);
+      return;
+    }
+    if (!image || !element.current) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setVisible(entry.isIntersecting),
+      { rootMargin: "120px" },
+    );
+    observer.observe(element.current);
+    return () => observer.disconnect();
+  }, [image, remote]);
   const query = useQuery({
     queryKey: ["thumbnail", entry.locator, entry.modified_at, entry.etag],
-    queryFn: () => browsingApi.preview(entry.locator, true),
-    enabled: image,
+    queryFn: ({ signal }) =>
+      remote
+        ? loadRemoteThumbnail(entry, signal)
+        : browsingApi.preview(entry.locator, true),
+    enabled: image && visible,
     retry: false,
     staleTime: 60000,
     gcTime: 60000,
     refetchOnWindowFocus: false,
   });
-  return query.data ? (
-    <img
-      className="file-thumbnail"
-      alt=""
-      src={`data:${query.data.mime};base64,${query.data.content}`}
-    />
-  ) : (
-    <EntryIcon entry={entry} />
+  if (!image) return <EntryIcon entry={entry} />;
+  return (
+    <span className="file-thumbnail-frame" ref={element}>
+      {query.data ? (
+        <img
+          className="file-thumbnail"
+          alt=""
+          src={`data:${query.data.mime};base64,${query.data.content}`}
+        />
+      ) : (
+        <EntryIcon entry={entry} />
+      )}
+    </span>
   );
 }

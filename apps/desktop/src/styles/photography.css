@@ -726,6 +726,7 @@
   flex-shrink: 0;
   padding: 10px 16px;
   overflow-x: auto;
+  overflow-y: hidden;
   background: #14181e;
   min-height: 100px;
 }
