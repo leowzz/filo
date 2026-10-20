@@ -349,6 +349,23 @@
   color: #8c8c8c;
   margin-top: 5px;
 }
+.preview-cache-storage {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.preview-cache-storage p {
+  margin: 0;
+}
+.settings-card .preview-cache-path {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  margin-top: 12px;
+}
 input[type="checkbox"] {
   accent-color: var(--accent);
   width: 14px;

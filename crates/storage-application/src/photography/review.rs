@@ -191,6 +191,13 @@ impl StorageService {
         let target = file_target(archive, file)?;
         let backend = self.backend(target.volume_id).await?;
         let entry = backend.stat(&target).await?;
+        let variant = format!("photo:{original}:{thumbnail}");
+        let cache_key = crate::preview_cache::key(&entry, &variant);
+        if let (Some(cache), Some(key)) = (&self.preview_cache, &cache_key) {
+            if let Some(preview) = cache.get(key).await {
+                return Ok(preview);
+            }
+        }
         let embedded = file.kind == PhotoFileKind::Raw;
         let (bytes, orientation) = if embedded {
             crate::browsing::nef::load(backend.as_ref(), &entry, thumbnail, &self.nef_previews)
@@ -209,7 +216,7 @@ impl StorageService {
             }
             (bytes, image::metadata::Orientation::NoTransforms)
         };
-        tokio::task::spawn_blocking(move || {
+        let preview = tokio::task::spawn_blocking(move || {
             let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
                 .with_guessed_format()
                 .map_err(|_| invalid("无法识别照片预览"))?;
@@ -248,6 +255,18 @@ impl StorageService {
             })
         })
         .await
-        .map_err(|_| invalid("照片预览任务中断"))?
+        .map_err(|_| invalid("照片预览任务中断"))??;
+        if let (Some(cache), Some(key)) = (&self.preview_cache, cache_key) {
+            if backend
+                .stat(&target)
+                .await
+                .ok()
+                .and_then(|current| crate::preview_cache::key(&current, &variant))
+                == Some(key.clone())
+            {
+                cache.put(key, preview.clone()).await;
+            }
+        }
+        Ok(preview)
     }
 }

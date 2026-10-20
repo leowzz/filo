@@ -218,7 +218,7 @@ pub struct PhotoReviewProgress {
     pub path: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PhotoPreview {
     pub mime: String,
     pub content: String,

@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use storage_application::{StorageService, VolumeView};
+use storage_application::{
+    PreviewCache, PreviewCacheInfo, PreviewCacheSettings, StorageService, VolumeView,
+};
 use storage_domain::*;
 use storage_repository::Repository;
 use tauri::{Manager, State};
@@ -21,6 +23,21 @@ struct FileTransferBatch {
 }
 
 errors::commands! {
+async fn get_preview_cache(service: State<'_, StorageService>) -> StorageResult<PreviewCacheInfo> {
+    service.preview_cache_info().await
+}
+
+async fn save_preview_cache_settings(
+    service: State<'_, StorageService>,
+    settings: PreviewCacheSettings,
+) -> StorageResult<PreviewCacheInfo> {
+    service.configure_preview_cache(settings).await
+}
+
+async fn clear_preview_cache(service: State<'_, StorageService>) -> StorageResult<PreviewCacheInfo> {
+    service.clear_preview_cache().await
+}
+
 async fn get_transfer_settings(
     service: State<'_, StorageService>,
 ) -> StorageResult<TransferSettings> {
@@ -403,10 +420,23 @@ fn main() {
                     std::sync::Arc::new(storage_application::FileCredentialStore::new(Some(
                         data.join("credentials.json"),
                     )));
-                app.manage(StorageService::with_credentials(
-                    repository,
-                    credentials.clone(),
-                ));
+                let cache = tauri::async_runtime::block_on(PreviewCache::open(
+                    app.path().app_cache_dir()?.join("previews"),
+                    app.path().app_config_dir()?.join("preview-cache.json"),
+                ))?;
+                app.manage(
+                    StorageService::with_credentials(repository, credentials.clone())
+                        .with_preview_cache(cache.clone()),
+                );
+                tauri::async_runtime::spawn(async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+                    loop {
+                        interval.tick().await;
+                        if let Err(error) = cache.info().await {
+                            tracing::warn!("preview cache maintenance failed: {}", error.message);
+                        }
+                    }
+                });
                 app.manage(credentials);
                 tracing::info!("Filo storage is ready");
                 Ok(())
@@ -417,6 +447,9 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_preview_cache,
+            save_preview_cache_settings,
+            clear_preview_cache,
             photography::review_catalog,
             photography::review_open,
             photography::review_open_directory,

@@ -6,6 +6,8 @@ use storage_repository::Repository;
 use tokio::sync::{Mutex, OnceCell, RwLock};
 use uuid::Uuid;
 mod browsing;
+mod preview_cache;
+pub use preview_cache::{PreviewCache, PreviewCacheInfo, PreviewCacheSettings};
 mod credentials;
 mod errors;
 pub use errors::catch_panic;
@@ -39,6 +41,7 @@ pub struct StorageService {
     preview_slots: Arc<tokio::sync::Semaphore>,
     thumbnail_slots: Arc<tokio::sync::Semaphore>,
     nef_previews: Arc<Mutex<browsing::nef::Cache>>,
+    preview_cache: Option<PreviewCache>,
     searches: Arc<Mutex<std::collections::HashMap<Uuid, browsing::SearchTask>>>,
     mutation_lock: Arc<RwLock<()>>,
     local_registration_lock: Arc<Mutex<()>>,
@@ -103,6 +106,7 @@ impl StorageService {
             preview_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             thumbnail_slots: Arc::new(tokio::sync::Semaphore::new(1)),
             nef_previews: Arc::new(Mutex::new(browsing::nef::Cache::default())),
+            preview_cache: None,
             searches: Arc::new(Mutex::new(std::collections::HashMap::new())),
             temporary_backends: Arc::new(Mutex::new(std::collections::HashMap::new())),
             repository,

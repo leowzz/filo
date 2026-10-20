@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Flag, FlagOff, Star, Undo2 } from "lucide-react";
 import type { PhotoFeedback as Feedback } from "./photoReviewController";
+import { observeResize } from "./observeResize";
 
 type Particle = {
   x: number;
@@ -44,12 +45,10 @@ export function PhotoFeedback({ feedback }: { feedback: Feedback | null }) {
       });
     };
     update();
-    const observer = new ResizeObserver(update);
-    observer.observe(stage);
-    observer.observe(image);
+    const stopObserving = observeResize([stage, image], update);
     stage.addEventListener("scroll", update);
     return () => {
-      observer.disconnect();
+      stopObserving();
       stage.removeEventListener("scroll", update);
     };
   }, [feedback]);

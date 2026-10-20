@@ -136,6 +136,13 @@ impl StorageService {
         if entry.kind != StorageEntryKind::File {
             return Err(error("请选择普通文件进行预览"));
         }
+        let variant = format!("entry:{thumbnail}");
+        let cache_key = crate::preview_cache::key(&entry, &variant);
+        if let (Some(cache), Some(key)) = (&self.preview_cache, &cache_key) {
+            if let Some(preview) = cache.get(key).await {
+                return Ok(preview);
+            }
+        }
         let nef_image = if is_nef {
             Some(nef::load(backend.as_ref(), &entry, thumbnail, &self.nef_previews).await?)
         } else {
@@ -168,7 +175,7 @@ impl StorageService {
             return Err(error(too_large));
         }
         bytes.truncate(limit as usize);
-        if is_image {
+        let preview = if is_image {
             let content = tokio::task::spawn_blocking(move || -> StorageResult<String> {
                 let mut reader = image::ImageReader::new(Cursor::new(bytes))
                     .with_guessed_format()
@@ -199,31 +206,42 @@ impl StorageService {
             })
             .await
             .map_err(|_| error("预览任务中断"))??;
-            return Ok(Preview {
+            Preview {
                 kind: "image".into(),
                 mime: "image/png".into(),
                 content,
                 truncated: false,
-            });
-        }
-        if is_pdf {
+            }
+        } else if is_pdf {
             if !bytes.starts_with(b"%PDF-") {
                 return Err(error("PDF 文件格式无效"));
             }
-            return Ok(Preview {
+            Preview {
                 kind: "pdf".into(),
                 mime: "application/pdf".into(),
                 content: STANDARD.encode(bytes),
                 truncated: false,
-            });
+            }
+        } else {
+            Preview {
+                kind: "text".into(),
+                mime: "text/plain".into(),
+                content: String::from_utf8_lossy(&bytes).into_owned(),
+                truncated,
+            }
+        };
+        if let (Some(cache), Some(key)) = (&self.preview_cache, cache_key) {
+            if backend
+                .stat(&locator)
+                .await
+                .ok()
+                .and_then(|current| crate::preview_cache::key(&current, &variant))
+                == Some(key.clone())
+            {
+                cache.put(key, preview.clone()).await;
+            }
         }
-        let content = String::from_utf8_lossy(&bytes).into_owned();
-        Ok(Preview {
-            kind: "text".into(),
-            mime: "text/plain".into(),
-            content,
-            truncated,
-        })
+        Ok(preview)
     }
     pub async fn directory_stamp(&self, parent: StorageLocator) -> StorageResult<String> {
         let _guard = self.mutation_lock.read().await;

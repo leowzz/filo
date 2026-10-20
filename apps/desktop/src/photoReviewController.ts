@@ -296,10 +296,11 @@ export function photoKeyAction(
       advance: autoAdvance || event.shiftKey,
     };
   const key = event.key.toLowerCase();
-  if (["p", "x", "u"].includes(key))
+  if (["c", "p", "x", "u"].includes(key))
     return {
       type: "flag",
-      value: key === "p" ? "pick" : key === "x" ? "reject" : "none",
+      value:
+        key === "c" || key === "p" ? "pick" : key === "x" ? "reject" : "none",
       advance: autoAdvance || event.shiftKey,
     };
   if (key === "z") return { type: "zoom" };

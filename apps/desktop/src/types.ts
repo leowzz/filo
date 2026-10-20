@@ -146,3 +146,9 @@ export type TransferJob = {
 };
 export const activeTransfer = (job: TransferJob) =>
   ["queued", "running", "verifying"].includes(job.state);
+export type PreviewCacheSettings = { max_bytes: number; max_age_days: number };
+export type PreviewCacheInfo = {
+  settings: PreviewCacheSettings;
+  used_bytes: number;
+  directory: string;
+};

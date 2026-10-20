@@ -7,6 +7,7 @@ import {
 } from "react";
 import {
   ArrowLeft,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Flag,
@@ -35,6 +36,7 @@ import {
   type PhotoFeedback as Feedback,
 } from "./photoReviewController";
 import { PhotoFeedback } from "./PhotoFeedback";
+import { observeResize } from "./observeResize";
 import { useAppSettings } from "./appSettings";
 import {
   photoPreview,
@@ -323,7 +325,10 @@ export function PhotoReview({
         );
       if (current && action.type === "flag")
         controller.mark(
-          { rating: current.rating, flag: action.value },
+          {
+            rating: current.rating,
+            flag: current.flag === action.value ? "none" : action.value,
+          },
           action.advance,
           () => actions.current.step(1),
         );
@@ -437,9 +442,7 @@ export function PhotoReview({
         (list.clientWidth - selected.offsetWidth) / 2;
     };
     center();
-    const observer = new ResizeObserver(center);
-    observer.observe(list);
-    return () => observer.disconnect();
+    return observeResize([list], center);
   }, [cacheDebug, photo?.id, rawOnly, previewIds]);
   useEffect(() => {
     let live = true;
@@ -477,21 +480,26 @@ export function PhotoReview({
   return (
     <section className="photo-review" ref={container} aria-label="照片审图">
       <div className="photo-review-toolbar">
-        <button onClick={() => void back()}>
+        <button className="photo-review-back" onClick={() => void back()}>
           <ArrowLeft size={17} />
           {backLabel}
         </button>
-        <span className="photo-review-name">{session.name}</span>
-        <select
-          aria-label="照片排序"
-          value={sort}
-          onChange={(event) => setSort(event.target.value as typeof sort)}
-        >
-          <option value="name_asc">文件名升序</option>
-          <option value="name_desc">文件名降序</option>
-          <option value="capture_asc">拍摄日期升序</option>
-          <option value="capture_desc">拍摄日期降序</option>
-        </select>
+        <span className="photo-review-name" title={session.name}>
+          {session.name}
+        </span>
+        <span className="photo-review-select">
+          <select
+            aria-label="照片排序"
+            value={sort}
+            onChange={(event) => setSort(event.target.value as typeof sort)}
+          >
+            <option value="name_asc">文件名升序</option>
+            <option value="name_desc">文件名降序</option>
+            <option value="capture_asc">拍摄日期升序</option>
+            <option value="capture_desc">拍摄日期降序</option>
+          </select>
+          <ChevronDown size={14} aria-hidden="true" />
+        </span>
         <div className="photo-quick-filters" role="group" aria-label="快捷筛选">
           {quickFilters.map((preset) => (
             <button
@@ -506,21 +514,25 @@ export function PhotoReview({
             </button>
           ))}
         </div>
-        <select
-          aria-label="星级门槛"
-          value={minimum}
-          onChange={(e) => changeFilter(filter, Number(e.target.value))}
-        >
-          <option value={0}>所有星级</option>
-          {[1, 2, 3, 4, 5].map((n) => (
-            <option key={n} value={n}>
-              {n} 星及以上
-            </option>
-          ))}
-        </select>
-        <label className="photo-auto">
+        <span className="photo-review-select">
+          <select
+            aria-label="星级门槛"
+            value={minimum}
+            onChange={(e) => changeFilter(filter, Number(e.target.value))}
+          >
+            <option value={0}>所有星级</option>
+            {[1, 2, 3, 4, 5].map((n) => (
+              <option key={n} value={n}>
+                {n} 星及以上
+              </option>
+            ))}
+          </select>
+          <ChevronDown size={14} aria-hidden="true" />
+        </span>
+        <label className="photo-review-toggle">
           <input
             type="checkbox"
+            role="switch"
             checked={rawOnly}
             onChange={(e) => {
               const value = e.target.checked;
@@ -539,17 +551,18 @@ export function PhotoReview({
           />
           仅查看 RAW
         </label>
-        <label className="photo-auto">
+        <label className="photo-review-toggle">
           <input
             type="checkbox"
+            role="switch"
             checked={auto}
             onChange={(e) => setAuto(e.target.checked)}
           />
           自动前进
         </label>
         <button
-          className="icon-button"
-          title="全屏"
+          className="icon-button photo-review-fullscreen"
+          title={fullscreen ? "退出全屏" : "全屏审图"}
           aria-label={fullscreen ? "退出全屏" : "全屏审图"}
           onClick={() => {
             const request = document.fullscreenElement
@@ -627,6 +640,9 @@ export function PhotoReview({
         />
       </div>
       <div className="photo-review-controls">
+        <span className="photo-review-filename" title={photoPath}>
+          {photoPath?.split("/").at(-1)}
+        </span>
         <button
           aria-label="上一张"
           disabled={index <= 0}
@@ -672,20 +688,23 @@ export function PhotoReview({
           <button
             className={photo?.flag === "pick" ? "pick selected" : ""}
             aria-pressed={photo?.flag === "pick"}
-            title={photo?.flag === "pick" ? "取消保留 (U)" : "保留 (P)"}
+            aria-keyshortcuts="C P"
+            title={photo?.flag === "pick" ? "取消保留 (C / P)" : "保留 (C / P)"}
             onClick={() =>
               mark(photo?.rating ?? 0, photo?.flag === "pick" ? "none" : "pick")
             }
           >
             <Flag size={17} />
             保留
+            <kbd aria-hidden="true">C</kbd>
           </button>
           <button
             className={photo?.flag === "reject" ? "reject selected" : ""}
             aria-pressed={photo?.flag === "reject"}
+            aria-keyshortcuts="X"
             title={
               photo?.flag === "reject"
-                ? "取消待删除 (U)"
+                ? "取消待删除 (X)"
                 : "待删除 (X)，只标记文件"
             }
             onClick={() =>
@@ -697,6 +716,7 @@ export function PhotoReview({
           >
             <Flag size={17} />
             待删除
+            <kbd aria-hidden="true">X</kbd>
           </button>
         </div>
         <button
@@ -725,13 +745,6 @@ export function PhotoReview({
               : session.directory
                 ? "已保存到目录"
                 : "本机已保存"}
-        </span>
-      </div>
-      <div className="photo-image-info">
-        <span>{photoPath}</span>
-        <span>
-          {shownImage &&
-            `${shownImage.preview.width} × ${shownImage.preview.height}${shownImage.preview.embedded ? " · NEF 内嵌预览，完整 RAW 请在 LRC 检查" : original && !shownImage.original ? " · 正在读取原尺寸…" : ""}`}
         </span>
       </div>
       <div className="photo-filmstrip" aria-label="审图胶片带" ref={filmstrip}>

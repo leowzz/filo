@@ -1,4 +1,5 @@
 import { useEffect, useState, type RefObject } from "react";
+import { observeResize } from "./observeResize";
 export const ROW_HEIGHT = 29;
 export const HEADER_HEIGHT = 30;
 
@@ -35,14 +36,15 @@ export function useVirtualRows(
           : next,
       );
     };
-    const resize = new ResizeObserver(update);
-    resize.observe(area);
     const header = area.querySelector("thead");
-    if (header) resize.observe(header);
+    const stopObserving = observeResize(
+      header ? [area, header] : [area],
+      update,
+    );
     area.addEventListener("scroll", update, { passive: true });
     update();
     return () => {
-      resize.disconnect();
+      stopObserving();
       area.removeEventListener("scroll", update);
     };
   }, [ref, count]);

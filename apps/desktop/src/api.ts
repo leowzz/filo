@@ -17,10 +17,23 @@ import type {
   SftpPrivateKey,
   SftpHostKeyInspection,
   TransferSettings,
+  PreviewCacheInfo,
+  PreviewCacheSettings,
 } from "./types";
 
 export const desktop = isTauri();
 export const api = {
+  previewCache: () =>
+    desktop
+      ? invoke<PreviewCacheInfo>("get_preview_cache")
+      : Promise.resolve({
+          settings: { max_bytes: 1024 ** 3, max_age_days: 30 },
+          used_bytes: 0,
+          directory: "桌面应用的缓存目录",
+        }),
+  savePreviewCacheSettings: (settings: PreviewCacheSettings) =>
+    invoke<PreviewCacheInfo>("save_preview_cache_settings", { settings }),
+  clearPreviewCache: () => invoke<PreviewCacheInfo>("clear_preview_cache"),
   transferSettings: () =>
     desktop
       ? invoke<TransferSettings>("get_transfer_settings")

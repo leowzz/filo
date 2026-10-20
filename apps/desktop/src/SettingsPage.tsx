@@ -5,6 +5,7 @@ import { CredentialSettingsCard } from "./CredentialSettingsCard";
 import { AppUpdateCard } from "./AppUpdateCard";
 import type { AppUpdater } from "./useAppUpdater";
 import { useAppSettings } from "./appSettings";
+import { PreviewCacheSettingsCard } from "./PreviewCacheSettingsCard";
 
 export function SettingsPage({ updater }: { updater: AppUpdater }) {
   const state = useBrowser();
@@ -14,6 +15,7 @@ export function SettingsPage({ updater }: { updater: AppUpdater }) {
       <h1>设置</h1>
       <CredentialSettingsCard />
       <TransferSettingsCard />
+      <PreviewCacheSettingsCard />
       <section className="settings-card">
         <h2>
           <SlidersHorizontal size={19} />

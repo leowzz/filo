@@ -85,7 +85,6 @@ export function DirectoryPhotoReview({
     );
   return (
     <div className="photo-review-shell">
-      <div className="photo-review-syncbar">进度保存在此目录的 .filo 中</div>
       <PhotoReview
         key={session.id}
         session={session}

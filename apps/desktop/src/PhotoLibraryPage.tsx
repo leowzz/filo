@@ -261,21 +261,23 @@ export function PhotoLibraryPage() {
   if (review && session)
     return (
       <div className="photo-review-shell">
-        <div
-          className={`photo-review-syncbar ${session.sync_error ? "error" : ""}`}
-        >
-          <span>
-            {status}
-            {session.sync_error && ` · ${session.sync_error}`}
-          </span>
-          <button
-            disabled={syncing}
-            onClick={() => void sync(session.id, true)}
+        {!session.directory && (
+          <div
+            className={`photo-review-syncbar ${session.sync_error ? "error" : ""}`}
           >
-            {session.directory ? "保存到目录" : "同步到 NAS"}
-          </button>
-          {error && <span role="alert">{error}</span>}
-        </div>
+            <span>
+              {status}
+              {session.sync_error && ` · ${session.sync_error}`}
+            </span>
+            <button
+              disabled={syncing}
+              onClick={() => void sync(session.id, true)}
+            >
+              同步到 NAS
+            </button>
+            {error && <span role="alert">{error}</span>}
+          </div>
+        )}
         <PhotoReview
           key={session.id}
           session={session}
