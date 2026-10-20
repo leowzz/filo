@@ -1930,7 +1930,9 @@ name = "filo-desktop"
 version = "0.1.13"
 dependencies = [
  "base64 0.22.1",
+ "dirs",
  "provider-opendal",
+ "regex",
  "serde",
  "serde_json",
  "storage-application",

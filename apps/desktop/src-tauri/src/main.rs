@@ -7,6 +7,7 @@ use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 mod credentials;
+mod diagnostics;
 mod dropped_files;
 mod errors;
 mod photography;
@@ -348,12 +349,15 @@ async fn recent_backend_errors(reports: State<'_, errors::ErrorReports>) -> Stor
 }
 
 fn main() {
+    let reports = errors::install();
+    let setup_reports = reports.clone();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
     let result = tauri::Builder::default()
+        .manage(reports.clone())
         .manage(dropped_files::DroppedFiles::default())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
@@ -372,21 +376,28 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .setup(|app| {
-            errors::install(app.handle().clone());
-            let data = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&data)?;
-            let repository =
-                tauri::async_runtime::block_on(Repository::open(&data.join("filo.sqlite")))?;
-            let credentials = std::sync::Arc::new(storage_application::FileCredentialStore::new(
-                Some(data.join("credentials.json")),
-            ));
-            app.manage(StorageService::with_credentials(
-                repository,
-                credentials.clone(),
-            ));
-            app.manage(credentials);
-            tracing::info!("Filo storage is ready");
+        .setup(move |app| {
+            setup_reports.attach(app.handle().clone());
+            let ready = errors::setup(&setup_reports, || {
+                let data = app.path().app_data_dir()?;
+                std::fs::create_dir_all(&data)?;
+                let repository =
+                    tauri::async_runtime::block_on(Repository::open(&data.join("filo.sqlite")))?;
+                let credentials =
+                    std::sync::Arc::new(storage_application::FileCredentialStore::new(Some(
+                        data.join("credentials.json"),
+                    )));
+                app.manage(StorageService::with_credentials(
+                    repository,
+                    credentials.clone(),
+                ));
+                app.manage(credentials);
+                tracing::info!("Filo storage is ready");
+                Ok(())
+            });
+            if !ready {
+                setup_reports.show_startup_failure(app.handle());
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -461,6 +472,7 @@ fn main() {
         ])
         .run(tauri::generate_context!());
     if let Err(error) = result {
+        reports.application_failed(&error);
         tracing::error!(%error, "Application failed");
         std::process::exit(1);
     }
