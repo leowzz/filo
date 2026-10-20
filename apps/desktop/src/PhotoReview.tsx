@@ -15,6 +15,7 @@ import {
   Flag,
   Maximize,
   Minimize,
+  Plus,
   Star,
   Undo2,
   X,
@@ -55,6 +56,7 @@ const quickFilters = [
   { label: "待删除", filter: "reject", minimum: 0 },
   { label: "≥3 星", filter: "all", minimum: 3 },
 ];
+type ReviewMode = "manual" | "flags" | "rating";
 
 function Thumbnail({ photo, rawOnly }: { photo: Photo; rawOnly: boolean }) {
   const cachedPreview = useSyncExternalStore(photoPreviews.subscribe, () =>
@@ -208,6 +210,9 @@ export function PhotoReview({
   const [dateAttempt, retryDates] = useReducer((n) => n + 1, 0);
   const [minimum, setMinimum] = useState(session.position.minimum_rating);
   const [auto, setAuto] = useState(session.position.auto_advance);
+  const [mode, setMode] = useState<ReviewMode>("manual");
+  const ratingDelay = useAppSettings((state) => state.ratingAdvanceDelay);
+  const setRatingDelay = useAppSettings((state) => state.setRatingAdvanceDelay);
   const [original, setOriginal] = useState(false);
   const cacheDebug = useAppSettings((state) => state.debugMode);
   const rawOnly = controller.rawOnly;
@@ -254,11 +259,36 @@ export function PhotoReview({
     })),
     sort,
   );
+  const activeFilter =
+    mode === "rating" ? "pick" : mode === "flags" ? "all" : filter;
+  const activeMinimum = mode === "manual" ? minimum : 0;
   const visible = ordered.filter(
     (p) =>
       (!rawOnly || hasRaw(p)) &&
-      (matchesPhoto(p, filter, minimum) || p.id === controller.current),
+      (matchesPhoto(p, activeFilter, activeMinimum) ||
+        (mode === "manual" && p.id === controller.current)),
   );
+  const changeMode = (nextMode: ReviewMode) => {
+    setMode(nextMode);
+    const eligible = ordered.filter(
+      (p) =>
+        (!rawOnly || hasRaw(p)) &&
+        matchesPhoto(
+          p,
+          nextMode === "rating"
+            ? "pick"
+            : nextMode === "flags"
+              ? "all"
+              : filter,
+          nextMode === "manual" ? minimum : 0,
+        ),
+    );
+    controller.select(
+      eligible.find((p) => p.id === controller.current)?.id ??
+        eligible[0]?.id ??
+        null,
+    );
+  };
   const changeFilter = (nextFilter: string, nextMinimum: number) => {
     setFilter(nextFilter);
     setMinimum(nextMinimum);
@@ -303,10 +333,39 @@ export function PhotoReview({
     .slice(Math.max(0, index - previewBehind), index + previewAhead + 1)
     .join("\n");
   const step = (delta: number) => controller.step(delta, ids);
-  const actions = useRef({ step, photo, ids, original, auto, onBack });
-  actions.current = { step, photo, ids, original, auto, onBack };
+  const markRating = (rating: number, advance = auto) => {
+    const current = controller.photo;
+    if (!current || mode === "flags") return;
+    controller.mark(
+      { rating, flag: current.flag },
+      mode === "rating" ? rating > 0 : advance,
+      () => actions.current.step(1),
+      mode === "rating" ? { delayMs: ratingDelay } : undefined,
+    );
+  };
+  const markFlag = (flag: Photo["flag"], advance = auto) => {
+    const current = controller.photo;
+    if (!current || mode === "rating") return;
+    const desired = current.flag === flag ? "none" : flag;
+    controller.mark(
+      { rating: current.rating, flag: desired },
+      mode === "flags" ? desired !== "none" : advance,
+      () => actions.current.step(1),
+      mode === "flags" ? { delayMs: 0 } : undefined,
+    );
+  };
+  const undo = () => {
+    setMode("manual");
+    setFilter("all");
+    setMinimum(0);
+    controller.setRawOnly(false);
+    controller.undo();
+  };
+  const actions = useRef({ step, auto, markRating, markFlag, undo });
+  actions.current = { step, auto, markRating, markFlag, undo };
   const back = async () => {
     if (reloadRef.current) return;
+    controller.cancelAdvance();
     await controller.settle();
     if (positionRef.current) {
       try {
@@ -347,6 +406,15 @@ export function PhotoReview({
     return () => controller.dispose();
   }, [controller]);
   useEffect(() => {
+    const cancel = () => controller.cancelAdvance();
+    window.addEventListener("blur", cancel);
+    document.addEventListener("visibilitychange", cancel);
+    return () => {
+      window.removeEventListener("blur", cancel);
+      document.removeEventListener("visibilitychange", cancel);
+    };
+  }, [controller]);
+  useEffect(() => {
     const changed = () => setFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", changed);
     return () => document.removeEventListener("fullscreenchange", changed);
@@ -365,39 +433,22 @@ export function PhotoReview({
       const action = photoKeyAction(event, actions.current.auto);
       if (!action) return;
       event.preventDefault();
+      controller.cancelAdvance();
       const current = controller.photo;
       if (action.type === "step") actions.current.step(action.delta);
       if (action.type === "zoom") setOriginal((value) => !value);
-      if (action.type === "undo") {
-        setFilter("all");
-        setMinimum(0);
-        controller.setRawOnly(false);
-        controller.undo();
-      }
+      if (action.type === "undo") actions.current.undo();
       if (action.type === "escape") {
         if (document.fullscreenElement) void document.exitFullscreen();
         else void exit.current();
       }
       if (current && action.type === "rating")
-        controller.mark(
-          {
-            rating: action.relative
-              ? current.rating + action.value
-              : action.value,
-            flag: current.flag,
-          },
+        actions.current.markRating(
+          action.relative ? current.rating + action.value : action.value,
           action.advance,
-          () => actions.current.step(1),
         );
       if (current && action.type === "flag")
-        controller.mark(
-          {
-            rating: current.rating,
-            flag: current.flag === action.value ? "none" : action.value,
-          },
-          action.advance,
-          () => actions.current.step(1),
-        );
+        actions.current.markFlag(action.value, action.advance);
     };
     document.addEventListener("keydown", keydown);
     return () => document.removeEventListener("keydown", keydown);
@@ -537,13 +588,12 @@ export function PhotoReview({
       : readyPreview
         ? { preview: readyPreview, original: original && !!cachedPreview }
         : null;
-  const mark = (rating: number, flag = photo?.flag ?? "none") =>
-    controller.mark({ rating, flag }, auto, () => step(1));
   return (
     <section
       className={`photo-review${desktop && navigator.platform.toLowerCase().includes("mac") ? " photo-review-macos" : ""}`}
       ref={container}
       aria-label="照片审图"
+      onPointerDownCapture={() => controller.cancelAdvance()}
     >
       <div
         className="photo-review-titlebar"
@@ -569,11 +619,31 @@ export function PhotoReview({
           <ArrowLeft size={17} />
           {backLabel}
         </button>
+        <div className="photo-quick-filters" role="group" aria-label="审图模式">
+          {(
+            [
+              ["manual", "自由审图"],
+              ["flags", "旗标快筛"],
+              ["rating", "留用星级"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              aria-pressed={mode === value}
+              onClick={() => changeMode(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <span className="photo-review-select">
           <select
             aria-label="照片排序"
             value={sort}
-            onChange={(event) => setSort(event.target.value as typeof sort)}
+            onChange={(event) => {
+              controller.cancelAdvance();
+              setSort(event.target.value as typeof sort);
+            }}
           >
             <option value="name_asc">文件名升序</option>
             <option value="name_desc">文件名降序</option>
@@ -582,35 +652,65 @@ export function PhotoReview({
           </select>
           <ChevronDown size={14} aria-hidden="true" />
         </span>
-        <div className="photo-quick-filters" role="group" aria-label="快捷筛选">
-          {quickFilters.map((preset) => (
-            <button
-              key={preset.label}
-              aria-pressed={
-                filter === preset.filter &&
-                (preset.filter !== "all" || minimum === preset.minimum)
-              }
-              onClick={() => changeFilter(preset.filter, preset.minimum)}
+        {mode === "manual" && (
+          <>
+            <div
+              className="photo-quick-filters"
+              role="group"
+              aria-label="快捷筛选"
             >
-              {preset.label}
-            </button>
-          ))}
-        </div>
-        <span className="photo-review-select">
-          <select
-            aria-label="星级门槛"
-            value={minimum}
-            onChange={(e) => changeFilter(filter, Number(e.target.value))}
-          >
-            <option value={0}>所有星级</option>
-            {[1, 2, 3, 4, 5].map((n) => (
-              <option key={n} value={n}>
-                {n} 星及以上
-              </option>
-            ))}
-          </select>
-          <ChevronDown size={14} aria-hidden="true" />
-        </span>
+              {quickFilters.map((preset) => (
+                <button
+                  key={preset.label}
+                  aria-pressed={
+                    filter === preset.filter &&
+                    (preset.filter !== "all" || minimum === preset.minimum)
+                  }
+                  onClick={() => changeFilter(preset.filter, preset.minimum)}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            <span className="photo-review-select">
+              <select
+                aria-label="星级门槛"
+                value={minimum}
+                onChange={(e) => changeFilter(filter, Number(e.target.value))}
+              >
+                <option value={0}>所有星级</option>
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <option key={n} value={n}>
+                    {n} 星及以上
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={14} aria-hidden="true" />
+            </span>
+          </>
+        )}
+        {mode === "rating" && (
+          <label className="photo-review-delay">
+            自动下一张
+            <span className="photo-review-select">
+              <select
+                aria-label="星级等待时间"
+                value={ratingDelay}
+                onChange={(event) => {
+                  controller.cancelAdvance();
+                  setRatingDelay(Number(event.target.value));
+                }}
+              >
+                {[200, 500, 800, 1000, 1500, 2000].map((delay) => (
+                  <option key={delay} value={delay}>
+                    {delay} ms
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={14} aria-hidden="true" />
+            </span>
+          </label>
+        )}
         <label className="photo-review-toggle">
           <input
             type="checkbox"
@@ -621,7 +721,8 @@ export function PhotoReview({
               const current = controller.current;
               const eligible = ordered.filter(
                 (p) =>
-                  (!value || hasRaw(p)) && matchesPhoto(p, filter, minimum),
+                  (!value || hasRaw(p)) &&
+                  matchesPhoto(p, activeFilter, activeMinimum),
               );
               controller.setRawOnly(value);
               controller.select(
@@ -633,15 +734,17 @@ export function PhotoReview({
           />
           仅查看 RAW
         </label>
-        <label className="photo-review-toggle">
-          <input
-            type="checkbox"
-            role="switch"
-            checked={auto}
-            onChange={(e) => setAuto(e.target.checked)}
-          />
-          自动前进
-        </label>
+        {mode === "manual" && (
+          <label className="photo-review-toggle">
+            <input
+              type="checkbox"
+              role="switch"
+              checked={auto}
+              onChange={(e) => setAuto(e.target.checked)}
+            />
+            自动前进
+          </label>
+        )}
         <button
           className="icon-button photo-review-fullscreen"
           title={fullscreen ? "退出全屏" : "全屏审图"}
@@ -708,7 +811,9 @@ export function PhotoReview({
               ? "正在读取预览…"
               : rawOnly && !controller.photos.some(hasRaw)
                 ? "此目录没有 RAW 照片"
-                : "没有符合筛选条件的照片"}
+                : mode === "rating"
+                  ? "还没有留用照片，请先用「旗标快筛」标记留用"
+                  : "没有符合筛选条件的照片"}
           </p>
         )}
         {previewFailure && (
@@ -739,75 +844,71 @@ export function PhotoReview({
         >
           <ChevronRight />
         </button>
-        <div className="photo-rating" aria-label="星级">
-          {[1, 2, 3, 4, 5].map((n) => (
+        {mode !== "flags" && (
+          <div className="photo-rating" aria-label="星级">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={`${n}:${feedback?.kind === "up" && n > feedback.from && n <= feedback.rating ? feedback.id : "rest"}`}
+                aria-label={`${n} 星`}
+                disabled={!photo}
+                title={photo?.rating === n ? "再次点击清除星级 (0)" : `${n} 星`}
+                aria-pressed={photo?.rating === n}
+                className={
+                  (photo?.rating ?? 0) >= n
+                    ? `filled ${feedback?.kind === "up" && n > feedback.from && n <= feedback.rating ? "added" : ""}`
+                    : ""
+                }
+                style={{
+                  animationDelay: `${Math.max(0, n - (feedback?.from ?? n) - 1) * 40}ms`,
+                }}
+                onClick={() => markRating(photo?.rating === n ? 0 : n)}
+              >
+                <Star
+                  size={23}
+                  fill={(photo?.rating ?? 0) >= n ? "currentColor" : "none"}
+                />
+              </button>
+            ))}
+          </div>
+        )}
+        {mode === "rating" && (
+          <button
+            disabled={!photo || photo.rating >= 5}
+            onClick={() => markRating((photo?.rating ?? 0) + 1)}
+          >
+            <Plus size={16} />
+            升一星
+          </button>
+        )}
+        {mode !== "rating" && (
+          <div className="photo-flags">
             <button
-              key={`${n}:${feedback?.kind === "up" && n > feedback.from && n <= feedback.rating ? feedback.id : "rest"}`}
-              aria-label={`${n} 星`}
-              title={photo?.rating === n ? "再次点击清除星级 (0)" : `${n} 星`}
-              aria-pressed={photo?.rating === n}
-              className={
-                (photo?.rating ?? 0) >= n
-                  ? `filled ${feedback?.kind === "up" && n > feedback.from && n <= feedback.rating ? "added" : ""}`
-                  : ""
-              }
-              style={{
-                animationDelay: `${Math.max(0, n - (feedback?.from ?? n) - 1) * 40}ms`,
-              }}
-              onClick={() => mark(photo?.rating === n ? 0 : n)}
+              disabled={!photo}
+              className={photo?.flag === "pick" ? "pick selected" : ""}
+              aria-pressed={photo?.flag === "pick"}
+              aria-keyshortcuts="C P"
+              title={photo?.flag === "pick" ? "取消留用" : "留用"}
+              onClick={() => markFlag("pick")}
             >
-              <Star
-                size={23}
-                fill={(photo?.rating ?? 0) >= n ? "currentColor" : "none"}
-              />
+              <Flag size={17} />
+              留用
+              <kbd aria-hidden="true">C</kbd>
             </button>
-          ))}
-        </div>
-        <div className="photo-flags">
-          <button
-            className={photo?.flag === "pick" ? "pick selected" : ""}
-            aria-pressed={photo?.flag === "pick"}
-            aria-keyshortcuts="C P"
-            title={photo?.flag === "pick" ? "取消保留 (C / P)" : "保留 (C / P)"}
-            onClick={() =>
-              mark(photo?.rating ?? 0, photo?.flag === "pick" ? "none" : "pick")
-            }
-          >
-            <Flag size={17} />
-            保留
-            <kbd aria-hidden="true">C</kbd>
-          </button>
-          <button
-            className={photo?.flag === "reject" ? "reject selected" : ""}
-            aria-pressed={photo?.flag === "reject"}
-            aria-keyshortcuts="X"
-            title={
-              photo?.flag === "reject"
-                ? "取消待删除 (X)"
-                : "待删除 (X)，只标记文件"
-            }
-            onClick={() =>
-              mark(
-                photo?.rating ?? 0,
-                photo?.flag === "reject" ? "none" : "reject",
-              )
-            }
-          >
-            <Flag size={17} />
-            待删除
-            <kbd aria-hidden="true">X</kbd>
-          </button>
-        </div>
-        <button
-          title="撤销 (Cmd/Ctrl+Z)"
-          aria-label="撤销标记"
-          onClick={() => {
-            setFilter("all");
-            setMinimum(0);
-            controller.setRawOnly(false);
-            controller.undo();
-          }}
-        >
+            <button
+              disabled={!photo}
+              className={photo?.flag === "reject" ? "reject selected" : ""}
+              aria-pressed={photo?.flag === "reject"}
+              aria-keyshortcuts="X"
+              title={photo?.flag === "reject" ? "取消排除" : "排除，只标记文件"}
+              onClick={() => markFlag("reject")}
+            >
+              <Flag size={17} />
+              排除
+              <kbd aria-hidden="true">X</kbd>
+            </button>
+          </div>
+        )}
+        <button title="撤销 (Cmd/Ctrl+Z)" aria-label="撤销标记" onClick={undo}>
           <Undo2 size={18} />
         </button>
         <button

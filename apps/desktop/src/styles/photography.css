@@ -477,6 +477,13 @@
   background: #ffffff05;
   color: #cbd3df;
 }
+.photo-review-delay {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #cbd3df;
+  white-space: nowrap;
+}
 .photo-review-toolbar > button {
   padding: 0 10px;
   flex-shrink: 0;

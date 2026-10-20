@@ -110,14 +110,14 @@ test("automatic advance waits for persistence and motion onset; boundaries do no
   let advances=0; const next=()=>{advances++;controller.select("b");};
   controller.mark({rating:5,flag:"none"},true,next); await delay(0); assert.equal(advances,0);
   resolve(); await controller.settle(); await delay(100); assert.equal(advances,0); await delay(110); assert.equal(advances,1);
-  controller.select("a"); controller.mark({rating:6,flag:"none"},false,next,true); await controller.settle(); assert.equal(calls.length,1);
-  controller.mark({rating:6,flag:"none"},true,next,true); await controller.settle(); assert.equal(advances,2); assert.equal(calls.length,1); controller.dispose();
+  controller.select("a"); controller.mark({rating:6,flag:"none"},false,next); await controller.settle(); assert.equal(calls.length,1);
+  controller.mark({rating:6,flag:"none"},true,next); await controller.settle(); assert.equal(advances,2); assert.equal(calls.length,1); controller.dispose();
 });
 
 test("a Shift boundary waits for an outstanding save before advancing", async () => {
   let resolve; const {controller} = setup([photo("a",4),photo("b")],(id,mark)=>new Promise(r=>{resolve=()=>r({...photo(id),...mark,});}));
   let advanced=false; controller.mark({rating:5,flag:"none"},false,()=>{});
-  controller.mark({rating:6,flag:"none"},true,()=>{advanced=true;},true); await delay(0); assert.equal(advanced,false);
+  controller.mark({rating:6,flag:"none"},true,()=>{advanced=true;}); await delay(0); assert.equal(advanced,false);
   resolve(); await controller.settle(); assert.equal(advanced,true); controller.dispose();
 });
 
@@ -196,4 +196,84 @@ test("preview cache keeps paired JPG and RAW previews separate",async()=>{
   assert.equal(await photoPreview("paired"),jpg);
   assert.equal(await photoPreview("paired",false,false,true),raw);
   assert.equal(calls.length,2);
+});
+
+test("rating mode debounces from the latest action and honors the configured delay", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  const { controller, calls } = setup();
+  const next = () => controller.step(1, ["a", "b"]);
+  controller.mark({ rating: 1, flag: "pick" }, true, next, { delayMs: 500 });
+  await controller.settle();
+  t.mock.timers.tick(400);
+  assert.equal(controller.current, "a");
+  controller.mark({ rating: 2, flag: "pick" }, true, next, { delayMs: 500 });
+  await controller.settle();
+  t.mock.timers.tick(499);
+  assert.equal(controller.current, "a");
+  t.mock.timers.tick(1);
+  assert.equal(controller.current, "b");
+  assert.deepEqual(calls.map(p => [p.id, p.rating]), [["a", 1], ["a", 2]]);
+  controller.select("a");
+  controller.mark({ rating: 3, flag: "pick" }, true, next, { delayMs: 1500 });
+  await controller.settle();
+  t.mock.timers.tick(1499);
+  assert.equal(controller.current, "a");
+  t.mock.timers.tick(1);
+  assert.equal(controller.current, "b");
+  controller.dispose();
+});
+
+test("a slow save does not add another rating delay and interaction cancels late navigation", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  let release;
+  const { controller } = setup(undefined, (id, mark) => new Promise(resolve => {
+    release = () => resolve({ ...photo(id), ...mark });
+  }));
+  const next = () => controller.select("b");
+  controller.mark({ rating: 1, flag: "pick" }, true, next, { delayMs: 500 });
+  await Promise.resolve();
+  t.mock.timers.tick(700);
+  assert.equal(controller.current, "a", "must wait for persistence");
+  release();
+  await controller.settle();
+  t.mock.timers.tick(0);
+  assert.equal(controller.current, "b", "idle time elapsed during persistence");
+  controller.select("a");
+  controller.mark({ rating: 2, flag: "pick" }, true, next, { delayMs: 500 });
+  await Promise.resolve();
+  controller.cancelAdvance();
+  release();
+  await controller.settle();
+  t.mock.timers.tick(2000);
+  assert.equal(controller.current, "a", "cancel survives an outstanding save");
+  controller.dispose();
+});
+
+test("quick flags advance only after saving; clearing, navigation, and disposal cancel timers", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  const { controller } = setup();
+  const next = () => controller.step(1, ["a", "b"]);
+  controller.mark({ rating: 0, flag: "pick" }, true, next, { delayMs: 0 });
+  assert.equal(controller.current, "a");
+  await controller.settle();
+  t.mock.timers.tick(0);
+  assert.equal(controller.current, "b");
+  controller.select("a");
+  controller.mark({ rating: 3, flag: "pick" }, true, next, { delayMs: 500 });
+  await controller.settle();
+  controller.mark({ rating: 0, flag: "pick" }, false, next, { delayMs: 500 });
+  await controller.settle();
+  t.mock.timers.tick(500);
+  assert.equal(controller.current, "a", "clear rating stays on this photo");
+  controller.mark({ rating: 3, flag: "pick" }, true, next, { delayMs: 500 });
+  await controller.settle();
+  controller.select("b");
+  controller.select("a");
+  t.mock.timers.tick(500);
+  assert.equal(controller.current, "a", "returning must not revive the timer");
+  controller.mark({ rating: 4, flag: "pick" }, true, next, { delayMs: 500 });
+  await controller.settle();
+  controller.dispose();
+  t.mock.timers.tick(500);
+  assert.equal(controller.current, "a");
 });

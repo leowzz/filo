@@ -101,9 +101,12 @@ export class PhotoReviewController {
   private replace(photo: Photo) {
     this.photos = this.photos.map((p) => (p.id === photo.id ? photo : p));
   }
-  select(id: string | null) {
+  cancelAdvance() {
     this.navigation++;
     clearTimeout(this.timer);
+  }
+  select(id: string | null) {
+    this.cancelAdvance();
     this.current =
       id && this.rawOnly && !this.photos.some((p) => p.id === id && hasRaw(p))
         ? (this.photos.find(hasRaw)?.id ?? null)
@@ -116,19 +119,25 @@ export class PhotoReviewController {
     const index = ids.indexOf(this.current ?? "");
     this.select(ids[Math.max(0, Math.min(ids.length - 1, index + delta))]);
   }
-  mark(mark: Mark, advance: boolean, next: () => void) {
+  mark(
+    mark: Mark,
+    advance: boolean,
+    next: () => void,
+    options?: { delayMs: number },
+  ) {
     const photo = this.photo;
     if (!photo || this.disposed) return;
+    const started = Date.now();
     const desired = {
       rating: Math.max(0, Math.min(5, mark.rating)),
       flag: mark.flag,
     };
     const actualChange =
       desired.rating !== photo.rating || desired.flag !== photo.flag;
+    this.cancelAdvance();
     if (!actualChange) {
       // Explicit Shift at a rating boundary still advances exactly once.
       if (advance) {
-        clearTimeout(this.timer);
         const id = ++this.sequence;
         const navigation = this.navigation;
         this.queue = this.queue.then(() => {
@@ -141,12 +150,24 @@ export class PhotoReviewController {
             saved?.rating === desired.rating &&
             saved.flag === desired.flag
           )
-            next();
+            if (options) {
+              this.timer = setTimeout(
+                () => {
+                  if (
+                    !this.disposed &&
+                    this.sequence === id &&
+                    this.current === photo.id &&
+                    this.navigation === navigation
+                  )
+                    next();
+                },
+                Math.max(0, options.delayMs - (Date.now() - started)),
+              );
+            } else next();
         });
       }
       return;
     }
-    clearTimeout(this.timer);
     const id = ++this.sequence;
     const navigation = this.navigation;
     this.latest.set(photo.id, id);
@@ -179,15 +200,20 @@ export class PhotoReviewController {
               from: photo.rating,
             });
           if (advance)
-            this.timer = setTimeout(() => {
-              if (
-                !this.disposed &&
-                this.sequence === id &&
-                this.current === photo.id &&
-                this.navigation === navigation
-              )
-                next();
-            }, 180);
+            this.timer = setTimeout(
+              () => {
+                if (
+                  !this.disposed &&
+                  this.sequence === id &&
+                  this.current === photo.id &&
+                  this.navigation === navigation
+                )
+                  next();
+              },
+              options
+                ? Math.max(0, options.delayMs - (Date.now() - started))
+                : 180,
+            );
           this.deps.error("", null);
         }
       } catch (error) {
