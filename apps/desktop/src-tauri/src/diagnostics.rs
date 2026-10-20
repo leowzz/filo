@@ -96,9 +96,87 @@ pub(crate) fn write_report(
     Ok(path)
 }
 
+// Failed marks are user work, so keep these records independently of the
+// rotating exception reports. They are evidence, not an automatic replay queue.
+pub(crate) fn write_review_save_failure(
+    data: &Path,
+    mark: &serde_json::Value,
+    error: &storage_domain::StorageError,
+) -> std::io::Result<PathBuf> {
+    let directory = data.join("review-save-failures");
+    fs::create_dir_all(&directory)?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let path = directory.join(format!("{timestamp:020}-{}.json", uuid::Uuid::new_v4()));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path)?;
+    serde_json::to_writer_pretty(
+        &mut file,
+        &serde_json::json!({
+            "timestamp_ms": timestamp,
+            "version": env!("CARGO_PKG_VERSION"),
+            "mark": mark,
+            "error": { "code": error.code, "message": redact(&error.message) },
+        }),
+    )?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_review_marks_preserve_work_without_rotating_or_exposing_credentials() {
+        let data = tempfile::tempdir().unwrap();
+        let mark = serde_json::json!({
+            "session_id": uuid::Uuid::new_v4(),
+            "photo_id": uuid::Uuid::new_v4(),
+            "original_path": "RAW/照片.NEF",
+            "rating": 4,
+            "flag": "reject",
+        });
+        let error = storage_domain::StorageError::new(
+            storage_domain::StorageErrorCode::Network,
+            "failed smb://user:private-password@host/ password=private-password",
+        );
+        for _ in 0..RETAINED_REPORTS + 1 {
+            let path = write_review_save_failure(data.path(), &mark, &error).unwrap();
+            let text = fs::read_to_string(&path).unwrap();
+            let saved: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(saved["mark"], mark);
+            assert_eq!(saved["error"]["code"], "network");
+            assert!(saved["timestamp_ms"].as_u64().is_some());
+            assert!(!text.contains("private-password"));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                assert_eq!(
+                    fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+        }
+        assert_eq!(
+            fs::read_dir(data.path().join("review-save-failures"))
+                .unwrap()
+                .count(),
+            RETAINED_REPORTS + 1
+        );
+        let file = data.path().join("not-a-directory");
+        fs::write(&file, "fixture").unwrap();
+        assert!(write_review_save_failure(&file, &mark, &error).is_err());
+    }
 
     #[test]
     fn reports_are_private_redacted_bounded_and_retained() {

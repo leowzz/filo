@@ -62,6 +62,7 @@ export class PhotoReviewController {
   rawOnly: boolean;
   private committed = new Map<string, Photo>();
   private latest = new Map<string, number>();
+  private failed = new Set<string>();
   private sequence = 0;
   private navigation = 0;
   private queue = Promise.resolve();
@@ -123,7 +124,11 @@ export class PhotoReviewController {
     mark: Mark,
     advance: boolean,
     next: () => void,
-    options?: { delayMs: number },
+    options?: {
+      delayMs: number;
+      background?: boolean;
+      immediateFeedback?: boolean;
+    },
   ) {
     const photo = this.photo;
     if (!photo || this.disposed) return;
@@ -140,15 +145,15 @@ export class PhotoReviewController {
       if (advance) {
         const id = ++this.sequence;
         const navigation = this.navigation;
-        this.queue = this.queue.then(() => {
+        const advanceUnchanged = () => {
           const saved = this.committed.get(photo.id);
           if (
             !this.disposed &&
             this.sequence === id &&
             this.current === photo.id &&
             this.navigation === navigation &&
-            saved?.rating === desired.rating &&
-            saved.flag === desired.flag
+            (options?.background ||
+              (saved?.rating === desired.rating && saved.flag === desired.flag))
           )
             if (options) {
               this.timer = setTimeout(
@@ -164,7 +169,9 @@ export class PhotoReviewController {
                 Math.max(0, options.delayMs - (Date.now() - started)),
               );
             } else next();
-        });
+        };
+        if (options?.background) advanceUnchanged();
+        else this.queue = this.queue.then(advanceUnchanged);
       }
       return;
     }
@@ -174,50 +181,53 @@ export class PhotoReviewController {
     this.pending++;
     this.replace({ ...photo, ...desired });
     this.deps.changed();
+    const isCurrent = () =>
+      !this.disposed &&
+      this.sequence === id &&
+      this.current === photo.id &&
+      this.navigation === navigation;
+    const showFeedback = () => {
+      if (!isCurrent()) return;
+      this.deps.feedback({
+        id,
+        photoId: photo.id,
+        kind:
+          desired.flag !== photo.flag
+            ? "flag"
+            : desired.rating > photo.rating
+              ? "up"
+              : "down",
+        ...desired,
+        from: photo.rating,
+      });
+    };
+    const scheduleAdvance = () => {
+      if (advance && isCurrent())
+        this.timer = setTimeout(
+          () => {
+            if (isCurrent()) next();
+          },
+          options ? Math.max(0, options.delayMs - (Date.now() - started)) : 180,
+        );
+    };
+    // Animate the action while remote writes are still in flight.
+    if (options?.background || options?.immediateFeedback) showFeedback();
+    if (options?.background) scheduleAdvance();
     this.queue = this.queue.then(async () => {
       try {
         const saved = await this.deps.save(photo.id, desired);
         this.committed.set(photo.id, saved);
         this.deps.saved(saved);
         if (this.latest.get(photo.id) === id) this.replace(saved);
-        if (
-          !this.disposed &&
-          this.sequence === id &&
-          this.current === photo.id &&
-          this.navigation === navigation
-        ) {
-          if (actualChange)
-            this.deps.feedback({
-              id,
-              photoId: photo.id,
-              kind:
-                desired.flag !== photo.flag
-                  ? "flag"
-                  : desired.rating > photo.rating
-                    ? "up"
-                    : "down",
-              ...desired,
-              from: photo.rating,
-            });
-          if (advance)
-            this.timer = setTimeout(
-              () => {
-                if (
-                  !this.disposed &&
-                  this.sequence === id &&
-                  this.current === photo.id &&
-                  this.navigation === navigation
-                )
-                  next();
-              },
-              options
-                ? Math.max(0, options.delayMs - (Date.now() - started))
-                : 180,
-            );
-          this.deps.error("", null);
+        this.failed.delete(photo.id);
+        if (!options?.background) {
+          if (!options?.immediateFeedback) showFeedback();
+          scheduleAdvance();
         }
+        if (!this.disposed && !this.failed.size) this.deps.error("", null);
       } catch (error) {
         if (this.latest.get(photo.id) === id) {
+          this.failed.add(photo.id);
           const previous = this.committed.get(photo.id);
           if (previous) this.replace(previous);
           if (!this.disposed)
@@ -225,7 +235,7 @@ export class PhotoReviewController {
               `${photo.original_path}：${error instanceof Error ? error.message : String((error as { message?: string })?.message ?? error)}`,
               () => {
                 this.select(photo.id);
-                this.mark(desired, false, next);
+                this.mark(desired, false, next, options);
               },
               isReviewConflict(error),
             );
@@ -248,6 +258,8 @@ export class PhotoReviewController {
           this.committed.set(photo.id, photo);
           if ((this.latest.get(photo.id) ?? 0) < id) this.replace(photo);
           this.deps.saved(photo);
+          this.failed.delete(photo.id);
+          if (!this.disposed && !this.failed.size) this.deps.error("", null);
           if (!this.disposed && this.sequence === id) {
             this.select(photo.id);
             this.deps.feedback({

@@ -172,11 +172,6 @@ export function PhotoReview({
           undo: () => reviewApi.undo(session.id),
           changed: render,
           saved: (photo) => {
-            setFailure((previous) =>
-              previous.kind === "dates"
-                ? previous
-                : { message: "", retry: null },
-            );
             callbacks.current.onSaved(photo);
           },
           feedback: (value) => setFeedback(document.hidden ? null : value),
@@ -341,7 +336,9 @@ export function PhotoReview({
       { rating, flag: current.flag },
       mode === "rating" ? rating > 0 : advance,
       () => actions.current.step(1),
-      mode === "rating" ? { delayMs: ratingDelay } : undefined,
+      mode === "rating"
+        ? { delayMs: ratingDelay, immediateFeedback: true }
+        : undefined,
     );
   };
   const markFlag = (flag: Photo["flag"], advance = auto) => {
@@ -352,7 +349,7 @@ export function PhotoReview({
       { rating: current.rating, flag: desired },
       mode === "flags" ? desired !== "none" : advance,
       () => actions.current.step(1),
-      mode === "flags" ? { delayMs: 0 } : undefined,
+      mode === "flags" ? { delayMs: 0, background: true } : undefined,
     );
   };
   const undo = () => {
@@ -625,7 +622,7 @@ export function PhotoReview({
             [
               ["manual", "自由审图"],
               ["flags", "旗标快筛"],
-              ["rating", "留用星级"],
+              ["rating", "星级筛选"],
             ] as const
           ).map(([value, label]) => (
             <button

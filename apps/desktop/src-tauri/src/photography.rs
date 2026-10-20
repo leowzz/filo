@@ -1,6 +1,6 @@
 use storage_application::{photography::*, StorageService};
 use storage_domain::*;
-use tauri::State;
+use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use uuid::Uuid;
 
@@ -43,7 +43,34 @@ pub async fn photo_cancel_import(service: State<'_, StorageService>, session_id:
 pub async fn photo_rebind_source(service: State<'_, StorageService>, session_id: Uuid, source: StorageLocator) -> StorageResult<()> { service.photo_rebind_source(session_id, source).await }
 pub async fn photo_exclude(service: State<'_, StorageService>, session_id: Uuid, photo_id: Uuid, excluded: bool) -> StorageResult<()> { service.photo_exclude(session_id, photo_id, excluded).await }
 pub async fn photo_resolve_date(service: State<'_, StorageService>, session_id: Uuid, date: String) -> StorageResult<()> { service.photo_resolve_date(session_id, date).await }
-pub async fn review_mark(service: State<'_, StorageService>, session_id: Uuid, photo_id: Uuid, rating: u8, flag: PhotoFlag) -> StorageResult<Photo> { service.photo_review_workspace().photo_mark(session_id, photo_id, rating, flag).await }
+pub async fn review_mark(app: tauri::AppHandle, service: State<'_, StorageService>, session_id: Uuid, photo_id: Uuid, rating: u8, flag: PhotoFlag) -> StorageResult<Photo> {
+    let review = service.photo_review_workspace();
+    let result = storage_application::catch_panic(review.photo_mark(session_id, photo_id, rating, flag)).await;
+    match result {
+        Ok(photo) => Ok(photo),
+        Err(mut error) => {
+            let path = review.photo_catalog().await.ok().and_then(|catalog| {
+                catalog.photos.into_iter().find(|photo| photo.id == photo_id).map(|photo| photo.original_path)
+            });
+            let mark = serde_json::json!({
+                "session_id": session_id, "photo_id": photo_id,
+                "original_path": path, "rating": rating, "flag": flag,
+            });
+            let failure = error.clone();
+            let recorded = tauri::async_runtime::spawn_blocking(move || {
+                let data = app.path().app_data_dir().map_err(std::io::Error::other)?;
+                crate::diagnostics::write_review_save_failure(&data, &mark, &failure)
+            }).await;
+            error.message.push_str(if matches!(recorded, Ok(Ok(_))) {
+                "；未保存的标记已记录到本机应用数据，可重试保存"
+            } else {
+                tracing::error!(%session_id, %photo_id, "Failed to record unsaved photo mark");
+                "；未能记录到本机应用数据，请保留当前窗口并重试"
+            });
+            Err(error)
+        }
+    }
+}
 pub async fn review_undo(service: State<'_, StorageService>, session_id: Uuid) -> StorageResult<Option<Photo>> { service.photo_review_workspace().photo_undo(session_id).await }
 pub async fn review_save_position(service: State<'_, StorageService>, session_id: Uuid, position: PhotoReviewPosition) -> StorageResult<()> { service.photo_review_workspace().photo_save_position(session_id, position).await }
 pub async fn review_preview(service: State<'_, StorageService>, photo_id: Uuid, original: bool, thumbnail: bool, raw_only: Option<bool>) -> StorageResult<PhotoPreview> { service.photo_review_workspace().photo_preview(photo_id, original, thumbnail, raw_only.unwrap_or(false)).await }

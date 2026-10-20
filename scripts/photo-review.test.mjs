@@ -249,11 +249,44 @@ test("a slow save does not add another rating delay and interaction cancels late
   controller.dispose();
 });
 
-test("quick flags advance only after saving; clearing, navigation, and disposal cancel timers", async (t) => {
+test("rating mode animates each increase and decrease immediately during slow saves", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  let release;
+  const { controller, feedback } = setup([photo("a", 2), photo("b")], (id, mark) => new Promise(resolve => {
+    release = () => resolve({ ...photo(id), ...mark });
+  }));
+  const next = () => controller.select("b");
+  const options = { delayMs: 500, immediateFeedback: true };
+  controller.mark({ rating: 3, flag: "none" }, true, next, options);
+  assert.equal(feedback.at(-1).kind, "up");
+  assert.equal(feedback.at(-1).from, 2);
+  await Promise.resolve();
+  t.mock.timers.tick(700);
+  assert.equal(controller.current, "a", "persistence still gates navigation");
+  release();
+  await controller.settle();
+  assert.equal(feedback.filter(Boolean).length, 1, "save completion must not restart animation");
+  t.mock.timers.tick(0);
+  assert.equal(controller.current, "b");
+  controller.select("a");
+  controller.mark({ rating: 1, flag: "none" }, true, next, options);
+  assert.equal(feedback.at(-1).kind, "down");
+  assert.equal(feedback.at(-1).from, 3);
+  await Promise.resolve();
+  release();
+  await controller.settle();
+  t.mock.timers.tick(499);
+  assert.equal(controller.current, "a");
+  t.mock.timers.tick(1);
+  assert.equal(controller.current, "b");
+  controller.dispose();
+});
+
+test("quick flags advance in the background; clearing, navigation, and disposal cancel timers", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
   const { controller } = setup();
   const next = () => controller.step(1, ["a", "b"]);
-  controller.mark({ rating: 0, flag: "pick" }, true, next, { delayMs: 0 });
+  controller.mark({ rating: 0, flag: "pick" }, true, next, { delayMs: 0, background: true });
   assert.equal(controller.current, "a");
   await controller.settle();
   t.mock.timers.tick(0);
@@ -276,4 +309,90 @@ test("quick flags advance only after saving; clearing, navigation, and disposal 
   controller.dispose();
   t.mock.timers.tick(500);
   assert.equal(controller.current, "a");
+});
+
+test("quick flags keep advancing while remote writes are stalled and preserve write order", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  const photos = [photo("a"), photo("b"), photo("c")];
+  const releases = [];
+  const { controller, calls, feedback } = setup(photos, (id, mark) => new Promise(resolve => {
+    releases.push(() => resolve({ ...photo(id), ...mark }));
+  }));
+  let advances = 0;
+  const next = () => { advances++; controller.step(1, ["a", "b", "c"]); };
+  controller.mark({ rating: 0, flag: "pick" }, true, next, { delayMs: 0, background: true });
+  assert.equal(feedback.filter(Boolean).length, 1, "feedback follows the action");
+  t.mock.timers.tick(0);
+  assert.equal(controller.current, "b");
+  controller.mark({ rating: 0, flag: "reject" }, true, next, { delayMs: 0, background: true });
+  t.mock.timers.tick(0);
+  assert.equal(controller.current, "c");
+  assert.equal(controller.pending, 2);
+  await Promise.resolve();
+  assert.deepEqual(calls.map(call => call.id), ["a"]);
+  releases.shift()();
+  // Let the serialized queue begin the second write.
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  assert.deepEqual(calls.map(call => [call.id, call.flag]), [["a", "pick"], ["b", "reject"]]);
+  releases.shift()();
+  await controller.settle();
+  t.mock.timers.tick(1000);
+  assert.equal(advances, 2, "late saves never advance again");
+  assert.equal(controller.current, "c");
+  assert.equal(controller.pending, 0);
+  assert.deepEqual(controller.photos.map(p => p.flag), ["pick", "reject", "none"]);
+  controller.dispose();
+});
+
+test("a background failure rolls back its photo without navigating back or clearing another failure", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  let reject, fail = true;
+  const { controller, errors } = setup([photo("a"), photo("b"), photo("c")], async (id, mark) => {
+    if (id === "a" && fail) await new Promise((_, r) => { reject = r; });
+    return { ...photo(id), ...mark };
+  });
+  const next = () => controller.step(1, ["a", "b", "c"]);
+  controller.mark({ rating: 0, flag: "reject" }, true, next, { delayMs: 0, background: true });
+  t.mock.timers.tick(0);
+  controller.mark({ rating: 0, flag: "pick" }, true, next, { delayMs: 0, background: true });
+  t.mock.timers.tick(0);
+  await Promise.resolve();
+  reject(new Error("network unavailable"));
+  await controller.settle();
+  assert.equal(controller.current, "c");
+  assert.equal(controller.photos[0].flag, "none");
+  assert.equal(controller.photos[1].flag, "pick");
+  assert.match(errors.at(-1).message, /a.NEF.*network unavailable/);
+  fail = false;
+  errors.at(-1).retry();
+  await controller.settle();
+  assert.equal(controller.current, "a");
+  assert.equal(controller.photo.flag, "reject");
+  assert.equal(errors.at(-1).message, "");
+  controller.dispose();
+});
+
+test("background timers are cancelled by manual navigation and unmount while saves still finish", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  let release;
+  const { controller } = setup(undefined, (id, mark) => new Promise(resolve => {
+    release = () => resolve({ ...photo(id), ...mark });
+  }));
+  let advances = 0;
+  const next = () => { advances++; };
+  controller.mark({ rating: 0, flag: "pick" }, true, next, { delayMs: 0, background: true });
+  controller.select("b");
+  t.mock.timers.tick(0);
+  assert.equal(advances, 0);
+  controller.mark({ rating: 0, flag: "reject" }, true, next, { delayMs: 0, background: true });
+  controller.dispose();
+  t.mock.timers.tick(0);
+  assert.equal(advances, 0);
+  await Promise.resolve();
+  release();
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  release();
+  await controller.settle();
+  assert.equal(controller.pending, 0);
+  assert.deepEqual(controller.photos.map(p => p.flag), ["pick", "reject"]);
 });
