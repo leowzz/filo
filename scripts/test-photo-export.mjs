@@ -63,12 +63,18 @@ await page.cdp("Emulation.setDeviceMetricsOverride", {
   deviceScaleFactor: 1,
   mobile: false,
 });
-await page.goto("http://127.0.0.1:1420");
+await page.goto(globalThis.filoExportUrl ?? "http://127.0.0.1:1420");
 await page.click('.main-nav button:text-is("审图")');
 await page.click('.photo-session-toolbar button:text-is("继续审图")');
 await page.waitForSelector(".photo-stage img");
 await page.click('.photo-review-toolbar button:text-is("导出到目录")');
 await page.waitForSelector("dialog[open]");
+const controls = await page.evaluate(() => [...document.querySelectorAll("dialog select")].map(select => ({
+  appearance: getComputedStyle(select).appearance,
+  height: select.getBoundingClientRect().height,
+  hasChevron: !!select.parentElement.querySelector("svg"),
+})));
+assert.ok(controls.every(control => control.appearance === "none" && control.height === 38 && control.hasChevron), "all export selectors use styled controls");
 assert.equal(
   await page.evaluate(
     () => document.querySelector('select[aria-label="星级条件"]').value,
@@ -242,7 +248,7 @@ assert.equal(
   "any",
 );
 await page.click('dialog .modal-actions button:text-is("关闭")');
-await page.goto("http://127.0.0.1:1420");
+await page.goto(globalThis.filoExportUrl ?? "http://127.0.0.1:1420");
 await page.click('.main-nav button:text-is("审图")');
 await page.click('.photo-session-toolbar button:text-is("导出到目录")');
 await page.waitForSelector("dialog[open]");

@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api, desktop, errorMessage } from "./api";
+import { Modal } from "./components";
 import {
   reviewApi,
   type Photo,
@@ -34,9 +35,11 @@ import {
   PhotoReviewController,
   hasRaw,
   photoKeyAction,
+  photoFeedbackDuration,
   sortPhotos,
   matchesPhoto,
   isReviewConflict,
+  preparePhotoReviewExit,
   type PhotoFeedback as Feedback,
 } from "./photoReviewController";
 import { PhotoExportButton } from "./PhotoExportButton";
@@ -142,6 +145,12 @@ export function PhotoReview({
   }>({ message: "", retry: null });
   const [reloading, setReloading] = useState(false);
   const reloadRef = useRef(false);
+  const exitAttempt = useRef(0);
+  const exitPromptTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const [exitPromptVisible, setExitPromptVisible] = useState(false);
+  const [exitStatus, setExitStatus] = useState<
+    "saving" | "failed" | "pending" | null
+  >(null);
   const positionWrites = useRef(new Set<Promise<void>>());
   const writePosition = (position: PhotoPosition) => {
     const write = reviewApi.position(session.id, position);
@@ -344,12 +353,18 @@ export function PhotoReview({
   const markFlag = (flag: Photo["flag"], advance = auto) => {
     const current = controller.photo;
     if (!current || mode === "rating") return;
-    const desired = current.flag === flag ? "none" : flag;
+    const desired = mode !== "flags" && current.flag === flag ? "none" : flag;
     controller.mark(
       { rating: current.rating, flag: desired },
       mode === "flags" ? desired !== "none" : advance,
       () => actions.current.step(1),
-      mode === "flags" ? { delayMs: 0, background: true } : undefined,
+      mode === "flags"
+        ? {
+            delayMs: photoFeedbackDuration,
+            background: true,
+            repeatFlagFeedback: true,
+          }
+        : undefined,
     );
   };
   const undo = () => {
@@ -363,21 +378,48 @@ export function PhotoReview({
   actions.current = { step, auto, markRating, markFlag, undo };
   const back = async () => {
     if (reloadRef.current) return;
+    const attempt = ++exitAttempt.current;
     controller.cancelAdvance();
-    await controller.settle();
-    if (positionRef.current) {
-      try {
-        await writePosition(positionRef.current);
-        onPositionSaved();
-      } catch (error) {
+    clearTimeout(exitPromptTimer.current);
+    setExitPromptVisible(false);
+    exitPromptTimer.current = setTimeout(() => {
+      if (attempt === exitAttempt.current) setExitPromptVisible(true);
+    }, 1000);
+    setExitStatus("saving");
+    try {
+      const status = await preparePhotoReviewExit(controller, async () => {
+        await Promise.allSettled([...positionWrites.current]);
+        if (attempt !== exitAttempt.current) return;
+        if (positionRef.current) {
+          await writePosition(positionRef.current);
+          onPositionSaved();
+        }
+      });
+      if (attempt !== exitAttempt.current) return;
+      if (status === "saved") {
+        clearTimeout(exitPromptTimer.current);
+        onBack();
+      } else setExitStatus(status);
+    } catch (error) {
+      if (attempt === exitAttempt.current) {
+        setExitStatus("failed");
         setFailure({
           message: errorMessage(error),
-          retry: () => void back(),
+          retry: null,
           reload: isReviewConflict(error),
         });
-        return;
       }
     }
+  };
+  const cancelExit = () => {
+    exitAttempt.current++;
+    clearTimeout(exitPromptTimer.current);
+    setExitStatus(null);
+  };
+  const leave = () => {
+    exitAttempt.current++;
+    clearTimeout(exitPromptTimer.current);
+    controller.dispose();
     onBack();
   };
   const reload = async () => {
@@ -401,7 +443,11 @@ export function PhotoReview({
   exit.current = back;
   useEffect(() => {
     controller.activate();
-    return () => controller.dispose();
+    return () => {
+      exitAttempt.current++;
+      clearTimeout(exitPromptTimer.current);
+      controller.dispose();
+    };
   }, [controller]);
   useEffect(() => {
     const cancel = () => controller.cancelAdvance();
@@ -431,7 +477,7 @@ export function PhotoReview({
       const action = photoKeyAction(event, actions.current.auto);
       if (!action) return;
       event.preventDefault();
-      controller.cancelAdvance();
+      if (action.type !== "flag") controller.cancelAdvance();
       const current = controller.photo;
       if (action.type === "step") actions.current.step(action.delta);
       if (action.type === "zoom") setOriginal((value) => !value);
@@ -468,11 +514,15 @@ export function PhotoReview({
           })
           .catch((error) => {
             if (!reloadRef.current)
-              setFailure({
-                message: errorMessage(error),
-                retry: null,
-                reload: isReviewConflict(error),
-              });
+              setFailure((previous) =>
+                controller.hasFailedWrites
+                  ? previous
+                  : {
+                      message: errorMessage(error),
+                      retry: null,
+                      reload: isReviewConflict(error),
+                    },
+              );
           });
     }, 500);
     return () => clearTimeout(timer);
@@ -593,6 +643,30 @@ export function PhotoReview({
       aria-label="照片审图"
       onPointerDownCapture={() => controller.cancelAdvance()}
     >
+      {exitStatus && exitPromptVisible && (
+        <Modal
+          title="退出审图"
+          onClose={cancelExit}
+          className="photo-review-exit-dialog"
+        >
+          <p role="status">
+            {exitStatus === "saving"
+              ? "正在保存审图进度…"
+              : exitStatus === "pending"
+                ? "保存仍未完成，可以返回继续等待，或退出审图。"
+                : "部分更改未能保存，可以返回重试，或退出审图。"}
+          </p>
+          <p>退出时尚未保存的更改可能丢失。</p>
+          <div className="modal-actions">
+            <button className="secondary" onClick={cancelExit}>
+              返回审图
+            </button>
+            <button className="primary" onClick={leave}>
+              退出审图
+            </button>
+          </div>
+        </Modal>
+      )}
       <div
         className="photo-review-titlebar"
         title={[locationName, filename].filter(Boolean).join(" / ")}
@@ -893,7 +967,9 @@ export function PhotoReview({
               className={photo?.flag === "pick" ? "pick selected" : ""}
               aria-pressed={photo?.flag === "pick"}
               aria-keyshortcuts="C P"
-              title={photo?.flag === "pick" ? "取消留用" : "留用"}
+              title={
+                mode !== "flags" && photo?.flag === "pick" ? "取消留用" : "留用"
+              }
               onClick={() => markFlag("pick")}
             >
               <Flag size={17} />
@@ -905,7 +981,11 @@ export function PhotoReview({
               className={photo?.flag === "reject" ? "reject selected" : ""}
               aria-pressed={photo?.flag === "reject"}
               aria-keyshortcuts="X"
-              title={photo?.flag === "reject" ? "取消排除" : "排除，只标记文件"}
+              title={
+                mode !== "flags" && photo?.flag === "reject"
+                  ? "取消排除"
+                  : "排除，只标记文件"
+              }
               onClick={() => markFlag("reject")}
             >
               <Flag size={17} />
@@ -924,7 +1004,8 @@ export function PhotoReview({
           {original ? "适应窗口" : "原尺寸"}
         </button>
         <span className="photo-save-status">
-          {failure.message && failure.kind !== "dates"
+          {controller.hasFailedWrites ||
+          (failure.message && failure.kind !== "dates")
             ? "保存失败"
             : controller.pending
               ? "保存中…"

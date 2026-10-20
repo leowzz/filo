@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { FolderOpen, FolderOutput, X } from "lucide-react";
+import { Check, ChevronDown, FolderOpen, FolderOutput, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { errorMessage } from "./api";
 import { Modal } from "./components";
@@ -140,60 +140,73 @@ export function PhotoExportButton({
                 <div className="photo-export-rating">
                   <label>
                     星级条件
-                    <select
-                      aria-label="星级条件"
-                      value={filter.rating_mode}
-                      onChange={(event) =>
-                        changeFilter({
-                          rating_mode: event.target
-                            .value as PhotoExportFilter["rating_mode"],
-                        })
-                      }
-                    >
-                      <option value="at_least">大于等于</option>
-                      <option value="exactly">等于</option>
-                      <option value="at_most">小于等于</option>
-                      <option value="any">不限星级</option>
-                    </select>
+                    <span className="photo-export-select">
+                      <select
+                        className="text-input"
+                        aria-label="星级条件"
+                        value={filter.rating_mode}
+                        onChange={(event) =>
+                          changeFilter({
+                            rating_mode: event.target
+                              .value as PhotoExportFilter["rating_mode"],
+                          })
+                        }
+                      >
+                        <option value="at_least">大于等于</option>
+                        <option value="exactly">等于</option>
+                        <option value="at_most">小于等于</option>
+                        <option value="any">不限星级</option>
+                      </select>
+                      <ChevronDown size={15} aria-hidden="true" />
+                    </span>
                   </label>
                   <label>
                     星级
-                    <select
-                      aria-label="导出星级"
-                      value={filter.rating}
-                      disabled={blocked || filter.rating_mode === "any"}
-                      onChange={(event) =>
-                        changeFilter({ rating: Number(event.target.value) })
-                      }
-                    >
-                      <option value={0}>未评分（0 星）</option>
-                      {[1, 2, 3, 4, 5].map((rating) => (
-                        <option key={rating} value={rating}>
-                          {rating} 星
-                        </option>
-                      ))}
-                    </select>
+                    <span className="photo-export-select">
+                      <select
+                        className="text-input"
+                        aria-label="导出星级"
+                        value={filter.rating}
+                        disabled={blocked || filter.rating_mode === "any"}
+                        onChange={(event) =>
+                          changeFilter({ rating: Number(event.target.value) })
+                        }
+                      >
+                        <option value={0}>未评分（0 星）</option>
+                        {[1, 2, 3, 4, 5].map((rating) => (
+                          <option key={rating} value={rating}>
+                            {rating} 星
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={15} aria-hidden="true" />
+                    </span>
                   </label>
                 </div>
                 <label>
                   旗标
-                  <select
-                    aria-label="导出旗标"
-                    value={filter.flag ?? "all"}
-                    onChange={(event) =>
-                      changeFilter({
-                        flag:
-                          event.target.value === "all"
-                            ? null
-                            : (event.target.value as PhotoExportFilter["flag"]),
-                      })
-                    }
-                  >
-                    <option value="all">不限旗标</option>
-                    <option value="pick">保留</option>
-                    <option value="reject">待删除</option>
-                    <option value="none">无旗标</option>
-                  </select>
+                  <span className="photo-export-select">
+                    <select
+                      className="text-input"
+                      aria-label="导出旗标"
+                      value={filter.flag ?? "all"}
+                      onChange={(event) =>
+                        changeFilter({
+                          flag:
+                            event.target.value === "all"
+                              ? null
+                              : (event.target
+                                  .value as PhotoExportFilter["flag"]),
+                        })
+                      }
+                    >
+                      <option value="all">不限旗标</option>
+                      <option value="pick">保留</option>
+                      <option value="reject">待删除</option>
+                      <option value="none">无旗标</option>
+                    </select>
+                    <ChevronDown size={15} aria-hidden="true" />
+                  </span>
                 </label>
               </fieldset>
               <fieldset className="photo-export-directories" disabled={blocked}>
@@ -213,6 +226,11 @@ export function PhotoExportButton({
                     >
                       <FolderOpen size={16} />
                       <span>{directory.path}</span>
+                      <Check
+                        size={16}
+                        className="photo-export-directory-check"
+                        aria-hidden="true"
+                      />
                     </button>
                     <button
                       type="button"

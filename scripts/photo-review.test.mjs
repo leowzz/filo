@@ -6,7 +6,7 @@ const require = createRequire(new URL("../apps/desktop/package.json", import.met
 const ts = require("typescript");
 const source = await readFile(new URL("../apps/desktop/src/photoReviewController.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } });
-const { PhotoReviewController, photoKeyAction, sortPhotos, matchesPhoto } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const { PhotoReviewController, preparePhotoReviewExit, photoKeyAction, photoFeedbackDuration, sortPhotos, matchesPhoto } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 const photo = (id, rating = 0) => ({ id, original_path: `${id}.NEF`, rating, flag: "none", revision: 0 });
 function setup(photos = [photo("a"), photo("b")], save = async (id, mark) => ({ ...photos.find(p => p.id === id), ...mark, })) {
   const feedback = [], errors = [], calls = [];
@@ -18,6 +18,97 @@ function setup(photos = [photo("a"), photo("b")], save = async (id, mark) => ({ 
 }
 const key = (code, key, extra = {}) => ({ code,key,repeat:false,altKey:false,ctrlKey:false,metaKey:false,shiftKey:false,...extra });
 const delay = ms => new Promise(resolve => setTimeout(resolve,ms));
+
+test("quick flags finish their animation before advancing, including repeated marks without saving again", async (t) => {
+  assert.equal(photoFeedbackDuration, 800);
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  for (const flag of ["pick", "reject"]) {
+    for (const repeated of [false, true]) {
+      let release;
+      const { controller, calls, feedback } = setup([
+        { ...photo("a"), flag: repeated ? flag : "none" }, photo("b"),
+      ], (id, mark) => new Promise(resolve => { release = () => resolve({ ...photo(id), ...mark }); }));
+      controller.mark({ rating: 0, flag }, true, () => controller.select("b"), {
+        delayMs: photoFeedbackDuration, background: true, repeatFlagFeedback: true,
+      });
+      await Promise.resolve();
+      assert.equal(feedback.at(-1).kind, "flag");
+      assert.equal(feedback.at(-1).flag, flag);
+      assert.equal(calls.length, repeated ? 0 : 1);
+      t.mock.timers.tick(photoFeedbackDuration - 1);
+      assert.equal(controller.current, "a", "keep the photo visible until the animation finishes");
+      t.mock.timers.tick(1);
+      assert.equal(controller.current, "b", "advance even while the background write is unfinished");
+      assert.equal(controller.photos[0].flag, flag);
+      release?.();
+      await controller.settle();
+      controller.dispose();
+    }
+  }
+});
+
+test("exit saves the position only after pending marks have finished", async () => {
+  let release;
+  const { controller } = setup(undefined, (id, mark) => new Promise(resolve => {
+    release = () => resolve({ ...photo(id), ...mark });
+  }));
+  controller.mark({ rating: 3, flag: "pick" }, false, () => {});
+  let positionSaved = false;
+  const exiting = preparePhotoReviewExit(controller, async () => { positionSaved = true; });
+  await delay(0);
+  assert.equal(positionSaved, false);
+  release();
+  assert.equal(await exiting, "saved");
+  assert.equal(positionSaved, true);
+  controller.dispose();
+});
+
+test("failed marks remain detectable for exit even after their error banner is dismissed", async () => {
+  const { controller, errors } = setup(undefined, async () => { throw new Error("SMB disconnected"); });
+  controller.mark({ rating: 3, flag: "pick" }, false, () => {});
+  await controller.settle();
+  errors.length = 0;
+  const status = await preparePhotoReviewExit(controller, async () => { assert.fail("do not hide a failed mark behind a position save"); });
+  assert.equal(status, "failed");
+  controller.dispose();
+});
+
+test("exit stops waiting for a stalled mark without cancelling its eventual save", async () => {
+  let release;
+  const { controller } = setup(undefined, (id, mark) => new Promise(resolve => {
+    release = () => resolve({ ...photo(id), ...mark });
+  }));
+  controller.mark({ rating: 3, flag: "pick" }, false, () => {});
+  assert.equal(await preparePhotoReviewExit(controller, async () => {}, 10), "pending");
+  controller.dispose();
+  release();
+  await controller.settle();
+  assert.equal(controller.photo.rating, 3);
+  assert.equal(controller.pending, 0);
+});
+
+test("exit handles rejected and stalled position writes without trapping navigation", async () => {
+  const { controller } = setup();
+  await assert.rejects(preparePhotoReviewExit(controller, async () => { throw new Error("SMB disconnected"); }), /SMB disconnected/);
+  let reject;
+  assert.equal(await preparePhotoReviewExit(controller, () => new Promise((_, r) => { reject = r; }), 10), "pending");
+  reject(new Error("late position failure"));
+  await delay(0);
+  controller.dispose();
+});
+
+test("a failed undo also prevents reporting a fully saved exit", async () => {
+  const { controller, errors } = setup();
+  controller.deps.undo = async () => { throw new Error("SMB disconnected"); };
+  controller.undo();
+  await controller.settle();
+  assert.equal(await preparePhotoReviewExit(controller, async () => {}), "failed");
+  controller.deps.undo = async () => null;
+  errors.at(-1).retry();
+  await controller.settle();
+  assert.equal(await preparePhotoReviewExit(controller, async () => {}), "saved");
+  controller.dispose();
+});
 
 test("review sorts natural filenames and complete capture times with missing dates last", () => {
   const photos = [

@@ -54,7 +54,27 @@ assert.equal(await page.evaluate(() => document.querySelector(".photo-counter").
 await page.click('button:text-is("旗标快筛")');
 await page.click(".photo-flags button:first-child");
 await page.waitForFunction(() => document.querySelector(".photo-counter").textContent === "2 / 4");
+await page.click('button[aria-label="上一张"]');
+const duplicatePick = await page.evaluate(async () => {
+  const before = window.reviewFixture.calls.length;
+  for (const key of ["c", "p", "C", "P"])
+    document.dispatchEvent(new KeyboardEvent("keydown", { key, shiftKey: key === key.toUpperCase(), bubbles: true }));
+  await new Promise(resolve => setTimeout(resolve, 50));
+  return { calls: window.reviewFixture.calls.length - before, flag: window.reviewFixture.photos[0].flag, counter: document.querySelector(".photo-counter").textContent };
+});
+assert.deepEqual(duplicatePick, { calls: 0, flag: "pick", counter: "1 / 4" });
+await page.waitForFunction(() => document.querySelector(".photo-counter").textContent === "2 / 4");
 await page.click(".photo-flags button:last-child");
+await page.waitForFunction(() => document.querySelector(".photo-counter").textContent === "3 / 4");
+await page.click('button[aria-label="上一张"]');
+const duplicateReject = await page.evaluate(async () => {
+  const before = window.reviewFixture.calls.length;
+  for (const shiftKey of [false, true])
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "x", shiftKey, bubbles: true }));
+  await new Promise(resolve => setTimeout(resolve, 50));
+  return { calls: window.reviewFixture.calls.length - before, flag: window.reviewFixture.photos[1].flag, counter: document.querySelector(".photo-counter").textContent };
+});
+assert.deepEqual(duplicateReject, { calls: 0, flag: "reject", counter: "2 / 4" });
 await page.waitForFunction(() => document.querySelector(".photo-counter").textContent === "3 / 4");
 await page.click('button[aria-label="上一张"]');
 await page.click(".photo-flags button:first-child");

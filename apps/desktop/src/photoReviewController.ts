@@ -37,6 +37,7 @@ export type PhotoFeedback = {
   flag: PhotoFlag;
   from: number;
 };
+export const photoFeedbackDuration = 800;
 type Mark = { rating: number; flag: PhotoFlag };
 export const hasRaw = (photo: Photo) =>
   photo.files.some((f) => f.kind === "raw");
@@ -63,6 +64,7 @@ export class PhotoReviewController {
   private committed = new Map<string, Photo>();
   private latest = new Map<string, number>();
   private failed = new Set<string>();
+  private undoFailed = false;
   private sequence = 0;
   private navigation = 0;
   private queue = Promise.resolve();
@@ -87,6 +89,9 @@ export class PhotoReviewController {
     return this.photos.find(
       (p) => p.id === this.current && (!this.rawOnly || hasRaw(p)),
     );
+  }
+  get hasFailedWrites() {
+    return this.failed.size > 0 || this.undoFailed;
   }
   setRawOnly(value: boolean) {
     this.rawOnly = value;
@@ -128,6 +133,7 @@ export class PhotoReviewController {
       delayMs: number;
       background?: boolean;
       immediateFeedback?: boolean;
+      repeatFlagFeedback?: boolean;
     },
   ) {
     const photo = this.photo;
@@ -145,6 +151,14 @@ export class PhotoReviewController {
       if (advance) {
         const id = ++this.sequence;
         const navigation = this.navigation;
+        if (options?.repeatFlagFeedback)
+          this.deps.feedback({
+            id,
+            photoId: photo.id,
+            kind: "flag",
+            ...desired,
+            from: photo.rating,
+          });
         const advanceUnchanged = () => {
           const saved = this.committed.get(photo.id);
           if (
@@ -224,7 +238,7 @@ export class PhotoReviewController {
           if (!options?.immediateFeedback) showFeedback();
           scheduleAdvance();
         }
-        if (!this.disposed && !this.failed.size) this.deps.error("", null);
+        if (!this.disposed && !this.hasFailedWrites) this.deps.error("", null);
       } catch (error) {
         if (this.latest.get(photo.id) === id) {
           this.failed.add(photo.id);
@@ -254,12 +268,14 @@ export class PhotoReviewController {
     this.queue = this.queue.then(async () => {
       try {
         const photo = await this.deps.undo();
+        this.undoFailed = false;
         if (photo) {
           this.committed.set(photo.id, photo);
           if ((this.latest.get(photo.id) ?? 0) < id) this.replace(photo);
           this.deps.saved(photo);
           this.failed.delete(photo.id);
-          if (!this.disposed && !this.failed.size) this.deps.error("", null);
+          if (!this.disposed && !this.hasFailedWrites)
+            this.deps.error("", null);
           if (!this.disposed && this.sequence === id) {
             this.select(photo.id);
             this.deps.feedback({
@@ -273,6 +289,7 @@ export class PhotoReviewController {
           }
         }
       } catch (error) {
+        this.undoFailed = true;
         if (!this.disposed)
           this.deps.error(
             String((error as { message?: string })?.message ?? error),
@@ -292,6 +309,30 @@ export class PhotoReviewController {
     this.disposed = true;
     clearTimeout(this.timer);
     this.deps.feedback(null);
+  }
+}
+
+// Stop waiting without cancelling writes: a remote commit may still complete.
+export async function preparePhotoReviewExit(
+  controller: PhotoReviewController,
+  savePosition: () => Promise<void>,
+  timeoutMs = 1500,
+): Promise<"saved" | "failed" | "pending"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      (async () => {
+        await controller.settle();
+        if (controller.hasFailedWrites) return "failed" as const;
+        await savePosition();
+        return "saved" as const;
+      })(),
+      new Promise<"pending">((resolve) => {
+        timer = setTimeout(() => resolve("pending"), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
