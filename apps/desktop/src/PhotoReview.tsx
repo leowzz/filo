@@ -4,7 +4,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Flag,
-  FlagOff,
   Maximize,
   Minimize,
   Star,
@@ -414,18 +413,12 @@ export function PhotoReview({
           <ChevronRight />
         </button>
         <div className="photo-rating" aria-label="星级">
-          <button
-            title="清除星级 (0)"
-            aria-label="清除星级"
-            onClick={() => mark(0)}
-          >
-            0
-          </button>
           {[1, 2, 3, 4, 5].map((n) => (
             <button
               key={`${n}:${feedback?.kind === "up" && n > feedback.from && n <= feedback.rating ? feedback.id : "rest"}`}
               aria-label={`${n} 星`}
-              aria-pressed={(photo?.rating ?? 0) >= n}
+              title={photo?.rating === n ? "再次点击清除星级 (0)" : `${n} 星`}
+              aria-pressed={photo?.rating === n}
               className={
                 (photo?.rating ?? 0) >= n
                   ? `filled ${feedback?.kind === "up" && n > feedback.from && n <= feedback.rating ? "added" : ""}`
@@ -434,7 +427,7 @@ export function PhotoReview({
               style={{
                 animationDelay: `${Math.max(0, n - (feedback?.from ?? n) - 1) * 40}ms`,
               }}
-              onClick={() => mark(n)}
+              onClick={() => mark(photo?.rating === n ? 0 : n)}
             >
               <Star
                 size={23}
@@ -447,8 +440,10 @@ export function PhotoReview({
           <button
             className={photo?.flag === "pick" ? "pick selected" : ""}
             aria-pressed={photo?.flag === "pick"}
-            title="保留 (P)"
-            onClick={() => mark(photo?.rating ?? 0, "pick")}
+            title={photo?.flag === "pick" ? "取消保留 (U)" : "保留 (P)"}
+            onClick={() =>
+              mark(photo?.rating ?? 0, photo?.flag === "pick" ? "none" : "pick")
+            }
           >
             <Flag size={17} />
             保留
@@ -456,18 +451,20 @@ export function PhotoReview({
           <button
             className={photo?.flag === "reject" ? "reject selected" : ""}
             aria-pressed={photo?.flag === "reject"}
-            title="待删除 (X)，只标记文件"
-            onClick={() => mark(photo?.rating ?? 0, "reject")}
+            title={
+              photo?.flag === "reject"
+                ? "取消待删除 (U)"
+                : "待删除 (X)，只标记文件"
+            }
+            onClick={() =>
+              mark(
+                photo?.rating ?? 0,
+                photo?.flag === "reject" ? "none" : "reject",
+              )
+            }
           >
             <Flag size={17} />
             待删除
-          </button>
-          <button
-            aria-label="清除旗标"
-            title="清除旗标 (U)"
-            onClick={() => mark(photo?.rating ?? 0, "none")}
-          >
-            <FlagOff size={17} />
           </button>
         </div>
         <button
