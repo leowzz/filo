@@ -7,6 +7,7 @@ struct ProbeBackend {
     primary_reads: AtomicUsize,
     full_reads: AtomicUsize,
     stats: AtomicUsize,
+    root_stats: AtomicUsize,
     block_listing: AtomicBool,
     listing_started: tokio::sync::Notify,
     block_primary: AtomicBool,
@@ -50,6 +51,9 @@ impl StorageBackend for ProbeBackend {
     }
     async fn stat(&self, path: &StorageLocator) -> StorageResult<StorageEntry> {
         self.stats.fetch_add(1, Ordering::SeqCst);
+        if path.logical_path.is_empty() {
+            self.root_stats.fetch_add(1, Ordering::SeqCst);
+        }
         self.inner.stat(path).await
     }
     async fn create_dir(&self, path: &StorageLocator) -> StorageResult<()> {
@@ -101,6 +105,7 @@ async fn setup(path: &std::path::Path) -> (StorageService, StorageLocator, Arc<P
         primary_reads: AtomicUsize::new(0),
         full_reads: AtomicUsize::new(0),
         stats: AtomicUsize::new(0),
+        root_stats: AtomicUsize::new(0),
         block_listing: AtomicBool::new(false),
         listing_started: tokio::sync::Notify::new(),
         block_primary: AtomicBool::new(false),
@@ -218,6 +223,11 @@ async fn raw_only_scan_reads_no_photo_contents_and_previews_are_lazy() {
         .await
         .unwrap();
     assert_eq!(session.photo_ids.len(), 241);
+    assert_eq!(
+        probe.root_stats.load(Ordering::SeqCst),
+        0,
+        "the provider listing validates the directory without a duplicate remote stat"
+    );
     assert_eq!(
         probe.primary_reads.load(Ordering::SeqCst),
         0,

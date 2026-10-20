@@ -5,12 +5,49 @@
   flex-direction: column;
 }
 .review-scan-status {
-  padding: 8px 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 13px;
 }
-.review-scan-path {
-  overflow-wrap: anywhere;
-  max-height: 5em;
-  overflow: auto;
+.review-scan-spinner {
+  color: #788ba6;
+  animation: review-scan-spin 1s linear infinite;
+}
+.review-scan-cancel {
+  margin-left: auto;
+  border: 0;
+  padding: 4px 6px;
+  background: transparent;
+  color: var(--muted);
+}
+.review-scan-status .form-error {
+  flex-basis: 100%;
+}
+.review-opening {
+  position: fixed;
+  z-index: 60;
+  bottom: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 290px;
+  max-width: calc(100vw - 32px);
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 6px 24px #172b4d18;
+}
+@keyframes review-scan-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .review-scan-spinner {
+    animation: none;
+  }
 }
 .photo-workspace-body {
   flex: 1;
@@ -682,7 +719,8 @@
   margin-left: auto;
 }
 .photo-filmstrip {
-  display: flex;
+  --photo-thumbnail-width: 94px;
+  display: grid;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
@@ -692,7 +730,7 @@
   min-height: 100px;
 }
 .photo-filmstrip > button {
-  width: 94px;
+  width: var(--photo-thumbnail-width);
   height: 78px;
   padding: 3px;
   flex-shrink: 0;

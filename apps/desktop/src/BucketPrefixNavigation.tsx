@@ -37,6 +37,8 @@ export function BucketPrefixNavigation({
             return;
           }
         }
+        if (!input.endsWith("/") && /\.[^/.]+$/.test(target))
+          target = target.split("/").slice(0, -1).join("/");
         setError("");
         const destinationPrefix = [rootPrefix, target].filter(Boolean).join("/");
         setDraft(destinationPrefix ? `${destinationPrefix}/` : "");

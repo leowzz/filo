@@ -48,10 +48,10 @@ impl StorageService {
         &self,
         catalog: &mut PhotoCatalog,
         root: &StorageLocator,
+        backend: &dyn StorageBackend,
     ) -> StorageResult<(Option<PhotoSession>, Option<sync::DirectoryProgress>)> {
-        let backend = self.backend(root.volume_id).await?;
         let target = child(root, sync::DIRECTORY_PROGRESS)?;
-        let saved = sync::read_document(backend.as_ref(), &target, sync::MANIFEST_LIMIT).await?;
+        let saved = sync::read_document(backend, &target, sync::MANIFEST_LIMIT).await?;
         let document = saved
             .as_ref()
             .map(|(_, bytes)| serde_json::from_slice::<serde_json::Value>(bytes))

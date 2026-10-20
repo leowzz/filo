@@ -321,7 +321,42 @@ await page.keyboard.press("Escape");
 await page.dblclick('.file-table tbody tr[data-entry-path="/Folder"]');
 await page.waitForSelector('[data-entry-path="/Folder/Folder"]');
 assert.equal((await selected()).length, 0, "Navigation clears selection");
+await page.click(".detail-path");
+assert.deepEqual(
+  await page.evaluate(() => {
+    const path = document.querySelector(".detail-path");
+    const range = document.createRange();
+    range.selectNodeContents(path);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const copyPrevented = (modifier) => {
+      const event = new KeyboardEvent("keydown", {
+        key: "c",
+        [modifier]: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      document.body.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    const result = {
+      path: selection.toString(),
+      selectable: getComputedStyle(path).userSelect,
+      textCopyPrevented: [copyPrevented("metaKey"), copyPrevented("ctrlKey")],
+    };
+    selection.removeAllRanges();
+    return { ...result, fileCopyPrevented: copyPrevented("metaKey") };
+  }),
+  {
+    path: "/Folder",
+    selectable: "text",
+    textCopyPrevented: [false, false],
+    fileCopyPrevented: true,
+  },
+  "Directory paths allow native text copy while file copy keeps its shortcut",
+);
 console.log(
-  "PASS: arrow navigation, focus, boundaries, virtual scrolling, Shift+arrows, input isolation, click, modifier/range selection, forward/reverse/additive/blank-space drag, text suppression, toolbar/status, select all, escape, edge scrolling, filtering, double click, menu, navigation",
+  "PASS: arrow navigation, focus, boundaries, virtual scrolling, Shift+arrows, input isolation, click, modifier/range selection, forward/reverse/additive/blank-space drag, text suppression, toolbar/status, select all, escape, edge scrolling, filtering, double click, menu, navigation, directory path text copy",
 );
 if (!globalThis.filoKeepBrowser) await task.finish({ keep: [] });

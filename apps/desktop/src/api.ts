@@ -114,6 +114,20 @@ export const api = {
       },
     );
   },
+  downloadFiles: (
+    sources: Locator[],
+    onProgress: (job: TransferJob) => void,
+  ) => {
+    const channel = new Channel<TransferJob>();
+    channel.onmessage = onProgress;
+    return invoke<{ jobs: TransferJob[]; failures: string[] }>(
+      "download_files",
+      {
+        sources,
+        onProgress: channel,
+      },
+    );
+  },
   preflightUpload: (remote: Locator, paths?: string[]) =>
     invoke<{ paths: string[]; conflicts: string[] } | null>(
       "preflight_upload",

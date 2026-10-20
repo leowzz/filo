@@ -81,7 +81,7 @@ export function DetailsPanel({
         ) : (
           <>
             <dt>当前目录</dt>
-            <dd>{path || "/"}</dd>
+            <dd className="detail-path">{path || "/"}</dd>
             <dt>项目数</dt>
             <dd>
               {multipleSelected ? selectedEntries.length : (entryCount ?? "—")}

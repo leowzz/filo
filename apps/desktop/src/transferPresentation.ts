@@ -75,6 +75,7 @@ export function transferDirection(
   const destination = volumes.find(
     (volume) => volume.id === job.destination.volume_id,
   );
+  if (source && !destination) return "download";
   const sourceRemote = source !== undefined && source.root.type !== "local";
   const destinationRemote =
     destination !== undefined && destination.root.type !== "local";

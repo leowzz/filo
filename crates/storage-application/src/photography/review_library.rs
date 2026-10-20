@@ -172,8 +172,9 @@ impl StorageService {
                     .to_string();
             }
         }
+        let jpg_backend = scan.read(self.backend(jpg.volume_id)).await?;
         let (resumed, progress) = if directory {
-            scan.read(self.load_directory_review(&mut catalog, &jpg))
+            scan.read(self.load_directory_review(&mut catalog, &jpg, jpg_backend.as_ref()))
                 .await?
         } else {
             (None, None)
@@ -223,7 +224,7 @@ impl StorageService {
             })
             .collect();
         let mut groups = BTreeMap::<String, Vec<ReviewFile>>::new();
-        let mut backends = HashMap::new();
+        let mut backends = HashMap::from([(jpg.volume_id, jpg_backend)]);
         let roots = if raw == jpg {
             vec![(jpg.clone(), false)]
         } else {
@@ -232,11 +233,12 @@ impl StorageService {
         let mut count = 0;
         let mut found = 0;
         for (root, jpg_only) in roots {
-            let backend = scan.read(self.backend(root.volume_id)).await?;
+            let backend = match backends.get(&root.volume_id) {
+                Some(backend) => backend.clone(),
+                None => scan.read(self.backend(root.volume_id)).await?,
+            };
             backends.insert(root.volume_id, backend.clone());
-            if !crate::tree::directory(&scan.read(backend.stat(&root)).await?) {
-                return Err(invalid("请选择照片文件夹"));
-            }
+            // Opening a directory listing already validates its type and access.
             let mut pending = vec![root.clone()];
             while let Some(parent) = pending.pop() {
                 scan.progress(

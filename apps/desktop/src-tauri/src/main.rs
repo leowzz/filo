@@ -90,6 +90,34 @@ async fn test_remote_connection(
 ) -> StorageResult<()> {
     service.test_remote_connection(volume_id, input).await
 }
+async fn download_files(
+    app: tauri::AppHandle,
+    service: State<'_, StorageService>,
+    sources: Vec<StorageLocator>,
+    on_progress: tauri::ipc::Channel<TransferJob>,
+) -> StorageResult<FileTransferBatch> {
+    let directory = app.path().download_dir().map_err(|_| {
+        StorageError::new(StorageErrorCode::Io, "无法定位系统下载目录")
+    })?;
+    tokio::fs::create_dir_all(&directory).await.map_err(|_| {
+        StorageError::new(StorageErrorCode::Io, "无法访问下载目录，请检查系统权限")
+    })?;
+    let mut batch = FileTransferBatch { jobs: Vec::new(), failures: Vec::new() };
+    for source in sources {
+        let name = source.logical_path.rsplit('/').next().unwrap_or("").to_owned();
+        let on_progress = on_progress.clone();
+        match service.download_file_to_directory(
+            directory.clone(),
+            source,
+            std::sync::Arc::new(move |job| { let _ = on_progress.send(job); }),
+        ).await {
+            Ok(job) => batch.jobs.push(job),
+            Err(error) => batch.failures.push(format!("{name}：{}", error.message)),
+        }
+    }
+    Ok(batch)
+}
+
 async fn transfer_local_file(
     app: tauri::AppHandle,
     service: State<'_, StorageService>,
@@ -507,6 +535,7 @@ fn main() {
             test_s3_connection,
             save_remote_storage,
             test_remote_connection,
+            download_files,
             transfer_local_file,
             dropped_files::upload_dropped_files,
             dropped_files::preflight_upload,

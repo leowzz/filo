@@ -72,6 +72,20 @@ assert.equal(
   "other/folder/",
 );
 await jump("", "");
+await jump(
+  "media/public/1000002493213573147/7695550416376825909_20261011190741_cbc861.jpeg",
+  "media/public/1000002493213573147",
+);
+assert.equal(
+  await page.evaluate(
+    () => document.querySelector('input[aria-label="桶内目录前缀"]').value,
+  ),
+  "media/public/1000002493213573147/",
+);
+await jump("photo.JPEG", "");
+await jump("media/archive.v2/", "media/archive.v2");
+await jump("media/archive.v2/photo.tar.gz", "media/archive.v2");
+await jump("media/no-extension", "media/no-extension");
 await page.fill(input, "clicked/");
 await page.click(".bucket-prefix-controls button");
 await page.waitForFunction(
@@ -93,7 +107,17 @@ await page.waitForFunction(
     "ugc/character/",
 );
 await jump("ugc/character/20260930/", "20260930", "scoped");
+await jump("ugc/character/20261011/photo.jpeg", "20261011", "scoped");
+await jump("ugc/character/cover.jpeg", "", "scoped");
+await jump("ugc/character/20260930/", "20260930", "scoped");
 await page.fill(input, "ugc/characters/outside/");
+await page.press(input, "Enter");
+await page.waitForSelector(".bucket-prefix-error");
+assert.equal(
+  await page.evaluate(() => window.listings.at(-1).logical_path),
+  "20260930",
+);
+await page.fill(input, "ugc/characters/outside.jpeg");
 await page.press(input, "Enter");
 await page.waitForSelector(".bucket-prefix-error");
 assert.equal(
@@ -155,5 +179,5 @@ for (const width of [1100, 760]) {
 }
 await page.screenshot({ path: "/tmp/filo-prefix-navigation.png" });
 console.log(
-  "PASS: prefix jump, Enter/button, trailing slash, history, Escape, root, invalid paths, scope boundary, legacy OSS endpoint and responsive layout",
+  "PASS: prefix and file path jump, Enter/button, trailing slash, history, Escape, root, invalid paths, scope boundary, legacy OSS endpoint and responsive layout",
 );

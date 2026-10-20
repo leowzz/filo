@@ -5,7 +5,6 @@ import { DirectoryPhotoReview } from "./DirectoryPhotoReview";
 import { reviewApi } from "./photoApi";
 import { useReviewScan } from "./useReviewScan";
 import { ReviewScanStatus } from "./ReviewScanStatus";
-import { Modal } from "./components";
 import { PreviewDialog } from "./PreviewDialog";
 import { ContentSearchDialog } from "./ContentSearchDialog";
 import { S3ManagerDialog } from "./S3ManagerDialog";
@@ -30,6 +29,7 @@ import { RemoveLocationDialog } from "./RemoveLocationDialog";
 import { RemoteStorageDialog } from "./RemoteStorageDialog";
 import { S3StorageDialog } from "./S3StorageDialog";
 import { useBrowser } from "./store";
+import { storageLink, storagePath } from "./storageLink";
 import { TransferDialog } from "./TransferDialog";
 import { TransfersPage } from "./TransfersPage";
 import {
@@ -428,12 +428,14 @@ export default function App() {
       remote,
       upload,
       paths,
+      downloads,
       conflictPolicy = "reject",
       conflictPaths,
     }: {
       remote: Locator;
       upload: boolean;
       paths?: string[];
+      downloads?: Locator[];
       conflictPolicy?: ConflictPolicy;
       conflictPaths?: string[];
     }) => {
@@ -469,20 +471,22 @@ export default function App() {
           updateTransfer(current, job),
         );
       };
-      const batch = paths
-        ? await api.uploadDroppedFiles(
-            remote,
-            paths,
-            onProgress,
-            conflictPolicy,
-            conflictPaths,
-          )
-        : await api.transferLocalFile(
-            remote,
-            upload,
-            onProgress,
-            conflictPolicy,
-          );
+      const batch = downloads
+        ? await api.downloadFiles(downloads, onProgress)
+        : paths
+          ? await api.uploadDroppedFiles(
+              remote,
+              paths,
+              onProgress,
+              conflictPolicy,
+              conflictPaths,
+            )
+          : await api.transferLocalFile(
+              remote,
+              upload,
+              onProgress,
+              conflictPolicy,
+            );
       // Fast tasks may finish before their progress channel is delivered.
       for (const job of batch?.jobs ?? []) {
         onProgress(job);
@@ -533,6 +537,19 @@ export default function App() {
       return;
     uploadPreparing.current = true;
     prepareUpload.mutate({ remote, paths });
+  }
+  function downloadSelection() {
+    if (
+      fileTransfer.isPending ||
+      selectedEntries.length === 0 ||
+      selectedEntries.some((entry) => entry.kind !== "file")
+    )
+      return;
+    fileTransfer.mutate({
+      remote: selectedEntries[0].locator,
+      upload: false,
+      downloads: selectedEntries.map((entry) => entry.locator),
+    });
   }
   const pasteMutation = useMutation({
     mutationFn: async ({
@@ -671,6 +688,29 @@ export default function App() {
     );
   }
 
+  async function copySelectionAddresses(kind: "link" | "path") {
+    if (!volume || selectedEntries.length === 0) return;
+    const label = kind === "link" ? "链接" : "路径";
+    try {
+      await navigator.clipboard.writeText(
+        selectedEntries
+          .map((entry) =>
+            kind === "link"
+              ? storageLink(entry.locator)
+              : storagePath(volume, entry.locator),
+          )
+          .join("\n"),
+      );
+      setNotice(
+        selectedEntries.length === 1
+          ? `${label}已复制`
+          : `已复制 ${selectedEntries.length} 条${label}`,
+      );
+    } catch (error) {
+      setNotice(`复制${label}失败：${errorMessage(error)}`);
+    }
+  }
+
   function cutSelection() {
     if (textInputFocused()) return;
     if (!volume || selectedEntries.length === 0) return;
@@ -742,6 +782,7 @@ export default function App() {
         return;
       const key = event.key.toLowerCase();
       if (!(["c", "x", "v"] as string[]).includes(key)) return;
+      if (key === "c" && window.getSelection()?.toString()) return;
       event.preventDefault();
       if (key === "c") copySelection();
       else if (key === "x") cutSelection();
@@ -922,13 +963,9 @@ export default function App() {
         />
 
         {reviewScan.pending && (
-          <Modal
-            title="打开审图"
-            onClose={() => void reviewScan.cancel()}
-            busy={!reviewScan.canCancel}
-          >
+          <div className="review-opening" aria-label="正在打开审图">
             <ReviewScanStatus scan={reviewScan} />
-          </Modal>
+          </div>
         )}
 
         {volumesQuery.isError && (
@@ -1115,18 +1152,15 @@ export default function App() {
             setPreview({ entries: selectedEntries, siblings: entries })
           }
           onCopy={copySelection}
+          onCopyLinks={() => void copySelectionAddresses("link")}
+          onCopyPaths={() => void copySelectionAddresses("path")}
           onCut={cutSelection}
           onPaste={pasteSelection}
           hasClipboard={(state.clipboard?.entries.length ?? 0) > 0}
           canPaste={canWriteVolume(volume) && !pasteBusy}
           onUpload={() => requestUpload(parent)}
-          onDownload={() =>
-            fileTransfer.mutate({
-              remote: menuEntry.locator,
-              upload: false,
-              conflictPolicy: "overwrite",
-            })
-          }
+          onDownload={downloadSelection}
+          downloadPending={fileTransfer.isPending}
           onManage={() =>
             setS3Manager({ locator: menuEntry.locator, object: true })
           }

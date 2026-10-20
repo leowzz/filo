@@ -3,9 +3,11 @@ import {
   Copy,
   Download,
   ExternalLink,
+  Eye,
   FolderInput,
   Info,
   Images,
+  Link,
   Pencil,
   Scissors,
   Trash2,
@@ -31,12 +33,15 @@ export function EntryMenu({
   onDetails,
   onPreview,
   onCopy,
+  onCopyLinks,
+  onCopyPaths,
   onCut,
   onPaste,
   hasClipboard,
   canPaste,
   onUpload,
   onDownload,
+  downloadPending,
   onManage,
   onRename,
   onTransfer,
@@ -52,12 +57,15 @@ export function EntryMenu({
   onDetails: () => void;
   onPreview: () => void;
   onCopy: () => void;
+  onCopyLinks: () => void;
+  onCopyPaths: () => void;
   onCut: () => void;
   onPaste: () => void;
   hasClipboard: boolean;
   canPaste: boolean;
   onUpload: () => void;
   onDownload: () => void;
+  downloadPending: boolean;
   onManage: () => void;
   onRename: () => void;
   onTransfer: (kind: TransferKind) => void;
@@ -168,7 +176,29 @@ export function EntryMenu({
         显示简介
       </button>
       <button role="menuitem" onClick={() => perform(onPreview)}>
+        <Eye size={14} />
         预览
+      </button>
+      <button
+        role="menuitem"
+        title="保存到系统下载目录"
+        disabled={
+          downloadPending ||
+          entries.length === 0 ||
+          entries.some((item) => item.kind !== "file")
+        }
+        onClick={() => perform(onDownload)}
+      >
+        <Download size={14} />
+        下载
+      </button>
+      <button role="menuitem" onClick={() => perform(onCopyPaths)}>
+        <Copy size={14} />
+        复制路径
+      </button>
+      <button role="menuitem" onClick={() => perform(onCopyLinks)}>
+        <Link size={14} />
+        复制链接
       </button>
       {entries.length === 1 &&
         entry.kind === "file" &&
@@ -187,14 +217,6 @@ export function EntryMenu({
           >
             <Upload size={14} />
             上传到此处…
-          </button>
-          <button
-            role="menuitem"
-            disabled={entries.length !== 1 || entry.kind !== "file"}
-            onClick={() => perform(onDownload)}
-          >
-            <Download size={14} />
-            下载文件…
           </button>
         </>
       )}

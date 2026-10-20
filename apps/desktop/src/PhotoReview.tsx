@@ -1,5 +1,7 @@
 import {
+  useCallback,
   useEffect,
+  useLayoutEffect,
   useReducer,
   useRef,
   useState,
@@ -203,6 +205,7 @@ export function PhotoReview({
   const [previewAttempt, retryPreview] = useReducer((n) => n + 1, 0);
   const container = useRef<HTMLElement>(null);
   const filmstrip = useRef<HTMLDivElement>(null);
+  const [filmstripRange, setFilmstripRange] = useState({ start: 0, end: 17 });
   const positionRef = useRef<PhotoPosition | null>(null);
   const photo = controller.photo;
   const photoPath = rawOnly
@@ -251,6 +254,34 @@ export function PhotoReview({
   };
   const ids = visible.map((p) => p.id);
   const index = ids.indexOf(controller.current ?? "");
+  const updateFilmstrip = useCallback(
+    (center = false) => {
+      const list = filmstrip.current;
+      if (!list) return;
+      const style = getComputedStyle(list);
+      const width = parseFloat(
+        style.getPropertyValue("--photo-thumbnail-width"),
+      );
+      const stride = width + parseFloat(style.columnGap);
+      if (center && index >= 0) {
+        list.scrollLeft =
+          parseFloat(style.paddingLeft) +
+          index * stride -
+          (list.clientWidth - width) / 2;
+      }
+      const start = Math.max(0, Math.floor(list.scrollLeft / stride) - 2);
+      const end = Math.min(
+        visible.length,
+        Math.ceil((list.scrollLeft + list.clientWidth) / stride) + 2,
+      );
+      setFilmstripRange((previous) =>
+        previous.start === start && previous.end === end
+          ? previous
+          : { start, end },
+      );
+    },
+    [index, visible.length],
+  );
   const previewIds = ids
     .slice(Math.max(0, index - previewBehind), index + previewAhead + 1)
     .join("\n");
@@ -446,22 +477,18 @@ export function PhotoReview({
       void reviewApi.cancelScan(requestId).catch(() => {});
     };
   }, [needsDates, session.id, dateAttempt]);
-  useEffect(() => {
-    if (!cacheDebug) return;
+  useLayoutEffect(() => {
     const list = filmstrip.current;
-    const selected = list?.querySelector<HTMLElement>(
-      'button[aria-current="true"]',
-    );
-    if (!list || !selected) return;
-    const center = () => {
-      list.scrollLeft +=
-        selected.getBoundingClientRect().left -
-        list.getBoundingClientRect().left -
-        (list.clientWidth - selected.offsetWidth) / 2;
-    };
+    if (!list) return;
+    const center = () => updateFilmstrip(true);
     center();
-    return observeResize([list], center);
-  }, [cacheDebug, photo?.id, rawOnly, previewIds]);
+    let width = list.clientWidth;
+    return observeResize([list], () => {
+      if (list.clientWidth === width) return;
+      width = list.clientWidth;
+      center();
+    });
+  }, [photo?.id, updateFilmstrip]);
   useEffect(() => {
     let live = true;
     setPreviewFailure("");
@@ -782,12 +809,23 @@ export function PhotoReview({
                 : "本机已保存"}
         </span>
       </div>
-      <div className="photo-filmstrip" aria-label="审图胶片带" ref={filmstrip}>
+      <div
+        className="photo-filmstrip"
+        aria-label="审图胶片带"
+        ref={filmstrip}
+        style={{
+          gridTemplateColumns: visible.length
+            ? `repeat(${visible.length}, var(--photo-thumbnail-width))`
+            : undefined,
+        }}
+        onScroll={() => updateFilmstrip()}
+      >
         {visible
-          .slice(Math.max(0, index - 8), Math.max(17, index + 9))
-          .map((p) => (
+          .slice(filmstripRange.start, filmstripRange.end)
+          .map((p, offset) => (
             <button
               key={p.id}
+              style={{ gridColumn: filmstripRange.start + offset + 1 }}
               aria-label={`查看 ${rawOnly ? p.files.find((f) => f.kind === "raw")?.path : p.original_path}`}
               aria-current={p.id === photo?.id}
               className={p.id === photo?.id ? "current" : ""}

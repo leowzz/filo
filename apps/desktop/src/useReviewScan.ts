@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { errorMessage } from "./api";
 import {
   reviewApi,
@@ -60,11 +60,9 @@ export function useReviewScan() {
       }
     }
   };
-  const cancel = async () => {
+  const cancel = useCallback(async () => {
     const run = active.current;
-    // The first progress event acknowledges registration on the backend.
-    if (!run?.progress || run.progress.stage === "saving" || run.cancelled)
-      return;
+    if (!run || run.progress?.stage === "saving" || run.cancelled) return;
     run.cancelled = true;
     setCancelling(true);
     try {
@@ -76,7 +74,18 @@ export function useReviewScan() {
         setError(errorMessage(error));
       }
     }
-  };
+  }, []);
+  useEffect(() => {
+    if (!pending) return;
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        void cancel();
+      }
+    };
+    window.addEventListener("keydown", keydown);
+    return () => window.removeEventListener("keydown", keydown);
+  }, [pending, cancel]);
   return {
     open,
     cancel,
@@ -84,7 +93,6 @@ export function useReviewScan() {
     progress,
     cancelling,
     error,
-    canCancel:
-      pending && !!progress && progress.stage !== "saving" && !cancelling,
+    canCancel: pending && progress?.stage !== "saving" && !cancelling,
   };
 }

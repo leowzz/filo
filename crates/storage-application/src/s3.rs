@@ -373,6 +373,78 @@ impl StorageService {
         Ok(conflicts)
     }
 
+    /// The caller authorizes this directory, such as the system Downloads folder.
+    /// Reserve a free name before enqueueing while retaining single-file access.
+    pub async fn download_file_to_directory(
+        &self,
+        directory: PathBuf,
+        source: StorageLocator,
+        observer: TransferObserver,
+    ) -> StorageResult<TransferJob> {
+        let entry = self.stat_entry(source.clone()).await?;
+        if entry.kind != StorageEntryKind::File {
+            return Err(configuration("请选择普通文件进行下载"));
+        }
+        validate_name(&entry.name)?;
+        let root = tokio::fs::canonicalize(directory)
+            .await
+            .map_err(|_| configuration("无法访问下载目录，请检查系统权限"))?;
+        let _guard = self.download_registration_lock.lock().await;
+        let key = |path: &std::path::Path| {
+            let value = path.to_string_lossy().into_owned();
+            if cfg!(any(target_os = "macos", windows)) {
+                value.to_lowercase()
+            } else {
+                value
+            }
+        };
+        let mut reserved = std::collections::HashSet::new();
+        for job in self.repository.list_transfers().await? {
+            if !job.state.active() {
+                continue;
+            }
+            if let Some(volume) = self
+                .repository
+                .transfer_local_volume(job.destination.volume_id)
+                .await?
+            {
+                if let VolumeRoot::Local { root_path } = volume.root {
+                    reserved.insert(key(&root_path.join(&job.destination.logical_path)));
+                }
+            }
+        }
+        let (stem, extension) = match entry.name.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() => (stem, format!(".{ext}")),
+            _ => (entry.name.as_str(), String::new()),
+        };
+        for number in 0..=10_000 {
+            let name = if number == 0 {
+                entry.name.clone()
+            } else {
+                format!("{stem} ({number}){extension}")
+            };
+            let path = root.join(name);
+            if reserved.contains(&key(&path)) {
+                continue;
+            }
+            match tokio::fs::symlink_metadata(&path).await {
+                Ok(_) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err(configuration("无法读取下载目录，请检查系统权限")),
+            }
+            return self
+                .transfer_selected_file_with_policy(
+                    path,
+                    source,
+                    false,
+                    ConflictPolicy::Reject,
+                    observer,
+                )
+                .await;
+        }
+        Err(configuration("同名下载文件过多，请整理下载目录后重试"))
+    }
+
     /// `path` is authorized by a native file picker or drop event in the Tauri command.
     /// Uploads accept files and folders; downloads retain single-file authorization.
     /// General access expires with this task. Persisted metadata only supports opening

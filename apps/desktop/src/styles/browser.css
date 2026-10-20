@@ -317,6 +317,10 @@
   line-height: 1.7;
   overflow-wrap: anywhere;
 }
+.detail-path {
+  -webkit-user-select: text;
+  user-select: text;
+}
 .detail-tip {
   display: flex;
   gap: 7px;

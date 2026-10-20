@@ -1562,6 +1562,112 @@ async fn overwrite_rejects_mixed_kinds_and_skipping_a_folder_keeps_all_sources()
 }
 
 #[tokio::test]
+async fn download_to_directory_reserves_names_without_overwriting_or_granting_sibling_access() {
+    let fixture = Fixture::new().await;
+    let downloads = tempfile::tempdir().unwrap();
+    std::fs::write(fixture.source.path().join("photo.NEF"), b"new photo").unwrap();
+    std::fs::write(downloads.path().join("photo.NEF"), b"keep original").unwrap();
+    let source = StorageLocator {
+        volume_id: fixture.source_id,
+        logical_path: "photo.NEF".into(),
+        version_id: None,
+    };
+    // Keep transfers queued so name reservation is tested before any file exists.
+    let guard = fixture.service.mutation_lock.write().await;
+    let (first, second) = tokio::join!(
+        fixture.service.download_file_to_directory(
+            downloads.path().to_path_buf(),
+            source.clone(),
+            Arc::new(|_| {}),
+        ),
+        fixture.service.download_file_to_directory(
+            downloads.path().to_path_buf(),
+            source.clone(),
+            Arc::new(|_| {}),
+        ),
+    );
+    let jobs = [first.unwrap(), second.unwrap()];
+    let mut names = jobs
+        .iter()
+        .map(|job| job.destination.logical_path.as_str())
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(names, ["photo (1).NEF", "photo (2).NEF"]);
+    for job in &jobs {
+        let error = fixture
+            .service
+            .stat_entry(StorageLocator {
+                logical_path: "photo.NEF".into(),
+                ..job.destination.clone()
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, StorageErrorCode::AccessDenied);
+        assert!(!fixture
+            .service
+            .list_volumes()
+            .await
+            .unwrap()
+            .iter()
+            .any(|volume| { volume.volume.id == job.destination.volume_id }));
+    }
+    drop(guard);
+    for job in &jobs {
+        let result = fixture.result(job.id).await;
+        assert_eq!(
+            result.state,
+            TransferState::Completed,
+            "{:?}",
+            result.error_message
+        );
+        assert_eq!(
+            std::fs::read(downloads.path().join(&result.destination.logical_path)).unwrap(),
+            b"new photo"
+        );
+    }
+    assert_eq!(
+        std::fs::read(downloads.path().join("photo.NEF")).unwrap(),
+        b"keep original"
+    );
+    assert_eq!(
+        std::fs::read(fixture.source.path().join("photo.NEF")).unwrap(),
+        b"new photo"
+    );
+    let restarted = StorageService::new(fixture.service.repository.clone());
+    let (volume, locator) = restarted.transfer_file_location(jobs[0].id).await.unwrap();
+    assert_eq!(locator.logical_path, jobs[0].destination.logical_path);
+    let VolumeRoot::Local { root_path } = volume.root else {
+        panic!("expected local download directory")
+    };
+    assert_eq!(root_path, std::fs::canonicalize(downloads.path()).unwrap());
+    assert!(restarted.stat_entry(locator).await.is_err());
+}
+
+#[tokio::test]
+async fn download_to_directory_rejects_folders_and_invalid_sources() {
+    let fixture = Fixture::new().await;
+    let downloads = tempfile::tempdir().unwrap();
+    std::fs::create_dir(fixture.source.path().join("folder")).unwrap();
+    for path in ["folder", "missing.NEF", "../outside"] {
+        assert!(fixture
+            .service
+            .download_file_to_directory(
+                downloads.path().to_path_buf(),
+                StorageLocator {
+                    volume_id: fixture.source_id,
+                    logical_path: path.into(),
+                    version_id: None
+                },
+                Arc::new(|_| {}),
+            )
+            .await
+            .is_err());
+    }
+    assert_eq!(std::fs::read_dir(downloads.path()).unwrap().count(), 0);
+    assert!(fixture.service.list_transfers().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn downloaded_file_location_survives_reopening_without_restoring_general_access() {
     let fixture = Fixture::new().await;
     let downloads = tempfile::tempdir().unwrap();
