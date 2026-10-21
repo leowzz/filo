@@ -4,7 +4,7 @@ export V
 
 .PHONY: dev build check test version-check version-set test-release release
 dev:
-	pnpm dev
+	node scripts/dev.mjs
 build:
 	node scripts/release/build.mjs
 check:

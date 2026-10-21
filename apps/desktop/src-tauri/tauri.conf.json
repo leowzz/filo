@@ -4,7 +4,7 @@
   "version": "0.1.19",
   "identifier": "dev.filo.desktop",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "node node_modules/vite/bin/vite.js --host 127.0.0.1",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
