@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
 } from "react";
 import {
   ArrowLeft,
@@ -16,6 +17,7 @@ import {
   Maximize,
   Minimize,
   Plus,
+  Settings2,
   Star,
   Undo2,
   X,
@@ -35,7 +37,6 @@ import {
   PhotoReviewController,
   hasRaw,
   photoKeyAction,
-  photoFeedbackDuration,
   sortPhotos,
   matchesPhoto,
   isReviewConflict,
@@ -46,6 +47,7 @@ import { PhotoExportButton } from "./PhotoExportButton";
 import { PhotoFeedback } from "./PhotoFeedback";
 import { observeResize } from "./observeResize";
 import { useAppSettings } from "./appSettings";
+import { useBrowser } from "./store";
 import {
   photoPreview,
   photoPreviews,
@@ -136,6 +138,10 @@ export function PhotoReview({
   backLabel?: string;
 }) {
   const [, render] = useReducer((n) => n + 1, 0);
+  const suspended = useBrowser((state) => state.page === "settings");
+  const suspendedRef = useRef(suspended);
+  suspendedRef.current = suspended;
+  const settingsViewport = useRef<{ left: number; top: number } | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [failure, setFailure] = useState<{
     message: string;
@@ -217,6 +223,9 @@ export function PhotoReview({
   const [auto, setAuto] = useState(session.position.auto_advance);
   const [mode, setMode] = useState<ReviewMode>("manual");
   const ratingDelay = useAppSettings((state) => state.ratingAdvanceDelay);
+  const animationDuration = useAppSettings(
+    (state) => state.reviewAnimationDuration,
+  );
   const setRatingDelay = useAppSettings((state) => state.setRatingAdvanceDelay);
   const [original, setOriginal] = useState(false);
   const cacheDebug = useAppSettings((state) => state.debugMode);
@@ -360,8 +369,11 @@ export function PhotoReview({
       mode === "rating" ? rating > 0 : advance,
       () => actions.current.step(1),
       mode === "rating"
-        ? { delayMs: ratingDelay, immediateFeedback: true }
-        : undefined,
+        ? {
+            delayMs: Math.max(ratingDelay, animationDuration),
+            immediateFeedback: true,
+          }
+        : { delayMs: animationDuration, immediateFeedback: true },
     );
   };
   const markFlag = (flag: Photo["flag"], advance = auto) => {
@@ -374,11 +386,11 @@ export function PhotoReview({
       () => actions.current.step(1),
       mode === "flags"
         ? {
-            delayMs: photoFeedbackDuration,
+            delayMs: animationDuration,
             background: true,
             repeatFlagFeedback: true,
           }
-        : undefined,
+        : { delayMs: animationDuration, immediateFeedback: true },
     );
   };
   const undo = () => {
@@ -479,7 +491,7 @@ export function PhotoReview({
   }, []);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      if (reloadRef.current) return;
+      if (reloadRef.current || suspended) return;
       if (
         (event.target instanceof Element &&
           event.target.closest(
@@ -488,13 +500,25 @@ export function PhotoReview({
         document.querySelector("dialog[open]")
       )
         return;
+      // Holding Space must not scroll the stage or activate the last clicked
+      // flag/mode button, even though repeated zoom actions are ignored.
+      if (
+        (event.code === "Space" || event.key === " ") &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      )
+        event.preventDefault();
       const action = photoKeyAction(event, actions.current.auto);
       if (!action) return;
       event.preventDefault();
       if (action.type !== "flag") controller.cancelAdvance();
       const current = controller.photo;
       if (action.type === "step") actions.current.step(action.delta);
-      if (action.type === "zoom") setOriginal((value) => !value);
+      if (action.type === "zoom" && current) {
+        setOriginal((value) => !value);
+        stage.current?.focus({ preventScroll: true });
+      }
       if (action.type === "undo") actions.current.undo();
       if (action.type === "escape") {
         if (document.fullscreenElement) void document.exitFullscreen();
@@ -510,7 +534,7 @@ export function PhotoReview({
     };
     document.addEventListener("keydown", keydown);
     return () => document.removeEventListener("keydown", keydown);
-  }, [controller]);
+  }, [controller, suspended]);
   useEffect(() => {
     positionRef.current = {
       current: controller.current,
@@ -551,12 +575,16 @@ export function PhotoReview({
     onPositionSaved,
   ]);
   useEffect(() => {
+    if (suspended) {
+      photoPreviews.clearWindow();
+      return;
+    }
     photoPreviews.setWindow(
       previewIds ? previewIds.split("\n") : [],
       photo?.id ?? null,
       rawOnly,
     );
-  }, [previewIds, photo?.id, rawOnly]);
+  }, [previewIds, photo?.id, rawOnly, suspended]);
   useEffect(() => () => photoPreviews.clearWindow(), []);
   const needsDates =
     sort.startsWith("capture") &&
@@ -653,7 +681,7 @@ export function PhotoReview({
   const centerZoom = useCallback(() => {
     const viewport = stage.current;
     const img = mainImage.current;
-    if (!viewport) return;
+    if (!viewport || suspendedRef.current) return;
     viewport.style.setProperty(
       "--photo-stage-width",
       `${viewport.clientWidth}px`,
@@ -662,6 +690,12 @@ export function PhotoReview({
       "--photo-stage-height",
       `${viewport.clientHeight}px`,
     );
+    if (settingsViewport.current) {
+      viewport.scrollTo({ ...settingsViewport.current, behavior: "instant" });
+      viewport.focus({ preventScroll: true });
+      settingsViewport.current = null;
+      return;
+    }
     if (original && img) {
       viewport.scrollLeft = img.offsetWidth * (focus?.x ?? 0.5);
       viewport.scrollTop = img.offsetHeight * (focus?.y ?? 0.5);
@@ -671,13 +705,24 @@ export function PhotoReview({
     }
   }, [original, focus?.x, focus?.y]);
   useLayoutEffect(() => {
+    const viewport = stage.current;
+    if (!viewport || suspended) return;
     centerZoom();
-    return stage.current
-      ? observeResize([stage.current], centerZoom)
-      : undefined;
+    let width = viewport.clientWidth;
+    let height = viewport.clientHeight;
+    return observeResize([viewport], () => {
+      if (suspendedRef.current) return;
+      if (viewport.clientWidth === width && viewport.clientHeight === height)
+        return;
+      width = viewport.clientWidth;
+      height = viewport.clientHeight;
+      centerZoom();
+    });
   }, [
     centerZoom,
+    suspended,
     photo?.id,
+    shownImage?.original,
     shownImage?.preview.width,
     shownImage?.preview.height,
   ]);
@@ -686,6 +731,11 @@ export function PhotoReview({
       className={`photo-review${desktop && navigator.platform.toLowerCase().includes("mac") ? " photo-review-macos" : ""}`}
       ref={container}
       aria-label="照片审图"
+      style={
+        {
+          "--photo-feedback-duration": `${animationDuration}ms`,
+        } as CSSProperties
+      }
       onPointerDownCapture={() => controller.cancelAdvance()}
     >
       {exitStatus && exitPromptVisible && (
@@ -885,6 +935,29 @@ export function PhotoReview({
         >
           {fullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
         </button>
+        <button
+          className="icon-button photo-review-settings"
+          title="设置"
+          aria-label="审图设置"
+          disabled={reloading || !!exitStatus}
+          onClick={async () => {
+            controller.cancelAdvance();
+            setFeedback(null);
+            settingsViewport.current = {
+              left: stage.current?.scrollLeft ?? 0,
+              top: stage.current?.scrollTop ?? 0,
+            };
+            try {
+              if (document.fullscreenElement) await document.exitFullscreen();
+              useBrowser.getState().openReviewSettings();
+            } catch (error) {
+              settingsViewport.current = null;
+              setFailure({ message: errorMessage(error), retry: null });
+            }
+          }}
+        >
+          <Settings2 size={18} />
+        </button>
       </div>
       {dateProgress && (
         <div className="photo-date-progress" role="status">
@@ -914,8 +987,10 @@ export function PhotoReview({
         </div>
       )}
       <div
-        className={`photo-stage ${original ? "original" : ""}`}
         ref={stage}
+        tabIndex={-1}
+        aria-label="照片预览"
+        className={`photo-stage ${original ? "original" : ""}`}
         onDoubleClick={() => setOriginal((value) => !value)}
       >
         {shownImage ? (

@@ -409,6 +409,11 @@ export function FileBrowser({
       </div>
       {directoryMenu && (
         <DirectoryMenu
+          folder={{
+            volumeId: volume.id,
+            path,
+            name: path.split("/").filter(Boolean).at(-1) ?? volume.name,
+          }}
           position={directoryMenu}
           onClose={closeDirectoryMenu}
           canCreate={writable && volume.capabilities.create_directory}

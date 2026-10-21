@@ -102,8 +102,6 @@ export default function App() {
     refetchInterval: (query) =>
       query.state.data?.some(activeTransfer) ? 1000 : false,
   });
-  const pendingTransfers =
-    transfersQuery.data?.filter(activeTransfer).length ?? 0;
   const [uploadIds, setUploadIds] = useState<Set<string>>(() => new Set());
   const transferSequence = useRef(0);
   const [recentTransfer, setRecentTransfer] = useState<{
@@ -897,9 +895,9 @@ export default function App() {
         version={updater.version}
         volumes={volumes}
         volume={volume}
-        pendingTransfers={pendingTransfers}
         onAdd={() => openDialog({ type: "add" })}
         openVolume={openVolume}
+        navigate={navigate}
         onLocationMenu={setLocationMenu}
       />
 
@@ -1074,15 +1072,26 @@ export default function App() {
             />
           </>
         )}
-        {state.page === "photo-review" && directoryReview && (
-          <DirectoryPhotoReview
-            sessionId={directoryReview}
-            onBack={() => state.setPage("browser")}
-          />
-        )}
+        {(state.page === "photo-review" ||
+          state.reviewSettingsFrom === "photo-review") &&
+          directoryReview && (
+            <div
+              className="photography-page review-page"
+              hidden={state.page === "settings"}
+            >
+              <DirectoryPhotoReview
+                sessionId={directoryReview}
+                onBack={() => state.setPage("browser")}
+              />
+            </div>
+          )}
 
-        {state.page === "photo-library" && (
-          <div className="photography-page">
+        {(state.page === "photo-library" ||
+          state.reviewSettingsFrom === "photo-library") && (
+          <div
+            className="photography-page review-page"
+            hidden={state.page === "settings"}
+          >
             <PhotoLibraryPage />
           </div>
         )}

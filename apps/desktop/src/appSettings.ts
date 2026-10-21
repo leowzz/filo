@@ -2,6 +2,19 @@ import { create } from "zustand";
 
 const debugModeKey = "filo.debug-mode";
 const ratingDelayKey = "filo.review-rating-delay";
+const animationDurationKey = "filo.review-animation-duration";
+export const reviewAnimationDurations = [
+  100, 200, 300, 500, 800, 1000, 1500, 2000,
+];
+
+function readAnimationDuration() {
+  try {
+    const value = Number(localStorage.getItem(animationDurationKey));
+    return reviewAnimationDurations.includes(value) ? value : 500;
+  } catch {
+    return 500;
+  }
+}
 
 function readRatingDelay() {
   try {
@@ -25,7 +38,22 @@ export const useAppSettings = create<{
   setDebugMode: (enabled: boolean) => void;
   ratingAdvanceDelay: number;
   setRatingAdvanceDelay: (delay: number) => void;
+  reviewAnimationDuration: number;
+  setReviewAnimationDuration: (duration: number) => void;
 }>((set) => ({
+  reviewAnimationDuration: readAnimationDuration(),
+  setReviewAnimationDuration: (reviewAnimationDuration) => {
+    if (!reviewAnimationDurations.includes(reviewAnimationDuration)) return;
+    try {
+      localStorage.setItem(
+        animationDurationKey,
+        String(reviewAnimationDuration),
+      );
+    } catch {
+      // Keep the setting usable when persistent storage is unavailable.
+    }
+    set({ reviewAnimationDuration });
+  },
   ratingAdvanceDelay: readRatingDelay(),
   setRatingAdvanceDelay: (ratingAdvanceDelay) => {
     try {

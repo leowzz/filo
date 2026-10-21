@@ -6,11 +6,9 @@ import {
   type CSSProperties,
 } from "react";
 import { Flag, FlagOff, Star, Undo2 } from "lucide-react";
-import {
-  photoFeedbackDuration,
-  type PhotoFeedback as Feedback,
-} from "./photoReviewController";
+import type { PhotoFeedback as Feedback } from "./photoReviewController";
 import { observeResize } from "./observeResize";
+import { useAppSettings } from "./appSettings";
 
 type Particle = {
   x: number;
@@ -19,6 +17,7 @@ type Particle = {
   vy: number;
   born: number;
   life: number;
+  duration: number;
   rotation: number;
   spin: number;
   color: string;
@@ -26,6 +25,7 @@ type Particle = {
   size: number;
 };
 export function PhotoFeedback({ feedback }: { feedback: Feedback | null }) {
+  const duration = useAppSettings((state) => state.reviewAnimationDuration);
   const canvas = useRef<HTMLCanvasElement>(null);
   const particles = useRef<Particle[]>([]);
   const bursts = useRef<
@@ -98,6 +98,8 @@ export function PhotoFeedback({ feedback }: { feedback: Feedback | null }) {
   }, []);
   useEffect(() => {
     clearTimeout(timer.current);
+    cancelAnimationFrame(frame.current);
+    frame.current = 0;
     setVisible(feedback);
     if (!feedback) {
       particles.current = [];
@@ -109,7 +111,7 @@ export function PhotoFeedback({ feedback }: { feedback: Feedback | null }) {
         ?.clearRect(0, 0, canvas.current.width, canvas.current.height);
       return;
     }
-    timer.current = setTimeout(() => setVisible(null), photoFeedbackDuration);
+    timer.current = setTimeout(() => setVisible(null), duration);
     if (feedback.kind !== "up") {
       particles.current = [];
       bursts.current = [];
@@ -131,19 +133,19 @@ export function PhotoFeedback({ feedback }: { feedback: Feedback | null }) {
     if (feedback.kind === "up" && feedback.rating === 5) {
       bursts.current.push(
         {
-          time: now + photoFeedbackDuration * 0.1,
+          time: now + duration * 0.1,
           x: 0.1,
           count: 40,
           flag: "none",
         },
         {
-          time: now + photoFeedbackDuration * 0.1,
+          time: now + duration * 0.1,
           x: 0.9,
           count: 40,
           flag: "none",
         },
         {
-          time: now + photoFeedbackDuration * 0.2,
+          time: now + duration * 0.2,
           x: 0.5,
           count: 50,
           flag: "none",
@@ -184,7 +186,8 @@ export function PhotoFeedback({ feedback }: { feedback: Feedback | null }) {
             vx: Math.cos(angle) * speed,
             vy: Math.sin(angle) * speed,
             born: burst.time,
-            life: photoFeedbackDuration * (0.45 + Math.random() * 0.35),
+            duration,
+            life: duration * (0.45 + Math.random() * 0.35),
             rotation: Math.random() * 6,
             spin: (Math.random() - 0.5) * 8,
             color: colors[i % colors.length],
@@ -198,7 +201,7 @@ export function PhotoFeedback({ feedback }: { feedback: Feedback | null }) {
         .filter((p) => time - p.born < p.life)
         .slice(-220);
       for (const p of particles.current) {
-        const age = ((time - p.born) / photoFeedbackDuration) * 1.8;
+        const age = ((time - p.born) / p.duration) * 1.8;
         context.save();
         context.globalAlpha = Math.max(0, 1 - (time - p.born) / p.life);
         context.translate(p.x + p.vx * age, p.y + p.vy * age + 180 * age * age);
@@ -222,7 +225,7 @@ export function PhotoFeedback({ feedback }: { feedback: Feedback | null }) {
           : 0;
     };
     if (!frame.current) frame.current = requestAnimationFrame(draw);
-  }, [feedback]);
+  }, [feedback, duration]);
   const label =
     visible?.kind === "undo"
       ? "撤销"
@@ -242,7 +245,7 @@ export function PhotoFeedback({ feedback }: { feedback: Feedback | null }) {
       aria-atomic="true"
       style={
         {
-          "--photo-feedback-duration": `${photoFeedbackDuration}ms`,
+          "--photo-feedback-duration": `${duration}ms`,
         } as CSSProperties
       }
     >

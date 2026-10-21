@@ -1,6 +1,6 @@
 ENV_FILE ?= .env
 export ENV_FILE
-export V RC
+export V
 
 .PHONY: dev build check test version-check version-set test-release release
 dev:
@@ -20,5 +20,8 @@ version-set:
 	node scripts/release/repo-version.mjs set "$(V)"
 test-release:
 	node --test scripts/release/*.test.mjs
+# RC also selects the Windows resource compiler; only export our prerelease
+# number to the release script, never to Cargo builds (including an empty RC).
+release: export RC := $(RC)
 release:
 	node scripts/release/release.mjs
