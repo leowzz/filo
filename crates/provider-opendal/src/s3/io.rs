@@ -96,7 +96,51 @@ impl OpenDalS3Backend {
             hash: UploadChecksum::default(),
             replace_etag,
             limits: self.limits.clone(),
+            copied: false,
         }))
+    }
+
+    pub(super) async fn prepare_copy(
+        &self,
+        source: &StorageLocator,
+        target: &StorageLocator,
+    ) -> StorageResult<Option<Box<dyn StagedWrite>>> {
+        let from = self.path(source, false)?;
+        let target = self.path(target, true)?;
+        self.absent(&target).await?;
+        let meta = self.operator.stat(&from).await.map_err(error)?;
+        if !meta.is_file() {
+            return Err(invalid("仅支持复制普通文件"));
+        }
+        let parent = target
+            .rsplit_once('/')
+            .map(|(p, _)| format!("{p}/"))
+            .unwrap_or_default();
+        let temporary = format!("{parent}.filo-transfer-{}", Uuid::new_v4());
+        let staged = S3StagedWrite {
+            operator: self.operator.clone(),
+            temporary,
+            target,
+            writer: None,
+            size: meta.content_length(),
+            hash: UploadChecksum::default(),
+            limits: self.limits.clone(),
+            replace_etag: None,
+            copied: true,
+        };
+        match publish(
+            &self.operator,
+            &from,
+            &staged.temporary,
+            staged.size,
+            &self.limits,
+        )
+        .await
+        {
+            Ok(()) => Ok(Some(Box::new(staged))),
+            Err(error) if error.code == StorageErrorCode::Unsupported => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -139,11 +183,12 @@ struct S3StagedWrite {
     hash: UploadChecksum,
     limits: Arc<TransferLimits>,
     replace_etag: Option<String>,
+    copied: bool,
 }
 #[async_trait::async_trait]
 impl StagedWrite for S3StagedWrite {
     fn verifies_on_commit(&self) -> bool {
-        true
+        !self.copied
     }
     async fn write(&mut self, bytes: &[u8]) -> StorageResult<()> {
         let writer = self
@@ -175,10 +220,9 @@ impl StagedWrite for S3StagedWrite {
             writer.close().await.map_err(error)?;
         }
         self.writer = None;
-        // Verify provider-generated ETags via HEAD before publication, including
-        // replacements. Never trust user metadata or reread object content.
-        self.hash
-            .verify(&self.operator.stat(&self.temporary).await.map_err(error)?)?;
+        // Uploads verify provider ETags; staged copies were hashed by the caller.
+        // Publication checks use HEAD and never download content.
+        self.verify(&self.temporary).await?;
         publish_conditionally(
             &self.operator,
             &self.temporary,
@@ -187,9 +231,22 @@ impl StagedWrite for S3StagedWrite {
             self.replace_etag.as_deref(),
         )
         .await?;
-        self.hash
-            .verify(&self.operator.stat(&self.target).await.map_err(error)?)?;
+        self.verify(&self.target).await?;
         Ok(()) // Drop removes only this uniquely named temporary object.
+    }
+}
+impl S3StagedWrite {
+    async fn verify(&self, path: &str) -> StorageResult<()> {
+        let meta = self.operator.stat(path).await.map_err(error)?;
+        if self.copied {
+            // The caller hashes the staged server-side copy before commit.
+            if !meta.is_file() || meta.content_length() != self.size {
+                return Err(invalid("导出文件大小校验失败"));
+            }
+            Ok(())
+        } else {
+            self.hash.verify(&meta)
+        }
     }
 }
 impl Drop for S3StagedWrite {

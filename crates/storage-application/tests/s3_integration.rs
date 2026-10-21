@@ -73,6 +73,98 @@ async fn transfer(
 }
 
 #[tokio::test]
+#[ignore = "requires FILO_S3_TEST_CONFIG pointing to a disposable S3 test bucket"]
+async fn rustfs_native_staged_copy() {
+    use tokio::io::AsyncReadExt;
+    let config: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(std::env::var("FILO_S3_TEST_CONFIG").unwrap()).unwrap(),
+    )
+    .unwrap();
+    let volume = StorageVolume {
+        id: Uuid::new_v4(),
+        connection_id: Uuid::new_v4(),
+        name: "copy test".into(),
+        root: VolumeRoot::S3 {
+            bucket: config["bucket"].as_str().unwrap().into(),
+            prefix: format!("filo-tests/{}", Uuid::new_v4()),
+        },
+        read_only: false,
+    };
+    let backend = OpenDalS3Backend::new(
+        &volume,
+        &S3ConnectionConfig {
+            provider: None,
+            endpoint: Some(config["endpoint"].as_str().unwrap().into()),
+            region: config["region"].as_str().unwrap().into(),
+            force_path_style: true,
+        },
+        &S3Credentials {
+            access_key_id: config["access_key_id"].as_str().unwrap().into(),
+            secret_access_key: config["secret_access_key"].as_str().unwrap().into(),
+            session_token: None,
+        },
+    )
+    .unwrap();
+    // Exercise empty, single-part and multipart-uploaded sources.
+    for size in [0, 128, 9 * 1024 * 1024 + 17] {
+        let bytes: Vec<_> = (0..size).map(|i| (i % 251) as u8).collect();
+        let source = locator(&volume, "source.NEF");
+        let target = locator(&volume, "copy.NEF");
+        let late = locator(&volume, "late.NEF");
+        let mut upload = backend.stage_write(&source).await.unwrap();
+        upload.write(&bytes).await.unwrap();
+        upload.commit().await.unwrap();
+        let mut staged = backend
+            .stage_copy(&source, &target)
+            .await
+            .unwrap()
+            .expect("server copy");
+        assert_eq!(
+            backend.stat(&target).await.unwrap_err().code,
+            StorageErrorCode::NotFound
+        );
+        let mut copied = Vec::new();
+        staged
+            .reader()
+            .await
+            .unwrap()
+            .read_to_end(&mut copied)
+            .await
+            .unwrap();
+        assert_eq!(copied, bytes);
+        staged.commit().await.unwrap();
+        let mut published = Vec::new();
+        backend
+            .open_read(&target)
+            .await
+            .unwrap()
+            .read_to_end(&mut published)
+            .await
+            .unwrap();
+        assert_eq!(published, bytes);
+        assert_eq!(backend.stat(&source).await.unwrap().size, Some(size as u64));
+
+        let staged = backend.stage_copy(&source, &late).await.unwrap().unwrap();
+        let mut external = backend.stage_write(&late).await.unwrap();
+        external.write(b"external").await.unwrap();
+        external.commit().await.unwrap();
+        assert!(staged.commit().await.is_err());
+        let mut preserved = Vec::new();
+        backend
+            .open_read(&late)
+            .await
+            .unwrap()
+            .read_to_end(&mut preserved)
+            .await
+            .unwrap();
+        assert_eq!(preserved, b"external");
+        for path in [source, target, late] {
+            backend.delete(&path).await.unwrap();
+        }
+    }
+}
+
+#[tokio::test]
 #[ignore = "requires an explicitly configured disposable S3 test bucket; see docs/11-s3.md"]
 async fn rustfs_roundtrip_and_safety() {
     let config_path =

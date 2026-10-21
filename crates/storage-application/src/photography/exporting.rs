@@ -33,15 +33,32 @@ impl StorageService {
         }
         let source = self.backend(archive.raw.volume_id).await?;
         let target = self.backend(destination.volume_id).await?;
+        if !target.capabilities().write {
+            return Err(StorageError::new(
+                StorageErrorCode::AccessDenied,
+                "导出位置为只读，请选择可写目录",
+            ));
+        }
         if !crate::tree::directory(&target.stat(&destination).await?) {
             return Err(invalid("请选择导出目录"));
         }
         crate::tree::check_overlap(source.as_ref(), target.as_ref(), &archive.raw, &destination)?;
+        let volume = self
+            .repository
+            .list_volumes()
+            .await?
+            .into_iter()
+            .find(|v| v.id == destination.volume_id)
+            .ok_or_else(|| invalid("导出存储已移除，请重新选择"))?;
+        let directory = match volume.root {
+            VolumeRoot::Local { root_path } => root_path
+                .join(&destination.logical_path)
+                .to_string_lossy()
+                .into_owned(),
+            _ => format!("{} /{}", volume.name, destination.logical_path),
+        };
         let mut result = PhotoExport {
-            directory: target
-                .storage_path(&destination)
-                .map(|(_, path)| path)
-                .ok_or_else(|| invalid("请选择系统可访问的导出目录"))?,
+            directory,
             exported_at: chrono::Utc::now().to_rfc3339(),
             filter,
             total: files.len(),
@@ -134,6 +151,19 @@ async fn copy_raw(
         return Err(conflict("目标已有不同内容的同名文件，未覆盖"));
     }
     ensure_parent(destination, to).await?;
+    if from.volume_id == to.volume_id {
+        if let Some(mut copy) = destination.stage_copy(from, to).await? {
+            let expected = file_digest(source, &before, &token).await?;
+            if digest(copy.reader().await?, &token).await? != expected {
+                return Err(conflict("导出校验失败，请重试"));
+            }
+            if !crate::browsing::nef::same_file(&before, &source.stat(from).await?) {
+                return Err(conflict("复制期间 RAW 原片发生变化，请重试"));
+            }
+            copy.commit().await?;
+            return Ok(true);
+        }
+    }
     let mut reader = source.open_read(from).await?;
     let mut writer = destination.stage_write(to).await?;
     let mut buffer = vec![0; 256 * 1024];

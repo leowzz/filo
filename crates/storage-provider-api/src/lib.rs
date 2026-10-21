@@ -119,6 +119,15 @@ pub trait StorageBackend: Send + Sync {
         ))
     }
     async fn stage_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>>;
+    /// Copy within this volume into an unpublished temporary file. The caller
+    /// verifies its contents before commit. None means use streaming instead.
+    async fn stage_copy(
+        &self,
+        _source: &StorageLocator,
+        _target: &StorageLocator,
+    ) -> StorageResult<Option<Box<dyn StagedWrite>>> {
+        Ok(None)
+    }
     /// Replace a known regular file only after the staged content has been verified.
     async fn stage_replace(&self, _expected: &StorageEntry) -> StorageResult<Box<dyn StagedWrite>> {
         Err(StorageError::new(

@@ -390,4 +390,12 @@ impl StorageBackend for OpenDalS3Backend {
     async fn stage_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>> {
         OpenDalS3Backend::prepare_write(self, locator).await
     }
+
+    async fn stage_copy(
+        &self,
+        source: &StorageLocator,
+        target: &StorageLocator,
+    ) -> StorageResult<Option<Box<dyn StagedWrite>>> {
+        self.prepare_copy(source, target).await
+    }
 }

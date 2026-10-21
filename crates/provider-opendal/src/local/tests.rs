@@ -260,6 +260,52 @@ async fn staged_write_never_replaces_a_late_target_and_cleans_up() {
 }
 
 #[tokio::test]
+async fn staged_copy_preserves_source_and_rejects_late_target() {
+    use tokio::io::AsyncReadExt;
+    let (dir, backend) = fixture(false).await;
+    std::fs::write(dir.path().join("source.NEF"), b"original RAW").unwrap();
+    let source = locator(&backend, "source.NEF");
+    let target = locator(&backend, "copy.NEF");
+    let mut staged = backend.stage_copy(&source, &target).await.unwrap().unwrap();
+    assert!(!dir.path().join("copy.NEF").exists());
+    let mut bytes = Vec::new();
+    staged
+        .reader()
+        .await
+        .unwrap()
+        .read_to_end(&mut bytes)
+        .await
+        .unwrap();
+    assert_eq!(bytes, b"original RAW");
+    staged.commit().await.unwrap();
+    assert_eq!(std::fs::read(dir.path().join("source.NEF")).unwrap(), bytes);
+    assert_eq!(std::fs::read(dir.path().join("copy.NEF")).unwrap(), bytes);
+
+    let late = locator(&backend, "late.NEF");
+    let staged = backend.stage_copy(&source, &late).await.unwrap().unwrap();
+    std::fs::write(dir.path().join("late.NEF"), b"external").unwrap();
+    assert_eq!(
+        staged.commit().await.unwrap_err().code,
+        StorageErrorCode::AlreadyExists
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("late.NEF")).unwrap(),
+        b"external"
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 3);
+
+    let (readonly_dir, readonly) = fixture(true).await;
+    std::fs::write(readonly_dir.path().join("source.NEF"), b"raw").unwrap();
+    assert!(readonly
+        .stage_copy(
+            &locator(&readonly, "source.NEF"),
+            &locator(&readonly, "copy.NEF")
+        )
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn existing_files_and_mutations() {
     let (dir, backend) = fixture(false).await;
     std::fs::write(dir.path().join("original.txt"), b"hello existing file").unwrap();

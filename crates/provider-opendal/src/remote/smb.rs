@@ -624,6 +624,16 @@ impl SmbBackend {
         locator: &StorageLocator,
         expected: Option<StorageEntry>,
     ) -> StorageResult<Box<dyn StagedWrite>> {
+        Ok(Box::new(
+            self.prepare_staged_write(locator, expected).await?,
+        ))
+    }
+
+    async fn prepare_staged_write(
+        &self,
+        locator: &StorageLocator,
+        expected: Option<StorageEntry>,
+    ) -> StorageResult<SmbStagedWrite> {
         let logical = self.writable_path(locator)?;
         let target = self.path(&logical);
         if expected.is_none() {
@@ -640,7 +650,7 @@ impl SmbBackend {
                 .map_err(smb_error)
         })
         .await?;
-        Ok(Box::new(SmbStagedWrite {
+        Ok(SmbStagedWrite {
             session: Arc::clone(&self.session),
             volume_id: self.volume_id,
             temporary,
@@ -648,7 +658,7 @@ impl SmbBackend {
             expected,
             writer: Some(writer),
             published: false,
-        }))
+        })
     }
 
     async fn list_path(&self, logical: &str) -> StorageResult<Vec<StorageEntry>> {
@@ -826,6 +836,40 @@ impl StorageBackend for SmbBackend {
 
     async fn stage_write(&self, locator: &StorageLocator) -> StorageResult<Box<dyn StagedWrite>> {
         self.prepare_write(locator).await
+    }
+
+    async fn stage_copy(
+        &self,
+        source: &StorageLocator,
+        target: &StorageLocator,
+    ) -> StorageResult<Option<Box<dyn StagedWrite>>> {
+        let logical = self.check_locator(source)?;
+        let from = self.path(&logical);
+        ensure_no_reparse(&self.session, &from).await?;
+        if self.stat(source).await?.kind != StorageEntryKind::File {
+            return Err(unsupported("仅支持复制普通文件"));
+        }
+        let mut staged = self.prepare_staged_write(target, None).await?;
+        staged.finish_writer().await?;
+        let result = {
+            let mut guard = self.session.lock().await;
+            let SmbSession { client, tree } = &mut *guard;
+            with_timeout(async {
+                client
+                    .server_side_copy_file(tree, &from, &staged.temporary)
+                    .await
+                    .map_err(smb_error)
+            })
+            .await
+        };
+        match result {
+            Ok(_) => Ok(Some(Box::new(staged))),
+            Err(error) if error.code == StorageErrorCode::Unsupported => {
+                staged.cleanup().await;
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     async fn stage_replace(&self, expected: &StorageEntry) -> StorageResult<Box<dyn StagedWrite>> {

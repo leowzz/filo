@@ -29,7 +29,11 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
     transformCallback:()=>1,unregisterCallback:()=>{},invoke:async(command,args={})=>{
       if(command==='list_volumes') return [{id:'photos',connection_id:'photos',name:'Photos',read_only:false,
         root:{type:'local',root_path:'/fixture/photos'},capabilities:{hierarchy:'directory_tree',rename:'native',
-        create_directory:true,delete:true,trash:false,native_open:false,native_copy:false}}];
+        create_directory:true,delete:true,trash:false,native_open:false,native_copy:false}},
+        {id:'nas',connection_id:'nas',name:'NAS',read_only:false,root:{type:'remote',path:'/photos'},
+          capabilities:{hierarchy:'native_directory',rename:'atomic',write:true,create_directory:true}},
+        {id:'readonly',connection_id:'readonly',name:'只读存储',read_only:true,root:{type:'remote',path:'/'},
+          capabilities:{write:false}}];
       if(['recent_backend_errors','list_connections','list_transfers'].includes(command)) return [];
       if(command==='get_credential_settings') return {mode:'plain',locked:false,legacy_import_available:false};
       if(command==='get_transfer_settings') return {upload_kib_per_second:0,download_kib_per_second:0};
@@ -38,6 +42,13 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
       if(command==='review_catalog') return structuredClone(window.catalog);
       if(command==='photo_catalog') return {sessions:[],photos:[],archives:[],preset:null};
       if(command==='directory_stamp') return '1';
+      if(command==='list_entries_page' && args.options.folders_only && args.parent.volume_id==='nas') {
+        if(args.parent.logical_path==='') {
+          const name=args.cursor ? '精选' : '相册';
+          return {entries:[{name,kind:'directory',locator:{volume_id:'nas',logical_path:name,version_id:null}}],total:2,total_is_exact:true,next_cursor:args.cursor ? null : 'next'};
+        }
+        return {entries:[],total:0,total_is_exact:true,next_cursor:null};
+      }
       if(command==='list_entries_page') return {entries:[],total:0,total_is_exact:true,next_cursor:null};
       if(command==='review_scan') return structuredClone(session);
       if(command==='review_save_position') { session.position=args.position; return; }
@@ -299,6 +310,35 @@ assert.match(
   ),
   /second\/精修/,
 );
+// Configured storage selection supports pagination and parent navigation.
+await page.click('dialog button:text-is("从存储中选择")');
+await page.waitForSelector('select[aria-label="导出存储"]');
+assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('select[aria-label="导出存储"] option')].map(o => o.value)), ['photos', 'nas']);
+await page.selectOption('select[aria-label="导出存储"]', 'nas');
+await page.waitForFunction(() => [...document.querySelectorAll('.photo-storage-picker .destination-folders button')].some(b => b.textContent === '相册'));
+await page.click('.photo-storage-picker button:text-is("下一页")');
+await page.waitForFunction(() => [...document.querySelectorAll('.photo-storage-picker .destination-folders button')].some(b => b.textContent === '精选'));
+await page.click('.photo-storage-picker .destination-folders button:has-text("精选")');
+await page.waitForFunction(() => document.querySelector('.photo-storage-picker .destination-path span').textContent === '/精选');
+await page.click('button[aria-label="导出上级目录"]');
+await page.waitForFunction(() => [...document.querySelectorAll('.photo-storage-picker .destination-folders button')].some(b => b.textContent === '相册'));
+await page.click('.photo-storage-picker .destination-folders button:has-text("相册")');
+await page.waitForFunction(() => ![...document.querySelectorAll('.photo-storage-picker button')].find(b => b.textContent === '选择此目录').disabled);
+const pickerLayout = await page.evaluate(() => {
+  const dialog = document.querySelector('dialog');
+  return { overflow: dialog.scrollWidth > dialog.clientWidth, buttonVisible: !!document.querySelector('.photo-storage-picker button') };
+});
+assert.equal(pickerLayout.overflow, false);
+await page.click('.photo-storage-picker button:text-is("选择此目录")');
+await page.waitForSelector('.photo-export-directory-choice:has-text("NAS /相册")');
+assert.equal(await page.evaluate(() => window.exportCalls.length), 0, 'choosing configured storage does not start an export');
+await page.click('dialog button:text-is("开始导出")');
+await page.waitForSelector('dialog details');
+assert.deepEqual(await page.evaluate(() => window.exportCalls[0].destination), {volume_id:'nas',logical_path:'相册',version_id:null});
+await page.click('dialog .modal-actions button:text-is("关闭")');
+await page.click('.photo-session-toolbar button:text-is("导出到目录")');
+await page.waitForSelector('.photo-export-directory-choice[aria-pressed="true"]');
+assert.match(await page.evaluate(() => document.querySelector('.photo-export-directory-choice[aria-pressed="true"]').textContent), /NAS \/相册/);
 await page.evaluate(() =>
   localStorage.setItem(
     "filo.photo-export-directories",
@@ -307,7 +347,7 @@ await page.evaluate(() =>
 );
 console.log({
   passed:
-    "rating and flag form, cancel/add/switch/remove directories, persisted defaults after reload, progress, partial failures and narrow layout",
+    "rating and flag form, local/configured destinations, read-only filtering, folder pagination and parent navigation, persisted defaults, progress, partial failures and narrow layout",
   layout,
 });
 if (!globalThis.filoKeepExportSpace) await task.finish({ keep: [] });

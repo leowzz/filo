@@ -3,6 +3,7 @@ import { Check, ChevronDown, FolderOpen, FolderOutput, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { errorMessage } from "./api";
 import { Modal } from "./components";
+import { StorageDirectoryPicker } from "./StorageDirectoryPicker";
 import {
   pickPhotoDirectory,
   reviewApi,
@@ -10,9 +11,11 @@ import {
   type PhotoExportFilter,
   type PhotoProgress,
   type PhotoSession,
+  type PhotoDirectory,
 } from "./photoApi";
 import {
   loadExportDirectories,
+  exportDirectoryKey,
   saveExportDirectories,
   type ExportDirectories,
 } from "./photoExportDirectories";
@@ -31,6 +34,7 @@ export function PhotoExportButton({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [choosingStorage, setChoosingStorage] = useState(false);
   const [destinations, setDestinations] = useState(loadExportDirectories);
   const [filter, setFilter] = useState<PhotoExportFilter>({
     rating_mode: "at_least",
@@ -41,7 +45,7 @@ export function PhotoExportButton({
   const [result, setResult] = useState<PhotoExport | null>(null);
   const [error, setError] = useState("");
   const selected = destinations.directories.find(
-    (value) => value.path === destinations.selectedPath,
+    (value) => exportDirectoryKey(value) === destinations.selectedPath,
   );
   const blocked = busy || picking;
   const updateDirectories = (value: ExportDirectories) => {
@@ -59,6 +63,17 @@ export function PhotoExportButton({
     setResult(null);
     setError("");
   };
+  const addDirectory = (directory: PhotoDirectory) => {
+    const key = exportDirectoryKey(directory);
+    const directories = destinations.directories.filter(
+      (value) => exportDirectoryKey(value) !== key,
+    );
+    updateDirectories({
+      directories: [...directories, directory],
+      selectedPath: key,
+    });
+    setChoosingStorage(false);
+  };
   const pick = async () => {
     if (running.current) return;
     running.current = true;
@@ -67,13 +82,8 @@ export function PhotoExportButton({
     try {
       const directory = await pickPhotoDirectory(false, "选择 RAW 导出目录");
       if (!directory) return;
-      const existing = destinations.directories.findIndex(
-        (value) => value.path === directory.path,
-      );
-      const directories = [...destinations.directories];
-      if (existing >= 0) directories[existing] = directory;
-      else directories.push(directory);
-      updateDirectories({ directories, selectedPath: directory.path });
+      addDirectory(directory);
+      await client.invalidateQueries({ queryKey: ["volumes"] });
     } catch (error) {
       setError(errorMessage(error));
     } finally {
@@ -82,7 +92,7 @@ export function PhotoExportButton({
     }
   };
   const start = async () => {
-    if (running.current || !selected) return;
+    if (running.current || choosingStorage || !selected) return;
     running.current = true;
     setBusy(true);
     setError("");
@@ -113,6 +123,7 @@ export function PhotoExportButton({
         onClick={() => {
           setResult(null);
           setError("");
+          setChoosingStorage(false);
           setDestinations(loadExportDirectories());
           setFilter({ rating_mode: "at_least", rating: 3, flag: null });
           setOpen(true);
@@ -212,15 +223,21 @@ export function PhotoExportButton({
               <fieldset className="photo-export-directories" disabled={blocked}>
                 <legend>导出目录</legend>
                 {destinations.directories.map((directory) => (
-                  <div className="photo-export-directory" key={directory.path}>
+                  <div
+                    className="photo-export-directory"
+                    key={exportDirectoryKey(directory)}
+                  >
                     <button
                       type="button"
                       className="photo-export-directory-choice"
-                      aria-pressed={directory.path === selected?.path}
+                      aria-pressed={
+                        exportDirectoryKey(directory) ===
+                        destinations.selectedPath
+                      }
                       onClick={() =>
                         updateDirectories({
                           ...destinations,
-                          selectedPath: directory.path,
+                          selectedPath: exportDirectoryKey(directory),
                         })
                       }
                     >
@@ -238,13 +255,18 @@ export function PhotoExportButton({
                       aria-label={`移除常用目录 ${directory.path}`}
                       onClick={() => {
                         const directories = destinations.directories.filter(
-                          (value) => value.path !== directory.path,
+                          (value) =>
+                            exportDirectoryKey(value) !==
+                            exportDirectoryKey(directory),
                         );
                         updateDirectories({
                           directories,
                           selectedPath:
-                            selected?.path === directory.path
-                              ? (directories[0]?.path ?? null)
+                            destinations.selectedPath ===
+                            exportDirectoryKey(directory)
+                              ? directories[0]
+                                ? exportDirectoryKey(directories[0])
+                                : null
                               : destinations.selectedPath,
                         });
                       }}
@@ -253,14 +275,35 @@ export function PhotoExportButton({
                     </button>
                   </div>
                 ))}
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => void pick()}
-                >
-                  <FolderOpen size={16} />
-                  {picking ? "正在选择…" : "添加目录"}
-                </button>
+                {choosingStorage ? (
+                  <StorageDirectoryPicker
+                    initialVolumeId={
+                      selected?.locator.volume_id ??
+                      session.directory?.volume_id
+                    }
+                    onSelect={addDirectory}
+                    onCancel={() => setChoosingStorage(false)}
+                  />
+                ) : (
+                  <div className="photo-export-directory-actions">
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => void pick()}
+                    >
+                      <FolderOpen size={16} />
+                      {picking ? "正在选择…" : "添加目录"}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => setChoosingStorage(true)}
+                    >
+                      <FolderOpen size={16} />
+                      从存储中选择
+                    </button>
+                  </div>
+                )}
               </fieldset>
               <p className="muted">复制 RAW，保留子目录结构。</p>
               {busy && (
@@ -322,7 +365,7 @@ export function PhotoExportButton({
               <button
                 className="primary"
                 type="submit"
-                disabled={blocked || !selected}
+                disabled={blocked || choosingStorage || !selected}
               >
                 {busy ? "正在导出…" : result ? "再次导出" : "开始导出"}
               </button>

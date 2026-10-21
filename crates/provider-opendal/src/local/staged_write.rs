@@ -79,6 +79,36 @@ impl OpenDalLocalBackend {
         locator: &StorageLocator,
         expected: Option<StorageEntry>,
     ) -> StorageResult<Box<dyn StagedWrite>> {
+        Ok(Box::new(
+            self.prepare_staged_write(locator, expected).await?,
+        ))
+    }
+
+    pub(super) async fn prepare_copy(
+        &self,
+        source: &StorageLocator,
+        target: &StorageLocator,
+    ) -> StorageResult<Box<dyn StagedWrite>> {
+        let logical = self.check_locator(source)?;
+        let from = self.checked_path(&logical, false).await?;
+        if self.stat(source).await?.kind != StorageEntryKind::File {
+            return Err(StorageError::new(
+                StorageErrorCode::Unsupported,
+                "仅支持复制普通文件",
+            ));
+        }
+        let staged = self.prepare_staged_write(target, None).await?;
+        tokio::fs::copy(from, staged.temporary.path())
+            .await
+            .map_err(io_error)?;
+        Ok(Box::new(staged))
+    }
+
+    async fn prepare_staged_write(
+        &self,
+        locator: &StorageLocator,
+        expected: Option<StorageEntry>,
+    ) -> StorageResult<LocalStagedWrite> {
         let logical = self.check_locator(locator)?;
         self.writable(&logical)?;
         if let Some(entry) = &expected {
@@ -105,7 +135,7 @@ impl OpenDalLocalBackend {
         .map_err(|_| StorageError::new(StorageErrorCode::Internal, "无法创建传输任务"))?
         .map_err(io_error)?;
         let writer = tokio::fs::File::from_std(temporary.reopen().map_err(io_error)?);
-        Ok(Box::new(LocalStagedWrite {
+        Ok(LocalStagedWrite {
             temporary,
             writer,
             expected,
@@ -119,6 +149,6 @@ impl OpenDalLocalBackend {
                 },
                 read_only: self.read_only,
             },
-        }))
+        })
     }
 }

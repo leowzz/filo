@@ -1060,6 +1060,18 @@
   gap: 6px;
   min-width: 0;
 }
+.photo-export-directory-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.photo-storage-picker {
+  min-width: 0;
+}
+.photo-storage-picker label {
+  display: grid;
+  gap: 6px;
+}
 .photo-export-select {
   position: relative;
   display: block;

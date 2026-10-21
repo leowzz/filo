@@ -351,6 +351,14 @@ impl StorageBackend for OpenDalLocalBackend {
         OpenDalLocalBackend::prepare_write(self, locator).await
     }
 
+    async fn stage_copy(
+        &self,
+        source: &StorageLocator,
+        target: &StorageLocator,
+    ) -> StorageResult<Option<Box<dyn StagedWrite>>> {
+        self.prepare_copy(source, target).await.map(Some)
+    }
+
     async fn stage_replace(&self, expected: &StorageEntry) -> StorageResult<Box<dyn StagedWrite>> {
         self.prepare_write_mode(&expected.locator, Some(expected.clone()))
             .await

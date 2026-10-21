@@ -171,6 +171,18 @@ impl StorageBackend for RemoteBackend {
         }
     }
 
+    async fn stage_copy(
+        &self,
+        source: &StorageLocator,
+        target: &StorageLocator,
+    ) -> StorageResult<Option<Box<dyn StagedWrite>>> {
+        match &self.backend {
+            RemoteBackendImpl::Ftp(backend) => backend.stage_copy(source, target).await,
+            RemoteBackendImpl::Sftp(backend) => backend.stage_copy(source, target).await,
+            RemoteBackendImpl::Smb(backend) => backend.stage_copy(source, target).await,
+        }
+    }
+
     async fn stage_replace(&self, expected: &StorageEntry) -> StorageResult<Box<dyn StagedWrite>> {
         match &self.backend {
             RemoteBackendImpl::Ftp(backend) => backend.stage_replace(expected).await,

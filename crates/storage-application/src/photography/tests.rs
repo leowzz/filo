@@ -441,6 +441,55 @@ async fn setup(path: &Path) -> (StorageService, PhotoPlanInput) {
 }
 
 #[tokio::test]
+async fn export_raw_within_one_storage_preserves_nested_paths_and_sources() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path();
+    let (service, input) = setup(path).await;
+    std::fs::create_dir_all(path.join("raw/source/nested")).unwrap();
+    std::fs::create_dir_all(path.join("raw/export")).unwrap();
+    std::fs::write(path.join("raw/source/nested/photo.NEF"), b"raw bytes").unwrap();
+    let review = service.photo_review_workspace();
+    let session = review
+        .photo_open_directory_review(child(&input.raw, "source").unwrap())
+        .await
+        .unwrap();
+    let destination = child(&input.raw, "export").unwrap();
+    let filter = PhotoExportFilter {
+        rating_mode: PhotoRatingFilter::Any,
+        ..Default::default()
+    };
+    let result = review
+        .photo_export(
+            session.id,
+            destination.clone(),
+            filter.clone(),
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (result.copied, result.skipped, result.failures.len()),
+        (1, 0, 0)
+    );
+    assert_eq!(
+        std::fs::read(path.join("raw/export/nested/photo.NEF")).unwrap(),
+        b"raw bytes"
+    );
+    assert_eq!(
+        std::fs::read(path.join("raw/source/nested/photo.NEF")).unwrap(),
+        b"raw bytes"
+    );
+    let repeat = review
+        .photo_export(session.id, destination, filter, Arc::new(|_| {}))
+        .await
+        .unwrap();
+    assert_eq!(
+        (repeat.copied, repeat.skipped, repeat.failures.len()),
+        (0, 1, 0)
+    );
+}
+
+#[tokio::test]
 async fn export_raw_filters_ratings_preserves_sources_and_restores_destination() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path();
