@@ -4,6 +4,12 @@ import { desktop } from "./api";
 import type { Locator } from "./types";
 
 export type PhotoFlag = "none" | "pick" | "reject";
+export type PhotoFocus = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
 export type PhotoSort =
   "name_asc" | "name_desc" | "capture_asc" | "capture_desc";
 export type PhotoFile = {
@@ -240,6 +246,8 @@ export const reviewApi = {
     invoke<Photo | null>("review_undo", { sessionId }),
   position: (sessionId: string, position: PhotoPosition) =>
     invoke<void>("review_save_position", { sessionId, position }),
+  focus: (photoId: string) =>
+    invoke<PhotoFocus | null>("review_focus", { photoId }),
   preview: (
     photoId: string,
     original = false,

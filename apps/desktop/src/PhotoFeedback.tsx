@@ -38,7 +38,7 @@ export function PhotoFeedback({ feedback }: { feedback: Feedback | null }) {
   useLayoutEffect(() => {
     const layer = canvas.current?.parentElement;
     const stage = layer?.parentElement;
-    const image = stage?.querySelector(":scope > img");
+    const image = stage?.querySelector(".photo-image-surface > img");
     if (!layer || !stage || !image) return;
     const update = () => {
       const a = image.getBoundingClientRect();

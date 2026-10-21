@@ -231,10 +231,24 @@ export function PhotoReview({
   const [previewFailure, setPreviewFailure] = useState("");
   const [previewAttempt, retryPreview] = useReducer((n) => n + 1, 0);
   const container = useRef<HTMLElement>(null);
+  const stage = useRef<HTMLDivElement>(null);
+  const mainImage = useRef<HTMLImageElement>(null);
   const filmstrip = useRef<HTMLDivElement>(null);
   const [filmstripRange, setFilmstripRange] = useState({ start: 0, end: 17 });
   const positionRef = useRef<PhotoPosition | null>(null);
   const photo = controller.photo;
+  const { data: focus } = useQuery({
+    queryKey: ["photo-focus", photo?.id],
+    queryFn: () => reviewApi.focus(photo!.id),
+    enabled:
+      original &&
+      !!photo?.files.some(
+        (file) => file.kind === "raw" && /\.nef$/i.test(file.path),
+      ),
+    staleTime: 60_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
   const photoPath = rawOnly
     ? photo?.files.find((f) => f.kind === "raw")?.path
     : photo?.original_path;
@@ -636,6 +650,37 @@ export function PhotoReview({
       : readyPreview
         ? { preview: readyPreview, original: original && !!cachedPreview }
         : null;
+  const centerZoom = useCallback(() => {
+    const viewport = stage.current;
+    const img = mainImage.current;
+    if (!viewport) return;
+    viewport.style.setProperty(
+      "--photo-stage-width",
+      `${viewport.clientWidth}px`,
+    );
+    viewport.style.setProperty(
+      "--photo-stage-height",
+      `${viewport.clientHeight}px`,
+    );
+    if (original && img) {
+      viewport.scrollLeft = img.offsetWidth * (focus?.x ?? 0.5);
+      viewport.scrollTop = img.offsetHeight * (focus?.y ?? 0.5);
+    } else {
+      viewport.scrollLeft = 0;
+      viewport.scrollTop = 0;
+    }
+  }, [original, focus?.x, focus?.y]);
+  useLayoutEffect(() => {
+    centerZoom();
+    return stage.current
+      ? observeResize([stage.current], centerZoom)
+      : undefined;
+  }, [
+    centerZoom,
+    photo?.id,
+    shownImage?.preview.width,
+    shownImage?.preview.height,
+  ]);
   return (
     <section
       className={`photo-review${desktop && navigator.platform.toLowerCase().includes("mac") ? " photo-review-macos" : ""}`}
@@ -870,21 +915,26 @@ export function PhotoReview({
       )}
       <div
         className={`photo-stage ${original ? "original" : ""}`}
+        ref={stage}
         onDoubleClick={() => setOriginal((value) => !value)}
       >
         {shownImage ? (
-          <img
-            src={`data:${shownImage.preview.mime};base64,${shownImage.preview.content}`}
-            alt={photoPath}
-            style={
-              original && shownImage.original
-                ? {
-                    width: shownImage.preview.width,
-                    height: shownImage.preview.height,
-                  }
-                : undefined
-            }
-          />
+          <div className="photo-image-surface">
+            <img
+              ref={mainImage}
+              onLoad={centerZoom}
+              src={`data:${shownImage.preview.mime};base64,${shownImage.preview.content}`}
+              alt={photoPath}
+              style={
+                original
+                  ? {
+                      width: shownImage.preview.width,
+                      height: shownImage.preview.height,
+                    }
+                  : undefined
+              }
+            />
+          </div>
         ) : (
           <p>
             {photo
@@ -999,6 +1049,8 @@ export function PhotoReview({
         </button>
         <button
           className={original ? "selected" : ""}
+          title="放大并居中焦点（空格 / Z）"
+          aria-keyshortcuts="Space Z"
           onClick={() => setOriginal((value) => !value)}
         >
           {original ? "适应窗口" : "原尺寸"}

@@ -144,6 +144,27 @@ impl StorageService {
         self.save_photos(revision, &catalog).await
     }
 
+    pub async fn photo_focus(&self, photo_id: Uuid) -> StorageResult<Option<PhotoFocus>> {
+        let catalog = self.photo_catalog().await?;
+        let photo = catalog
+            .photos
+            .iter()
+            .find(|p| p.id == photo_id)
+            .ok_or_else(|| invalid("未找到照片"))?;
+        let Some(file) = photo.files.iter().find(|f| {
+            f.kind == PhotoFileKind::Raw
+                && (self.photo_review_workspace || f.verified)
+                && f.path.to_ascii_lowercase().ends_with(".nef")
+        }) else {
+            return Ok(None);
+        };
+        let _mutation = self.mutation_lock.read().await;
+        let target = file_target(archive_for(&catalog, photo.archive_id)?, file)?;
+        let backend = self.backend(target.volume_id).await?;
+        let entry = backend.stat(&target).await?;
+        crate::browsing::nef::focus(backend.as_ref(), &entry, &self.nef_previews).await
+    }
+
     pub async fn photo_preview(
         &self,
         photo_id: Uuid,

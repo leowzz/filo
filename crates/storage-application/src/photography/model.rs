@@ -229,6 +229,15 @@ pub struct PhotoPreview {
     pub embedded: bool,
 }
 
+/// Focus area in normalized, display-oriented image coordinates.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PhotoFocus {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct PhotoHandoff {
     pub directories: Vec<String>,

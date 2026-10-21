@@ -1,4 +1,5 @@
 use super::error;
+use crate::photography::PhotoFocus;
 use image::metadata::Orientation;
 use std::{
     collections::{HashSet, VecDeque},
@@ -81,6 +82,7 @@ impl Cache {
 struct Index {
     orientation: Orientation,
     previews: Vec<Range<u64>>,
+    af_info: Option<(Tiff, u64, u64)>,
 }
 #[derive(Default)]
 struct FileData {
@@ -175,6 +177,7 @@ impl Reader<'_> {
         let mut index = Index {
             orientation: Orientation::NoTransforms,
             previews: vec![],
+            af_info: None,
         };
         for _ in 0..64 {
             let Some((tiff, offset)) = pending.pop() else {
@@ -228,6 +231,14 @@ impl Reader<'_> {
                                 if let Some(offset) = inner.u32(&header[10..], 4) {
                                     pending.push((inner, offset));
                                 }
+                            }
+                        }
+                    }
+                    0x00b7 if tiff.base != 0 && tiff.u16(field, 2) == Some(7) => {
+                        if let Some(length) = tiff.u32(field, 4).filter(|n| *n >= 4) {
+                            if let Some(at) = tiff.u32(field, 8).and_then(|n| tiff.absolute(n).ok())
+                            {
+                                index.af_info = Some((tiff, at, u64::from(length)));
                             }
                         }
                     }
@@ -293,6 +304,83 @@ impl Tiff {
 }
 fn invalid() -> StorageError {
     error("无法读取 NEF 内嵌预览，请下载或使用系统应用打开")
+}
+
+// Nikon MakerNote AFInfo2 layouts, documented by ExifTool's Nikon.pm.
+// Older phase-detect layouts contain point IDs rather than image coordinates.
+fn focus_area(bytes: &[u8], tiff: Tiff, orientation: Orientation) -> Option<PhotoFocus> {
+    let at = match bytes.get(..4)? {
+        b"0100" if bytes.get(4) == Some(&1) => 16,
+        b"0101" if bytes.get(4) == Some(&1) => 70,
+        b"0300" | b"0301" if bytes.get(7) == Some(&1) => 42,
+        b"0400" | b"0401" | b"0402" if bytes.get(7) == Some(&1) => 62,
+        _ => return None,
+    };
+    let w = f64::from(tiff.u16(bytes, at)?);
+    let h = f64::from(tiff.u16(bytes, at + 2)?);
+    let x = f64::from(tiff.u16(bytes, at + 4)?);
+    let y = f64::from(tiff.u16(bytes, at + 6)?);
+    let width = f64::from(tiff.u16(bytes, at + 8)?);
+    let height = f64::from(tiff.u16(bytes, at + 10)?);
+    if w == 0.0 || h == 0.0 || x == 0.0 || y == 0.0 || x > w || y > h || width > w || height > h {
+        return None;
+    }
+    let (x, y, width, height) = (x / w, y / h, width / w, height / h);
+    let (x, y) = match orientation.to_exif() {
+        2 => (1.0 - x, y),
+        3 => (1.0 - x, 1.0 - y),
+        4 => (x, 1.0 - y),
+        5 => (y, x),
+        6 => (1.0 - y, x),
+        7 => (1.0 - y, 1.0 - x),
+        8 => (y, 1.0 - x),
+        _ => (x, y),
+    };
+    let (width, height) = if orientation.to_exif() >= 5 {
+        (height, width)
+    } else {
+        (width, height)
+    };
+    Some(PhotoFocus {
+        x,
+        y,
+        width,
+        height,
+    })
+}
+
+pub(crate) async fn focus(
+    backend: &dyn StorageBackend,
+    entry: &StorageEntry,
+    cache: &Mutex<Cache>,
+) -> StorageResult<Option<PhotoFocus>> {
+    let file = cache.lock().await.get(entry);
+    let mut data = file.data.lock().await;
+    let mut reader = Reader {
+        backend,
+        entry,
+        data: &mut data,
+        count: &file.bytes,
+    };
+    let index = match reader.data.index.clone() {
+        Some(index) => index,
+        None => {
+            let index = reader.index().await?;
+            reader.data.index = Some(index.clone());
+            index
+        }
+    };
+    let Some((tiff, at, length)) = index.af_info else {
+        return Ok(None);
+    };
+    // Only the fixed coordinate prefix is needed; never download the RAW payload.
+    let bytes = reader.metadata(at, length.min(82)).await?;
+    if !same_file(entry, &backend.stat(&entry.locator).await?) {
+        *reader.data = FileData::default();
+        file.bytes.store(0, Ordering::Relaxed);
+        return Err(error("文件已发生变化，请重新读取焦点"));
+    }
+    Ok(focus_area(&bytes, tiff, index.orientation))
 }
 
 pub(crate) async fn load(
@@ -438,11 +526,175 @@ pub(crate) fn fixture(little: bool, maker_note: bool) -> Vec<u8> {
 }
 
 #[cfg(test)]
+pub(crate) use tests::focus_fixture;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Mutex as StdMutex;
     use storage_provider_api::{StagedWrite, StorageReader};
     use uuid::Uuid;
+
+    fn af_info(little: bool, version: &[u8; 4]) -> Vec<u8> {
+        let mut bytes = vec![0; 82];
+        bytes[..4].copy_from_slice(version);
+        bytes[4] = 1;
+        bytes[7] = 1;
+        let at = match version {
+            b"0100" => 16,
+            b"0101" => 70,
+            b"0300" | b"0301" => 42,
+            _ => 62,
+        };
+        for (i, n) in [6000u16, 4000, 4500, 1000, 300, 400]
+            .into_iter()
+            .enumerate()
+        {
+            let value = if little {
+                n.to_le_bytes()
+            } else {
+                n.to_be_bytes()
+            };
+            bytes[at + i * 2..at + i * 2 + 2].copy_from_slice(&value);
+        }
+        bytes
+    }
+
+    pub(crate) fn focus_fixture(little: bool) -> Vec<u8> {
+        let mut bytes = fixture(!little, true);
+        let word = |n: u16| {
+            if little {
+                n.to_le_bytes()
+            } else {
+                n.to_be_bytes()
+            }
+        };
+        let long = |n: u32| {
+            if little {
+                n.to_le_bytes()
+            } else {
+                n.to_be_bytes()
+            }
+        };
+        bytes[274..276].copy_from_slice(&word(2));
+        bytes[288..290].copy_from_slice(&word(0xb7));
+        bytes[290..292].copy_from_slice(&word(7));
+        bytes[292..296].copy_from_slice(&long(82));
+        bytes[296..300].copy_from_slice(&long(512));
+        bytes[778..860].copy_from_slice(&af_info(little, b"0402"));
+        bytes
+    }
+
+    #[test]
+    fn focus_coordinates_follow_layout_byte_order_and_all_exif_orientations() {
+        let expected = [
+            (0.75, 0.25),
+            (0.25, 0.25),
+            (0.25, 0.75),
+            (0.75, 0.75),
+            (0.25, 0.75),
+            (0.75, 0.75),
+            (0.75, 0.25),
+            (0.25, 0.25),
+        ];
+        for little in [true, false] {
+            for version in [
+                b"0100", b"0101", b"0300", b"0301", b"0400", b"0401", b"0402",
+            ] {
+                let bytes = af_info(little, version);
+                for (i, &(x, y)) in expected.iter().enumerate() {
+                    let area = focus_area(
+                        &bytes,
+                        Tiff { base: 0, little },
+                        Orientation::from_exif(i as u8 + 1).unwrap(),
+                    )
+                    .unwrap();
+                    assert_eq!((area.x, area.y), (x, y));
+                    assert_eq!(
+                        (area.width, area.height),
+                        if i < 4 { (0.05, 0.1) } else { (0.1, 0.05) }
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn missing_unsupported_and_invalid_focus_is_not_a_guessed_position() {
+        let tiff = Tiff {
+            base: 0,
+            little: true,
+        };
+        let orientation = Orientation::NoTransforms;
+        let valid = af_info(true, b"0402");
+        for end in 0..74 {
+            assert!(focus_area(&valid[..end], tiff, orientation).is_none());
+        }
+        for at in [7, 62, 66] {
+            let mut bytes = valid.clone();
+            match at {
+                7 => bytes[7] = 0,
+                62 => bytes[62..64].fill(0),
+                _ => bytes[66..68].fill(255),
+            }
+            assert!(focus_area(&bytes, tiff, orientation).is_none());
+        }
+        assert!(focus_area(&af_info(true, b"9999"), tiff, orientation).is_none());
+        let mut bytes = af_info(true, b"0100");
+        bytes[4] = 0;
+        assert!(focus_area(&bytes, tiff, orientation).is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires FILO_TEST_NEF and FILO_TEST_FOCUS JSON from ExifTool"]
+    async fn local_nef_focus_matches_reference() {
+        let path = std::env::var("FILO_TEST_NEF").unwrap();
+        let expected: PhotoFocus =
+            serde_json::from_str(&std::env::var("FILO_TEST_FOCUS").unwrap()).unwrap();
+        let backend = Backend::new(std::fs::read(path).unwrap());
+        let area = focus(&backend, &backend.entry(), &Mutex::new(Cache::default()))
+            .await
+            .unwrap()
+            .unwrap();
+        for (actual, expected) in [
+            (area.x, expected.x),
+            (area.y, expected.y),
+            (area.width, expected.width),
+            (area.height, expected.height),
+        ] {
+            assert!((actual - expected).abs() < 1e-10, "{area:?}");
+        }
+        assert!(backend.received() < 128 * 1024);
+        println!("focus={area:?}, metadata bytes read={}", backend.received());
+    }
+
+    #[tokio::test]
+    async fn focus_reads_only_metadata_and_reuses_the_nef_preview_index() {
+        for little in [true, false] {
+            let mut bytes = focus_fixture(little);
+            bytes.resize(64 * 1024 * 1024, 0);
+            let backend = Backend::new(bytes);
+            let cache = Mutex::new(Cache::default());
+            let entry = backend.entry();
+            let area = focus(&backend, &entry, &cache).await.unwrap().unwrap();
+            assert_eq!((area.x, area.y), (0.75, 0.75)); // EXIF orientation 6
+            assert_eq!(backend.received(), PAGE_SIZE);
+            assert_eq!(focus(&backend, &entry, &cache).await.unwrap(), Some(area));
+            assert_eq!(backend.received(), PAGE_SIZE);
+            load(&backend, &entry, false, &cache).await.unwrap();
+            assert_eq!(backend.received(), PAGE_SIZE);
+            backend.entry.lock().unwrap().etag = Some("etag-2".into());
+            focus(&backend, &backend.entry(), &cache).await.unwrap();
+            assert_eq!(backend.received(), PAGE_SIZE * 2);
+        }
+        let backend = Backend::new(fixture(true, false));
+        assert!(
+            focus(&backend, &backend.entry(), &Mutex::new(Cache::default()))
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
 
     struct Backend {
         bytes: Vec<u8>,

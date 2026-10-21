@@ -512,6 +512,7 @@ fn main() {
             photography::review_undo,
             photography::review_save_position,
             photography::review_preview,
+            photography::review_focus,
             photography::photo_sync,
             photography::photo_restore,
             photography::review_export,

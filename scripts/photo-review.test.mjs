@@ -144,6 +144,9 @@ test("keyboard distinguishes relative adjustments, explicit advance, modifiers a
   assert.deepEqual(photoKeyAction(key("Digit3","#",{shiftKey:true}),false),{type:"rating",value:3,relative:false,advance:true});
   assert.equal(photoKeyAction(key("Digit3","3",{repeat:true}),true),null);
   assert.equal(photoKeyAction(key("KeyP","p",{metaKey:true}),false),null);
+  assert.deepEqual(photoKeyAction(key("Space"," "),false),{type:"zoom"});
+  assert.equal(photoKeyAction(key("Space"," ",{repeat:true}),false),null);
+  assert.equal(photoKeyAction(key("Space"," ",{ctrlKey:true}),false),null);
   assert.deepEqual(photoKeyAction(key("KeyZ","z",{ctrlKey:true}),false),{type:"undo"});
 });
 

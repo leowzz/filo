@@ -73,6 +73,7 @@ pub async fn review_mark(app: tauri::AppHandle, service: State<'_, StorageServic
 }
 pub async fn review_undo(service: State<'_, StorageService>, session_id: Uuid) -> StorageResult<Option<Photo>> { service.photo_review_workspace().photo_undo(session_id).await }
 pub async fn review_save_position(service: State<'_, StorageService>, session_id: Uuid, position: PhotoReviewPosition) -> StorageResult<()> { service.photo_review_workspace().photo_save_position(session_id, position).await }
+pub async fn review_focus(service: State<'_, StorageService>, photo_id: Uuid) -> StorageResult<Option<PhotoFocus>> { service.photo_review_workspace().photo_focus(photo_id).await }
 pub async fn review_preview(service: State<'_, StorageService>, photo_id: Uuid, original: bool, thumbnail: bool, raw_only: Option<bool>) -> StorageResult<PhotoPreview> { service.photo_review_workspace().photo_preview(photo_id, original, thumbnail, raw_only.unwrap_or(false)).await }
 pub async fn photo_sync(service: State<'_, StorageService>, session_id: Uuid) -> StorageResult<()> { service.photo_sync(session_id).await }
 pub async fn photo_restore(service: State<'_, StorageService>, jpg: StorageLocator, raw: StorageLocator) -> StorageResult<usize> { service.photo_restore(jpg, raw).await }

@@ -382,6 +382,7 @@ export function photoKeyAction(
         key === "c" || key === "p" ? "pick" : key === "x" ? "reject" : "none",
       advance: autoAdvance || event.shiftKey,
     };
-  if (key === "z") return { type: "zoom" };
+  if (key === "z" || event.code === "Space" || key === " ")
+    return { type: "zoom" };
   return null;
 }

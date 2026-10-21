@@ -666,6 +666,38 @@ async fn cancelling_a_stalled_listing_releases_scan_without_publishing() {
 }
 
 #[tokio::test]
+async fn paired_jpg_review_reads_focus_from_nef_without_downloading_photos() {
+    let dir = tempfile::tempdir().unwrap();
+    let (service, root, probe) = setup(dir.path()).await;
+    std::fs::write(
+        dir.path().join("photos/pair.NEF"),
+        crate::browsing::nef::focus_fixture(true),
+    )
+    .unwrap();
+    for name in ["pair.JPG", "jpg.JPG"] {
+        image::RgbImage::new(32, 16)
+            .save(dir.path().join("photos").join(name))
+            .unwrap();
+    }
+    service
+        .photo_scan_review(Uuid::new_v4(), input(root), Arc::new(|_| {}))
+        .await
+        .unwrap();
+    let catalog = service.photo_catalog().await.unwrap();
+    let paired = catalog.photos.iter().find(|p| p.files.len() == 2).unwrap();
+    let jpg = catalog
+        .photos
+        .iter()
+        .find(|p| p.original_path == "jpg.JPG")
+        .unwrap();
+    let reads = probe.full_reads.load(Ordering::SeqCst);
+    let area = service.photo_focus(paired.id).await.unwrap().unwrap();
+    assert_eq!((area.x, area.y), (0.75, 0.75));
+    assert!(service.photo_focus(jpg.id).await.unwrap().is_none());
+    assert_eq!(probe.full_reads.load(Ordering::SeqCst), reads);
+}
+
+#[tokio::test]
 async fn raw_view_uses_raw_preview_and_persists_without_changing_photo_identity() {
     let dir = tempfile::tempdir().unwrap();
     let (service, root, probe) = setup(dir.path()).await;
