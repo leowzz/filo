@@ -78,6 +78,9 @@ type State = {
   useGroups: boolean;
   sort: EntrySort;
   clipboard: FileClipboard | null;
+  reviewSettingsFrom: "photo-library" | "photo-review" | null;
+  openReviewSettings: () => void;
+  returnToReview: () => void;
   navigate: (location: Location) => void;
   step: (delta: number) => void;
   setPage: (page: State["page"]) => void;
@@ -99,21 +102,40 @@ export const useBrowser = create<State>((set) => ({
   useGroups: initialPreferences.useGroups,
   sort: initialPreferences.sort,
   clipboard: null,
+  reviewSettingsFrom: null,
+  openReviewSettings: () =>
+    set((state) =>
+      state.page === "photo-library" || state.page === "photo-review"
+        ? { page: "settings", reviewSettingsFrom: state.page }
+        : state,
+    ),
+  returnToReview: () =>
+    set((state) =>
+      state.reviewSettingsFrom
+        ? { page: state.reviewSettingsFrom, reviewSettingsFrom: null }
+        : state,
+    ),
   navigate: (location) =>
     set((state) => ({
       page: "browser",
+      reviewSettingsFrom: null,
       history: [...state.history.slice(0, state.index + 1), location],
       index: state.index + 1,
     })),
   step: (delta) =>
     set((state) => ({
       page: "browser",
+      reviewSettingsFrom: null,
       index: Math.max(
         0,
         Math.min(state.history.length - 1, state.index + delta),
       ),
     })),
-  setPage: (page) => set({ page }),
+  setPage: (page) =>
+    set((state) => ({
+      page,
+      reviewSettingsFrom: page === "settings" ? state.reviewSettingsFrom : null,
+    })),
   toggleHidden: () =>
     set((state) => {
       const next = { ...state, showHidden: !state.showHidden };

@@ -6,7 +6,7 @@ const require = createRequire(new URL("../apps/desktop/package.json", import.met
 const ts = require("typescript");
 const source = await readFile(new URL("../apps/desktop/src/photoReviewController.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } });
-const { PhotoReviewController, preparePhotoReviewExit, photoKeyAction, photoFeedbackDuration, sortPhotos, matchesPhoto } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const { PhotoReviewController, preparePhotoReviewExit, photoKeyAction, sortPhotos, matchesPhoto } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 const photo = (id, rating = 0) => ({ id, original_path: `${id}.NEF`, rating, flag: "none", revision: 0 });
 function setup(photos = [photo("a"), photo("b")], save = async (id, mark) => ({ ...photos.find(p => p.id === id), ...mark, })) {
   const feedback = [], errors = [], calls = [];
@@ -20,8 +20,8 @@ const key = (code, key, extra = {}) => ({ code,key,repeat:false,altKey:false,ctr
 const delay = ms => new Promise(resolve => setTimeout(resolve,ms));
 
 test("quick flags finish their animation before advancing, including repeated marks without saving again", async (t) => {
-  assert.equal(photoFeedbackDuration, 800);
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  for (const photoFeedbackDuration of [100, 500, 1500]) {
   for (const flag of ["pick", "reject"]) {
     for (const repeated of [false, true]) {
       let release;
@@ -44,6 +44,7 @@ test("quick flags finish their animation before advancing, including repeated ma
       await controller.settle();
       controller.dispose();
     }
+  }
   }
 });
 
@@ -139,6 +140,13 @@ test("workflow filters distinguish unflagged photos from ratings and rated photo
 });
 
 test("keyboard distinguishes relative adjustments, explicit advance, modifiers and repeats", () => {
+  for (const auto of [false, true]) {
+    assert.deepEqual(photoKeyAction(key("Space", " "), auto), {type:"zoom"});
+    assert.deepEqual(photoKeyAction(key("", " "), auto), {type:"zoom"});
+    assert.equal(photoKeyAction(key("Space", " ", {repeat:true}), auto), null);
+    for (const modifier of ["ctrlKey", "metaKey", "altKey"])
+      assert.equal(photoKeyAction(key("Space", " ", {[modifier]:true}), auto), null);
+  }
   assert.deepEqual(photoKeyAction(key("BracketRight","]"),true),{type:"rating",value:1,relative:true,advance:false});
   assert.deepEqual(photoKeyAction(key("BracketLeft","{",{shiftKey:true}),false),{type:"rating",value:-1,relative:true,advance:true});
   assert.deepEqual(photoKeyAction(key("Digit3","#",{shiftKey:true}),false),{type:"rating",value:3,relative:false,advance:true});

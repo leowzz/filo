@@ -1072,15 +1072,26 @@ export default function App() {
             />
           </>
         )}
-        {state.page === "photo-review" && directoryReview && (
-          <DirectoryPhotoReview
-            sessionId={directoryReview}
-            onBack={() => state.setPage("browser")}
-          />
-        )}
+        {(state.page === "photo-review" ||
+          state.reviewSettingsFrom === "photo-review") &&
+          directoryReview && (
+            <div
+              className="photography-page review-page"
+              hidden={state.page === "settings"}
+            >
+              <DirectoryPhotoReview
+                sessionId={directoryReview}
+                onBack={() => state.setPage("browser")}
+              />
+            </div>
+          )}
 
-        {state.page === "photo-library" && (
-          <div className="photography-page">
+        {(state.page === "photo-library" ||
+          state.reviewSettingsFrom === "photo-library") && (
+          <div
+            className="photography-page review-page"
+            hidden={state.page === "settings"}
+          >
             <PhotoLibraryPage />
           </div>
         )}

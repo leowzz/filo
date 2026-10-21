@@ -37,7 +37,6 @@ export type PhotoFeedback = {
   flag: PhotoFlag;
   from: number;
 };
-export const photoFeedbackDuration = 800;
 type Mark = { rating: number; flag: PhotoFlag };
 export const hasRaw = (photo: Photo) =>
   photo.files.some((f) => f.kind === "raw");
@@ -359,6 +358,7 @@ export function photoKeyAction(
   if (event.key === "ArrowLeft" || event.key === "ArrowRight")
     return { type: "step", delta: event.key === "ArrowLeft" ? -1 : 1 };
   if (event.repeat) return null;
+  if (event.code === "Space" || event.key === " ") return { type: "zoom" };
   if (event.key === "Escape") return { type: "escape" };
   if (event.code === "BracketLeft" || event.code === "BracketRight")
     return {
