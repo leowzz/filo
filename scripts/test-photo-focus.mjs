@@ -51,7 +51,7 @@ await page.cdp("Emulation.setDeviceMetricsOverride", {
   width: 1280, height: 850, deviceScaleFactor: 1, mobile: false,
 });
 await page.goto(globalThis.filoFocusUrl ?? "http://127.0.0.1:1420");
-await page.click('.main-nav button:text-is("审图")');
+await page.click('.sidebar button[aria-label="审图"]');
 await page.click('button:text-is("继续审图")');
 await page.waitForSelector(".photo-stage img");
 
@@ -60,7 +60,9 @@ const centered = (x, y) => page.waitForFunction(({x,y}) => {
   const img=stage.querySelector('img');
   if(!stage.classList.contains('original') || img.style.width!=='3200px') return false;
   const s=stage.getBoundingClientRect(), r=img.getBoundingClientRect();
-  return Math.abs(r.left+r.width*x-(s.left+stage.clientWidth/2))<2
+  return Math.abs(r.width-3200)<1 && Math.abs(r.height-2000)<1
+    && Math.abs(r.width/r.height-img.naturalWidth/img.naturalHeight)<0.001
+    && Math.abs(r.left+r.width*x-(s.left+stage.clientWidth/2))<2
     && Math.abs(r.top+r.height*y-(s.top+stage.clientHeight/2))<2;
 }, {x,y});
 assert.deepEqual(await page.evaluate(()=>window.reviewFixture.focusCalls),[], 'focus is lazy');
@@ -88,11 +90,17 @@ await page.cdp('Emulation.setDeviceMetricsOverride',{width:850,height:650,device
 await centered(0.98,0.02);
 await page.keyboard.press('Space');
 await page.waitForFunction(()=>!document.querySelector('.photo-stage').classList.contains('original'));
-const fit=await page.evaluate(()=>{const s=document.querySelector('.photo-stage').getBoundingClientRect(),i=document.querySelector('.photo-stage img').getBoundingClientRect();return {width:i.width<=s.width+1,height:i.height<=s.height+1};});
-assert.deepEqual(fit,{width:true,height:true});
+const fit=await page.evaluate(()=>{
+  const s=document.querySelector('.photo-stage').getBoundingClientRect();
+  const img=document.querySelector('.photo-stage img'),i=img.getBoundingClientRect();
+  return {width:i.width<=s.width+1,height:i.height<=s.height+1,
+    ratio:Math.abs(i.width/i.height-img.naturalWidth/img.naturalHeight)<0.001,
+    centered:Math.abs(i.left+i.width/2-s.left-s.width/2)<1 && Math.abs(i.top+i.height/2-s.top-s.height/2)<1};
+});
+assert.deepEqual(fit,{width:true,height:true,ratio:true,centered:true});
 // A previous photo's slow focus result cannot move the current image.
 await page.reload();
-await page.click('.main-nav button:text-is("审图")');
+await page.click('.sidebar button[aria-label="审图"]');
 await page.click('button:text-is("继续审图")');
 await page.waitForSelector('.photo-stage img');
 await page.evaluate(()=>window.reviewFixture.hold=true);
