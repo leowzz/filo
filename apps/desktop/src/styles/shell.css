@@ -16,13 +16,47 @@
 }
 .sidebar-titlebar {
   min-height: 64px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   padding-right: 9px;
   color: #7d7f82;
   font-size: 12px;
   font-weight: 600;
+}
+.sidebar-macos .sidebar-titlebar {
+  min-height: 100px;
+  padding-top: 36px;
+}
+.sidebar-windows .sidebar-titlebar {
+  padding-left: 9px;
+  padding-right: 0;
+}
+.sidebar-windows .sidebar-brand {
+  order: -1;
+}
+.sidebar-windows .sidebar-shortcuts {
+  margin-left: auto;
+}
+.sidebar-shortcuts {
+  display: flex;
+  gap: 4px;
+}
+.sidebar-shortcut {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 8px;
+  color: #7d7f82;
+}
+.sidebar-shortcut:hover {
+  background: #e9ecf1;
+  color: var(--accent);
+}
+.sidebar-shortcut.active {
+  background: #e5edfa;
+  color: #245dac;
 }
 .section-label {
   margin-top: 21px;
@@ -42,7 +76,6 @@
   padding: 0;
   color: #858689;
 }
-.main-nav,
 .volume-nav {
   display: flex;
   flex-direction: column;
@@ -50,6 +83,70 @@
 }
 .volume-nav {
   overflow-y: auto;
+}
+.favorite-nav {
+  overflow-y: auto;
+  min-height: 36px;
+  max-height: 30vh;
+  margin-top: 4px;
+  padding: 3px 0;
+  flex-shrink: 0;
+}
+.favorites-empty {
+  padding: 5px 9px;
+  color: #898a8d;
+  font-size: 12px;
+}
+.favorite-row {
+  position: relative;
+}
+.favorite-link {
+  touch-action: none;
+}
+.favorite-nav.is-sorting .favorite-link {
+  cursor: grabbing;
+}
+.favorite-row.is-dragging .nav-item {
+  opacity: 0.45;
+}
+.favorite-row.insert-before::before,
+.favorite-row.insert-after::after {
+  content: "";
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  height: 2px;
+  border-radius: 2px;
+  background: #007aff;
+  pointer-events: none;
+  z-index: 1;
+}
+.favorite-row.insert-before::before {
+  top: -1px;
+}
+.favorite-row.insert-after::after {
+  bottom: -1px;
+}
+.favorite-row .nav-item {
+  padding-right: 30px;
+}
+.favorite-remove {
+  position: absolute;
+  right: 4px;
+  top: 6px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: #858689;
+  border-radius: 5px;
+  opacity: 0;
+}
+.favorite-row:hover .favorite-remove,
+.favorite-row:focus-within .favorite-remove {
+  opacity: 1;
+}
+.favorite-remove:hover {
+  background: #dce2eb;
 }
 .nav-item {
   width: 100%;

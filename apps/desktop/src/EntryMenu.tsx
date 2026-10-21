@@ -9,12 +9,15 @@ import {
   Images,
   Link,
   Pencil,
+  Pin,
+  PinOff,
   Scissors,
   Trash2,
   Upload,
   X,
 } from "lucide-react";
 import { canCutVolume, canWriteVolume } from "./fileClipboard";
+import { sameFolder, useFolderFavorites } from "./folderFavorites";
 import {
   isDirectory,
   type DeleteMode,
@@ -72,6 +75,13 @@ export function EntryMenu({
   onDelete: (mode: DeleteMode) => void;
   onReview: () => void;
 }) {
+  const favorites = useFolderFavorites();
+  const folder = {
+    volumeId: entry.locator.volume_id,
+    path: entry.locator.logical_path,
+    name: entry.name,
+  };
+  const pinned = favorites.favorites.some((item) => sameFolder(item, folder));
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (ref.current)
@@ -161,6 +171,15 @@ export function EntryMenu({
         <ExternalLink size={14} />
         {isDirectory(entry) ? "打开文件夹" : "打开"}
       </button>
+      {entries.length === 1 && isDirectory(entry) && (
+        <button
+          role="menuitem"
+          onClick={() => perform(() => favorites.toggle(folder))}
+        >
+          {pinned ? <PinOff size={14} /> : <Pin size={14} />}
+          {pinned ? "取消收藏" : "固定到收藏"}
+        </button>
+      )}
       {entries.length === 1 && isDirectory(entry) && (
         <button role="menuitem" onClick={() => perform(onReview)}>
           <Images size={14} />

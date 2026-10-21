@@ -7,6 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { constants, homedir } from "node:os";
+import { createRequire } from "node:module";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -144,11 +145,24 @@ function startDevelopment(args) {
       ...cargoArgs,
     ];
   }
+  const desktop = join(root, "apps/desktop");
+  const windows = process.platform === "win32";
+  // Windows pnpm installations expose a .cmd shim, which spawn cannot execute
+  // directly. Run the installed Tauri JS entry with Node to preserve arguments
+  // without passing them through a shell.
   const child = spawn(
-    "pnpm",
-    ["--filter", "@filo/desktop", "tauri", "dev", ...args],
+    windows ? process.execPath : "pnpm",
+    windows
+      ? [
+          createRequire(join(desktop, "package.json")).resolve(
+            "@tauri-apps/cli/tauri.js",
+          ),
+          "dev",
+          ...args,
+        ]
+      : ["--filter", "@filo/desktop", "tauri", "dev", ...args],
     {
-      cwd: root,
+      cwd: windows ? desktop : root,
       stdio: "inherit",
       env: process.env,
     },

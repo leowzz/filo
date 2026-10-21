@@ -1,7 +1,6 @@
 import {
-  ArrowDownUp,
   Cloud,
-  Copy,
+  createLucideIcon,
   HardDrive,
   LayoutGrid,
   Images,
@@ -13,78 +12,76 @@ import {
 import { type LocationMenuTarget } from "./LocationMenu";
 import { useBrowser } from "./store";
 import { type Volume } from "./types";
+import { FavoriteFolders } from "./FavoriteFolders";
+import { isTauri } from "@tauri-apps/api/core";
+
+const SdCard = createLucideIcon("SdCard", [
+  [
+    "path",
+    {
+      d: "M6 3h9l4 4v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z",
+      fill: "none",
+      key: "outline",
+    },
+  ],
+  ["path", { d: "M8 3v5m3-5v5m3-5v5", key: "contacts" }],
+]);
 
 export function Sidebar({
   version,
   volumes,
   volume,
-  pendingTransfers,
   onAdd,
   openVolume,
+  navigate,
   onLocationMenu,
 }: {
   version: string;
   volumes: Volume[];
   volume?: Volume;
-  pendingTransfers: number;
   onAdd: () => void;
   openVolume: (volume: Volume) => void;
+  navigate: (volumeId: string, path: string) => void;
   onLocationMenu: (target: LocationMenuTarget) => void;
 }) {
   const state = useBrowser();
+  const mac = isTauri() && navigator.platform.toLowerCase().includes("mac");
+  const windows = navigator.platform.toLowerCase().includes("win");
+  const navigation = [
+    { page: "photo-library", label: "审图", Icon: Images },
+    { page: "photo-import", label: "拷卡", Icon: SdCard },
+    { page: "overview", label: "概览", Icon: LayoutGrid },
+  ] as const;
   return (
-    <aside className="sidebar">
+    <aside
+      className={`sidebar${mac ? " sidebar-macos" : ""}${windows ? " sidebar-windows" : ""}`}
+    >
       <div className="sidebar-titlebar" data-tauri-drag-region>
-        <span data-tauri-drag-region>Filo</span>
+        <nav className="sidebar-shortcuts" aria-label="主导航">
+          {navigation.map(({ page, label, Icon }) => {
+            const active =
+              state.page === page ||
+              (page === "photo-library" && state.page === "photo-review");
+            return (
+              <button
+                key={page}
+                className={`sidebar-shortcut${active ? " active" : ""}`}
+                title={label}
+                aria-label={label}
+                aria-current={active ? "page" : undefined}
+                onClick={() => state.setPage(page)}
+              >
+                <Icon size={18} />
+              </button>
+            );
+          })}
+        </nav>
+        <span className="sidebar-brand" data-tauri-drag-region>
+          Filo
+        </span>
       </div>
       <div className="section-label">个人收藏</div>
-      <nav className="main-nav" aria-label="主导航">
-        <button
-          className={
-            state.page === "photo-library" || state.page === "photo-review"
-              ? "nav-item active"
-              : "nav-item"
-          }
-          aria-current={
-            state.page === "photo-library" || state.page === "photo-review"
-              ? "page"
-              : undefined
-          }
-          onClick={() => state.setPage("photo-library")}
-        >
-          <Images size={17} />
-          审图
-        </button>
-        <button
-          className={
-            state.page === "photo-import" ? "nav-item active" : "nav-item"
-          }
-          aria-current={state.page === "photo-import" ? "page" : undefined}
-          onClick={() => state.setPage("photo-import")}
-        >
-          <Copy size={17} />
-          拷卡
-        </button>
-        <button
-          className={state.page === "overview" ? "nav-item active" : "nav-item"}
-          onClick={() => state.setPage("overview")}
-        >
-          <LayoutGrid size={17} />
-          概览
-        </button>
-        <button
-          className={
-            state.page === "transfers" ? "nav-item active" : "nav-item"
-          }
-          onClick={() => state.setPage("transfers")}
-        >
-          <ArrowDownUp size={17} />
-          传输任务
-          {pendingTransfers > 0 && (
-            <span className="soon">{pendingTransfers}</span>
-          )}
-        </button>
-      </nav>
+      <FavoriteFolders volumes={volumes} navigate={navigate} />
       <div className="section-label">
         位置{" "}
         <button

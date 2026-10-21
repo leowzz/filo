@@ -4,6 +4,11 @@ import { Check, ChevronRight } from "lucide-react";
 import { useBrowser } from "./store";
 import { Modal } from "./components";
 import type { EntrySort } from "./types";
+import {
+  sameFolder,
+  useFolderFavorites,
+  type FolderFavorite,
+} from "./folderFavorites";
 
 const sorts: { value: EntrySort; label: string }[] = [
   { value: "provider", label: "快速浏览（服务顺序）" },
@@ -150,6 +155,7 @@ function MenuPanel({
 }
 
 export function DirectoryMenu({
+  folder,
   position,
   onClose,
   canCreate,
@@ -161,6 +167,7 @@ export function DirectoryMenu({
   onDetails,
   onOptions,
 }: {
+  folder: FolderFavorite;
   position: MenuPosition;
   onClose: () => void;
   canCreate: boolean;
@@ -173,6 +180,7 @@ export function DirectoryMenu({
   onOptions: () => void;
 }) {
   const state = useBrowser();
+  const favorites = useFolderFavorites();
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const dismiss = (event: Event) => {
@@ -200,6 +208,12 @@ export function DirectoryMenu({
     };
   }, [onClose, position]);
   const items: Item[] = [
+    {
+      label: favorites.favorites.some((item) => sameFolder(item, folder))
+        ? "取消收藏"
+        : "固定到收藏",
+      run: () => favorites.toggle(folder),
+    },
     { label: "新建文件夹", disabled: !canCreate, run: onCreate },
     { label: "粘贴到当前目录", disabled: !canPaste, run: onPaste },
     { label: "显示简介", separator: true, run: onDetails },

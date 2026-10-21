@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useFolderFavorites } from "./folderFavorites";
 import type { ClipboardMode, FileClipboard } from "./fileClipboard";
 import type { Entry, EntrySort } from "./types";
 
@@ -167,7 +168,8 @@ export const useBrowser = create<State>((set) => ({
           : null,
     }),
   clearClipboard: () => set({ clipboard: null }),
-  resetVolumeRoot: (volumeId) =>
+  resetVolumeRoot: (volumeId) => {
+    useFolderFavorites.getState().removeVolume(volumeId);
     set((state) => ({
       history: state.history.map((location) =>
         location.volumeId === volumeId ? { ...location, path: "" } : location,
@@ -177,8 +179,10 @@ export const useBrowser = create<State>((set) => ({
       )
         ? null
         : state.clipboard,
-    })),
-  removeVolume: (volumeId) =>
+    }));
+  },
+  removeVolume: (volumeId) => {
+    useFolderFavorites.getState().removeVolume(volumeId);
     set((state) => {
       const currentRemoved = state.history[state.index]?.volumeId === volumeId;
       const history = state.history.filter(
@@ -198,5 +202,6 @@ export const useBrowser = create<State>((set) => ({
           ? null
           : state.clipboard,
       };
-    }),
+    });
+  },
 }));
