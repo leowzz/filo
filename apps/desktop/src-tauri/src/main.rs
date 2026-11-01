@@ -449,6 +449,10 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(move |app| {
+            #[cfg(target_os = "windows")]
+            if let Some(window) = app.get_webview_window("main") {
+                window.set_decorations(false)?;
+            }
             setup_reports.attach(app.handle().clone());
             let ready = errors::setup(&setup_reports, || {
                 let data = app.path().app_data_dir()?;

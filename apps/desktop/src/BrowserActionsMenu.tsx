@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, MoreHorizontal } from "lucide-react";
 import { CheckMenuItem, Menu, MenuItem, Submenu } from "@tauri-apps/api/menu";
 import { desktop } from "./api";
+import { useWindowMenu, windowsDesktop } from "./windowChrome";
 
 export type BrowserAction = {
   id: string;
@@ -34,7 +35,7 @@ export function useNativeBrowserMenu(actions: BrowserAction[]) {
   useEffect(() => {
     if (!desktop) return;
     let stopped = false;
-    const resources: (Menu | Submenu | MenuItem | CheckMenuItem)[] = [];
+    const resources: { close: () => Promise<void> }[] = [];
     let previous: Menu | null = null;
     let installed = false;
     const setup = (async () => {
@@ -82,14 +83,30 @@ export function useNativeBrowserMenu(actions: BrowserAction[]) {
       resources.push(operations);
       await menu.insert(operations, 1);
       if (stopped) return;
-      previous = await menu.setAsAppMenu();
-      installed = true;
+      if (windowsDesktop) {
+        const entries = await menu.items();
+        // items() creates resource handles, including ones for default submenus.
+        resources.push(...entries);
+        const titleMenus = await Promise.all(
+          entries
+            .filter((item): item is Submenu => item instanceof Submenu)
+            .map(async (submenu) => ({
+              label: (await submenu.text()).replace(/&/g, ""),
+              menu: submenu,
+            })),
+        );
+        if (!stopped) useWindowMenu.setState({ items: titleMenus });
+      } else {
+        previous = await menu.setAsAppMenu();
+        installed = true;
+      }
       if (!stopped) setNative(items);
     })().catch(() => {
       if (!stopped) setFailed(true);
     });
     return () => {
       stopped = true;
+      if (windowsDesktop) useWindowMenu.setState({ items: [] });
       void setup
         .then(async () => {
           if (installed && previous) await previous.setAsAppMenu();

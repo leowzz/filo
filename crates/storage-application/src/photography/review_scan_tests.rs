@@ -5,6 +5,7 @@ use storage_provider_api::StagedWrite;
 struct ProbeBackend {
     inner: OpenDalLocalBackend,
     primary_reads: AtomicUsize,
+    range_bytes: AtomicUsize,
     full_reads: AtomicUsize,
     stats: AtomicUsize,
     root_stats: AtomicUsize,
@@ -85,6 +86,8 @@ impl StorageBackend for ProbeBackend {
         }
         if !entry.name.ends_with(".json") {
             self.primary_reads.fetch_add(1, Ordering::SeqCst);
+            self.range_bytes
+                .fetch_add((range.end - range.start) as usize, Ordering::SeqCst);
             if self.block_primary.load(Ordering::SeqCst) {
                 self.primary_started.notify_one();
                 self.primary_resume.notified().await;
@@ -110,6 +113,7 @@ async fn setup(path: &std::path::Path) -> (StorageService, StorageLocator, Arc<P
     let probe = Arc::new(ProbeBackend {
         inner: OpenDalLocalBackend::new(&volume).await.unwrap(),
         primary_reads: AtomicUsize::new(0),
+        range_bytes: AtomicUsize::new(0),
         full_reads: AtomicUsize::new(0),
         stats: AtomicUsize::new(0),
         root_stats: AtomicUsize::new(0),
@@ -400,6 +404,38 @@ fn tiff(date: &str) -> Vec<u8> {
     bytes[18..22].copy_from_slice(&32u32.to_le_bytes());
     bytes[32..52].copy_from_slice(format!("{date} 12:00:00\0").as_bytes());
     bytes
+}
+
+#[tokio::test]
+async fn pair_validation_reads_small_headers_and_falls_back_for_distant_exif() {
+    let dir = tempfile::tempdir().unwrap();
+    let (service, root, probe) = setup(dir.path()).await;
+    let mut early = tiff("2026:10:19");
+    early.resize(2 * 1024 * 1024, 0);
+    for extension in ["NEF", "JPG"] {
+        std::fs::write(dir.path().join(format!("photos/pair.{extension}")), &early).unwrap();
+    }
+    let first = service
+        .photo_open_directory_review(root.clone())
+        .await
+        .unwrap();
+    assert_eq!(first.photo_ids.len(), 1);
+    assert_eq!(probe.range_bytes.load(Ordering::SeqCst), 2 * 64 * 1024);
+
+    // The RAW date is now stored beyond the initial prefix and contradicts JPG.
+    // Do not silently pair the files merely because the small read missed it.
+    let mut late = early.clone();
+    late[18..22].copy_from_slice(&(96 * 1024u32).to_le_bytes());
+    late[96 * 1024..96 * 1024 + 20].copy_from_slice(b"2026:10:20 12:00:00\0");
+    late.push(0); // Ensure revision changes even on coarse timestamp filesystems.
+    std::fs::write(dir.path().join("photos/pair.NEF"), late).unwrap();
+    probe.range_bytes.store(0, Ordering::SeqCst);
+    let changed = service.photo_open_directory_review(root).await.unwrap();
+    assert_eq!(changed.photo_ids.len(), 2);
+    assert_eq!(
+        probe.range_bytes.load(Ordering::SeqCst),
+        1024 * 1024 + 64 * 1024
+    );
 }
 
 #[tokio::test]

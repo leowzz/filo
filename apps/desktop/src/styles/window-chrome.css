@@ -1,0 +1,76 @@
+.window-titlebar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr) minmax(260px, 1fr);
+  align-items: center;
+  flex-shrink: 0;
+  height: 36px;
+  background: #1f252d;
+  color: #aeb7c5;
+  color-scheme: dark;
+  font-size: 12px;
+  user-select: none;
+}
+.window-menu,
+.window-controls {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+}
+.window-menu {
+  padding-left: 8px;
+}
+.window-menu button {
+  padding: 0 9px;
+  white-space: nowrap;
+}
+.window-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  height: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.window-controls {
+  justify-self: end;
+}
+.window-controls button {
+  width: 46px;
+  padding: 0;
+  color: #e2e6ed;
+}
+.window-menu button:hover,
+.window-controls button:hover {
+  background: #ffffff14;
+  color: #fff;
+}
+.window-menu button:active,
+.window-controls button:active {
+  background: #ffffff24;
+}
+.window-controls .window-close:hover {
+  background: #c42b1c;
+}
+.window-controls .window-close:active {
+  background: #a82418;
+}
+.window-titlebar button:focus-visible {
+  outline: 2px solid #8eaee0;
+  outline-offset: -3px;
+}
+#root:has(> .window-titlebar-default) .app-shell {
+  height: calc(100vh - 36px);
+}
+#root:has(.review-page:not([hidden]) .photo-review-shell)
+  > .window-titlebar-default {
+  display: none;
+}
+#root:has(.review-page:not([hidden]) .photo-review-shell) .app-shell {
+  height: 100vh;
+}
+.photo-review-shell:has(.photo-review-windows) > .photo-review-syncbar {
+  order: 1;
+  background: #1f252d;
+}

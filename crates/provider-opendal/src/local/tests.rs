@@ -1,6 +1,50 @@
 use super::*;
 
 #[tokio::test]
+async fn streamed_listing_preserves_metadata_paths_and_batch_limits() {
+    let (directory, backend) = fixture(false).await;
+    std::fs::create_dir(directory.path().join("照片")).unwrap();
+    std::fs::create_dir(directory.path().join("照片/子目录")).unwrap();
+    for i in 0..65 {
+        std::fs::write(directory.path().join(format!("照片/{i}.JPG")), [i; 17]).unwrap();
+    }
+    let mut listing = backend
+        .open_listing(&locator(&backend, "照片"))
+        .await
+        .unwrap();
+    let mut entries = Vec::new();
+    loop {
+        let batch = listing.next_batch(7).await.unwrap();
+        assert!(batch.len() <= 7);
+        if batch.is_empty() {
+            break;
+        }
+        entries.extend(batch);
+    }
+    assert_eq!(entries.len(), 66);
+    for entry in entries {
+        let fresh = backend.stat(&entry.locator).await.unwrap();
+        assert_eq!(entry.name, fresh.name);
+        assert_eq!(entry.kind, fresh.kind);
+        assert_eq!(entry.size, fresh.size);
+        assert_eq!(entry.modified_at, fresh.modified_at);
+        assert!(entry.locator.logical_path.starts_with("照片/"));
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn streamed_listing_does_not_follow_symlinks() {
+    let (directory, backend) = fixture(false).await;
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), directory.path().join("link")).unwrap();
+    let mut listing = backend.open_listing(&locator(&backend, "")).await.unwrap();
+    let entries = listing.next_batch(10).await.unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].kind, StorageEntryKind::Symlink);
+}
+
+#[tokio::test]
 async fn range_read_seeks_to_offset_and_preserves_path_checks() {
     let (directory, backend) = fixture(false).await;
     std::fs::write(directory.path().join("photo.nef"), b"0123456789").unwrap();

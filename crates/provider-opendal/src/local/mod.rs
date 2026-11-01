@@ -171,6 +171,15 @@ impl OpenDalLocalBackend {
 
     async fn entry(&self, logical: &str, path: &Path) -> StorageResult<StorageEntry> {
         let metadata = tokio::fs::symlink_metadata(path).await.map_err(io_error)?;
+        self.entry_from_metadata(logical, path, metadata)
+    }
+
+    fn entry_from_metadata(
+        &self,
+        logical: &str,
+        path: &Path,
+        metadata: std::fs::Metadata,
+    ) -> StorageResult<StorageEntry> {
         let kind = if metadata.file_type().is_symlink() {
             StorageEntryKind::Symlink
         } else if metadata.is_dir() {

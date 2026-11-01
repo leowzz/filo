@@ -45,6 +45,8 @@ import {
 } from "./photoReviewController";
 import { PhotoExportButton } from "./PhotoExportButton";
 import { PhotoFeedback } from "./PhotoFeedback";
+import { WindowTitlebar } from "./WindowTitlebar";
+import { windowsDesktop } from "./windowChrome";
 import { observeResize } from "./observeResize";
 import { useAppSettings } from "./appSettings";
 import { useBrowser } from "./store";
@@ -726,9 +728,34 @@ export function PhotoReview({
     shownImage?.preview.width,
     shownImage?.preview.height,
   ]);
+  const titleContent = (
+    <div
+      className="photo-review-title-text"
+      title={[locationName, filename].filter(Boolean).join(" / ")}
+      data-tauri-drag-region
+    >
+      <span className="photo-review-location" data-tauri-drag-region>
+        {locationName}
+      </span>
+      {filename && (
+        <>
+          <span
+            className="photo-review-title-separator"
+            aria-hidden="true"
+            data-tauri-drag-region
+          >
+            /
+          </span>
+          <span className="photo-review-current-file" data-tauri-drag-region>
+            {filename}
+          </span>
+        </>
+      )}
+    </div>
+  );
   return (
     <section
-      className={`photo-review${desktop && navigator.platform.toLowerCase().includes("mac") ? " photo-review-macos" : ""}`}
+      className={`photo-review${desktop && navigator.platform.toLowerCase().includes("mac") ? " photo-review-macos" : ""}${windowsDesktop ? " photo-review-windows" : ""}`}
       ref={container}
       aria-label="照片审图"
       style={
@@ -762,47 +789,38 @@ export function PhotoReview({
           </div>
         </Modal>
       )}
-      <div
-        className="photo-review-titlebar"
-        title={[locationName, filename].filter(Boolean).join(" / ")}
-        data-tauri-drag-region
-      >
-        <span className="photo-review-location" data-tauri-drag-region>
-          {locationName}
-        </span>
-        {filename && (
-          <>
-            <span className="photo-review-title-separator" aria-hidden="true">
-              /
-            </span>
-            <span className="photo-review-current-file" data-tauri-drag-region>
-              {filename}
-            </span>
-          </>
-        )}
-      </div>
-      <div className="photo-review-toolbar" data-tauri-drag-region>
-        <button className="photo-review-back" onClick={() => void back()}>
-          <ArrowLeft size={17} />
-          {backLabel}
-        </button>
-        <div className="photo-quick-filters" role="group" aria-label="审图模式">
-          {(
-            [
-              ["manual", "自由审图"],
-              ["flags", "旗标快筛"],
-              ["rating", "星级筛选"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              aria-pressed={mode === value}
-              onClick={() => changeMode(value)}
-            >
-              {label}
-            </button>
-          ))}
+      {windowsDesktop ? (
+        <WindowTitlebar>{titleContent}</WindowTitlebar>
+      ) : (
+        <div className="photo-review-titlebar" data-tauri-drag-region>
+          {titleContent}
         </div>
+      )}
+      <div className="photo-review-toolbar" data-tauri-drag-region>
+        <div className="photo-review-leading-controls">
+          <button className="photo-review-back" onClick={() => void back()}>
+            <ArrowLeft size={17} />
+            {backLabel}
+          </button>
+          <div className="photo-quick-filters" role="group" aria-label="审图模式">
+            {(
+              [
+                ["manual", "自由审图"],
+                ["flags", "旗标快筛"],
+                ["rating", "星级筛选"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                aria-pressed={mode === value}
+                onClick={() => changeMode(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <span className="photo-review-toolbar-spacer" aria-hidden="true" />
         <span className="photo-review-select">
           <select
             aria-label="照片排序"

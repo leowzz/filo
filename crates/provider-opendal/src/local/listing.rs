@@ -41,7 +41,18 @@ impl DirectoryReader for LocalDirectory {
             } else {
                 format!("{}/{name}", self.parent)
             };
-            match self.backend.entry(&path, &item.path()).await {
+            // Windows directory enumeration already includes these attributes.
+            // A fresh symlink_metadata(path) would add one NAS round trip per
+            // file. DirEntry::metadata also preserves no-follow semantics.
+            let entry = item
+                .metadata()
+                .await
+                .map_err(io_error)
+                .and_then(|metadata| {
+                    self.backend
+                        .entry_from_metadata(&path, &item.path(), metadata)
+                });
+            match entry {
                 Ok(entry) => entries.push(entry),
                 Err(error)
                     if matches!(
