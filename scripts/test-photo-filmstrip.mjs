@@ -30,11 +30,11 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {
         if (command === 'plugin:event|unlisten') return;
         if (command === 'review_catalog') return structuredClone(catalog);
         if (command === 'review_save_position') {session.position = args.position; return;}
-        if (command === 'review_preview' && args.thumbnail && args.photoId === 'p1') {
+        if (command === 'review_preview' && args.thumbnail && args.photoId === 'p5') {
           window.skippedThumbnail = true;
           throw {code:'unsupported',message:'此文件需要完整下载才能生成缩略图'};
         }
-        if (command === 'review_preview' && args.thumbnail && ['p0', 'p8'].includes(args.photoId))
+        if (command === 'review_preview' && args.thumbnail && ['p4', 'p8'].includes(args.photoId))
           throw {message:'模拟缩略图失败'};
         if (command === 'review_preview') return {mime: 'image/svg+xml',
           content: btoa('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="#4e7088"/></svg>'),
@@ -60,10 +60,10 @@ const centered = () => {
   const thumb = current.getBoundingClientRect();
   return (
     Math.abs(
-      thumb.left +
-        thumb.width / 2 -
-        strip.getBoundingClientRect().left -
-        strip.clientWidth / 2,
+      thumb.top +
+        thumb.height / 2 -
+        strip.getBoundingClientRect().top -
+        strip.clientHeight / 2,
     ) < 1
   );
 };
@@ -71,8 +71,8 @@ const metrics = () =>
   page.evaluate(() => {
     const strip = document.querySelector(".photo-filmstrip");
     return {
-      left: strip.scrollLeft,
-      maximum: strip.scrollWidth - strip.clientWidth,
+      top: strip.scrollTop,
+      maximum: strip.scrollHeight - strip.clientHeight,
       rendered: strip.querySelectorAll("button").length,
       current: strip
         .querySelector('button[aria-current="true"]')
@@ -96,7 +96,7 @@ assert.equal(
   await page.evaluate(
     () =>
       document.querySelector(
-        'button[aria-label="查看 DSC_6167.JPG"] .photo-thumbnail-placeholder',
+        'button[aria-label="查看 DSC_6171.JPG"] .photo-thumbnail-placeholder',
       )?.textContent,
   ),
   "预览",
@@ -105,7 +105,7 @@ assert.equal(
 await page.waitForFunction(
   () =>
     document.querySelector(
-      'button[aria-label="查看 DSC_6166.JPG"] .photo-thumbnail-placeholder',
+      'button[aria-label="查看 DSC_6170.JPG"] .photo-thumbnail-placeholder',
     )?.title === "模拟缩略图失败",
 );
 assert.equal(
@@ -121,7 +121,7 @@ assert.equal(
 assert.equal(
   await page.evaluate(
     () =>
-      getComputedStyle(document.querySelector(".photo-filmstrip")).overflowY,
+      getComputedStyle(document.querySelector(".photo-filmstrip")).overflowX,
   ),
   "hidden",
 );
@@ -130,20 +130,20 @@ await page.waitForFunction(centered);
 const advanced = await metrics();
 assert.equal(advanced.current, "查看 DSC_6194.JPG");
 assert.ok(
-  advanced.left > restored.left + 1900,
+  advanced.top > restored.top + 1500,
   "scrollbar advances through the full sequence",
 );
 await page.click('button[aria-label="查看 DSC_6195.JPG"]');
 await page.waitForFunction(centered);
 assert.ok(
-  (await metrics()).left > advanced.left,
+  (await metrics()).top > advanced.top,
   "thumbnail clicks also center",
 );
 
-for (const width of [940, 2048]) {
+for (const [width, height] of [[940, 850], [2048, 1000], [700, 850]]) {
   await page.cdp("Emulation.setDeviceMetricsOverride", {
     width,
-    height: 850,
+    height,
     deviceScaleFactor: 1,
     mobile: false,
   });
@@ -151,15 +151,30 @@ for (const width of [940, 2048]) {
   assert.equal((await metrics()).fits, true);
 }
 
+// Both mouse directions stay on the left, including after the wing disappears.
+await page.click('button[aria-label="收起照片序列"]');
+await page.waitForSelector('button[aria-label="展开照片序列"]');
+assert.equal(await page.evaluate(() => !!document.querySelector(".photo-filmstrip")), false);
+await page.click('button[aria-label="展开照片序列"]');
+await page.waitForFunction(centered);
+assert.equal((await metrics()).current, "查看 DSC_6195.JPG");
+
+await page.keyboard.press("t");
+assert.equal(await page.evaluate(() => !!document.querySelector(".photo-filmstrip")), false);
+assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+await page.keyboard.press("t");
+await page.waitForFunction(centered);
+assert.equal((await metrics()).current, "查看 DSC_6195.JPG");
+
 await page.evaluate(() => {
   const strip = document.querySelector(".photo-filmstrip");
-  strip.scrollLeft = strip.scrollWidth;
+  strip.scrollTop = strip.scrollHeight;
 });
 await page.waitForSelector('button[aria-label="查看 DSC_6406.JPG"]');
 await page.click('button[aria-label="查看 DSC_6406.JPG"]');
 const last = await metrics();
 assert.equal(last.current, "查看 DSC_6406.JPG");
-assert.ok(Math.abs(last.left - last.maximum) < 1);
+assert.ok(Math.abs(last.top - last.maximum) < 1);
 await page.keyboard.press("ArrowRight");
 assert.equal(
   (await metrics()).current,
@@ -168,17 +183,18 @@ assert.equal(
 );
 
 await page.evaluate(() => {
-  document.querySelector(".photo-filmstrip").scrollLeft = 0;
+  document.querySelector(".photo-filmstrip").scrollTop = 0;
 });
 await page.waitForSelector('button[aria-label="查看 DSC_6166.JPG"]');
 await page.click('button[aria-label="查看 DSC_6166.JPG"]');
-assert.equal((await metrics()).left, 0);
+assert.equal((await metrics()).top, 0);
+await page.click('.photo-review-options > summary');
 await page.click('.photo-quick-filters button:text-is("≥3 星")');
 await page.waitForFunction(
   () => document.querySelectorAll(".photo-filmstrip button").length === 1,
 );
 assert.equal((await metrics()).current, "查看 DSC_6174.JPG");
-assert.equal((await metrics()).left, 0);
+assert.equal((await metrics()).top, 0);
 await page.click('.photo-quick-filters button:text-is("保留")');
 await page.waitForFunction(
   () => document.querySelectorAll(".photo-filmstrip button").length === 0,
@@ -191,7 +207,7 @@ await page.waitForFunction(() =>
 );
 const sorted = await metrics();
 assert.equal(sorted.current, "查看 DSC_6166.JPG");
-assert.ok(Math.abs(sorted.left - sorted.maximum) < 1);
+assert.ok(Math.abs(sorted.top - sorted.maximum) < 1);
 console.log({
   passed:
     "restore, keyboard/click centering, scrollbar progress, manual scroll, resize, boundaries, filters, sort",

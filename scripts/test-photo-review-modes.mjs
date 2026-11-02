@@ -48,6 +48,7 @@ await page.goto(globalThis.filoReviewModesUrl ?? "http://127.0.0.1:1420");
 await page.click('.main-nav button:text-is("审图")');
 await page.click('button:text-is("继续审图")');
 await page.waitForSelector(".photo-stage img");
+await page.click('.photo-review-options > summary');
 await page.click('button:text-is("星级筛选")');
 assert.match(await page.evaluate(() => document.querySelector(".photo-stage").textContent), /还没有留用照片/);
 assert.equal(await page.evaluate(() => document.querySelector(".photo-counter").textContent), "0 / 0");
@@ -146,7 +147,7 @@ for (const width of [1280, 760]) {
     width, height: 850, deviceScaleFactor: 1, mobile: false,
   });
   const metrics = await page.evaluate(() => {
-    const selectors = [".photo-review", ".photo-review-toolbar", ".photo-review-controls", ".photo-filmstrip"];
+    const selectors = [".photo-review-workspace", ".photo-review-side", ".photo-stage", ".photo-filmstrip"];
     return {
       viewport: innerWidth,
       fits: document.documentElement.scrollWidth <= innerWidth,
@@ -154,12 +155,16 @@ for (const width of [1280, 760]) {
         const rect = document.querySelector(selector).getBoundingClientRect();
         return { selector, x: rect.x, right: rect.right, top: rect.top, bottom: rect.bottom, height: rect.height };
       }),
-      modes: [...document.querySelectorAll('[aria-label="审图模式"] button')].map(e => e.getBoundingClientRect().top),
+      modes: [...document.querySelectorAll('[aria-label="审图模式"] button')].map(e => e.getBoundingClientRect().left),
     };
   });
   assert.ok(metrics.fits, `viewport ${width} must not overflow`);
-  assert.equal(new Set(metrics.modes).size, 1, "mode buttons share a baseline");
-  assert.ok(metrics.rows.every(row => row.bottom <= 850 && row.height > 0), "review controls and filmstrip remain visible");
+  assert.equal(new Set(metrics.modes).size, 1, "mode buttons align in the sidebar");
+  assert.ok(metrics.rows.every(row => row.bottom <= 850 && row.height > 0), "both wings and the image stage fit the viewport");
+  const [workspace, side, stage, film] = metrics.rows;
+  assert.ok(film.right <= stage.x && stage.right <= side.x, "the photo sits between two non-overlapping wings");
+  assert.equal(stage.top, workspace.top, "the photo uses the full workspace height");
+  assert.equal(stage.bottom, workspace.bottom);
   measurements.push(metrics);
 }
 console.log({ passed: "quick flags, backtrack/correct, picked-only ratings, debounce, configurable delay, navigation cancellation, save failure, empty picks, immediate increase/decrease animations during slow saves, responsive layout", animations, measurements });

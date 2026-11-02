@@ -78,6 +78,7 @@ await page.goto(globalThis.filoExportUrl ?? "http://127.0.0.1:1420");
 await page.click('.main-nav button:text-is("审图")');
 await page.click('.photo-session-toolbar button:text-is("继续审图")');
 await page.waitForSelector(".photo-stage img");
+await page.click('.photo-review-options > summary');
 await page.click('.photo-review-toolbar button:text-is("导出到目录")');
 await page.waitForSelector("dialog[open]");
 const controls = await page.evaluate(() => [...document.querySelectorAll("dialog select")].map(select => ({

@@ -116,7 +116,7 @@ assert.equal(
   false,
 );
 
-await page.click('.photo-review-toolbar button:text-is("返回文件夹")');
+await page.click('.photo-review-back');
 await open();
 await page.cdp("Emulation.setDeviceMetricsOverride", {
   width: 940,

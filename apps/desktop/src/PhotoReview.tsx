@@ -16,6 +16,8 @@ import {
   Flag,
   Maximize,
   Minimize,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Settings2,
   Star,
@@ -233,6 +235,7 @@ export function PhotoReview({
   const cacheDebug = useAppSettings((state) => state.debugMode);
   const rawOnly = controller.rawOnly;
   const [fullscreen, setFullscreen] = useState(false);
+  const [showFilmstrip, setShowFilmstrip] = useState(true);
   const [image, setImage] = useState<{
     id: string;
     preview: PhotoPreview;
@@ -336,20 +339,20 @@ export function PhotoReview({
       const list = filmstrip.current;
       if (!list) return;
       const style = getComputedStyle(list);
-      const width = parseFloat(
-        style.getPropertyValue("--photo-thumbnail-width"),
+      const height = parseFloat(
+        style.getPropertyValue("--photo-thumbnail-height"),
       );
-      const stride = width + parseFloat(style.columnGap);
+      const stride = height + parseFloat(style.rowGap);
       if (center && index >= 0) {
-        list.scrollLeft =
-          parseFloat(style.paddingLeft) +
+        list.scrollTop =
+          parseFloat(style.paddingTop) +
           index * stride -
-          (list.clientWidth - width) / 2;
+          (list.clientHeight - height) / 2;
       }
-      const start = Math.max(0, Math.floor(list.scrollLeft / stride) - 2);
+      const start = Math.max(0, Math.floor(list.scrollTop / stride) - 2);
       const end = Math.min(
         visible.length,
-        Math.ceil((list.scrollLeft + list.clientWidth) / stride) + 2,
+        Math.ceil((list.scrollTop + list.clientHeight) / stride) + 2,
       );
       setFilmstripRange((previous) =>
         previous.start === start && previous.end === end
@@ -502,6 +505,19 @@ export function PhotoReview({
         document.querySelector("dialog[open]")
       )
         return;
+      if (
+        event.key.toLowerCase() === "t" &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.repeat
+      ) {
+        event.preventDefault();
+        controller.cancelAdvance();
+        setShowFilmstrip((value) => !value);
+        stage.current?.focus({ preventScroll: true });
+        return;
+      }
       // Holding Space must not scroll the stage or activate the last clicked
       // flag/mode button, even though repeated zoom actions are ignored.
       if (
@@ -642,13 +658,15 @@ export function PhotoReview({
     if (!list) return;
     const center = () => updateFilmstrip(true);
     center();
+    let height = list.clientHeight;
     let width = list.clientWidth;
     return observeResize([list], () => {
-      if (list.clientWidth === width) return;
+      if (list.clientHeight === height && list.clientWidth === width) return;
+      height = list.clientHeight;
       width = list.clientWidth;
       center();
     });
-  }, [photo?.id, updateFilmstrip]);
+  }, [photo?.id, updateFilmstrip, showFilmstrip]);
   useEffect(() => {
     let live = true;
     setPreviewFailure("");
@@ -796,404 +814,525 @@ export function PhotoReview({
           {titleContent}
         </div>
       )}
-      <div className="photo-review-toolbar" data-tauri-drag-region>
-        <div className="photo-review-leading-controls">
-          <button className="photo-review-back" onClick={() => void back()}>
-            <ArrowLeft size={17} />
-            {backLabel}
-          </button>
-          <div className="photo-quick-filters" role="group" aria-label="审图模式">
-            {(
-              [
-                ["manual", "自由审图"],
-                ["flags", "旗标快筛"],
-                ["rating", "星级筛选"],
-              ] as const
-            ).map(([value, label]) => (
-              <button
-                key={value}
-                aria-pressed={mode === value}
-                onClick={() => changeMode(value)}
-              >
-                {label}
-              </button>
-            ))}
+      <div
+        className={`photo-review-workspace${showFilmstrip ? "" : " no-filmstrip"}`}
+      >
+        {!showFilmstrip && (
+          <div className="photo-review-film-rail">
+            <button
+              className="photo-review-film-expand"
+              title="展开照片序列 (T)"
+              aria-label="展开照片序列"
+              aria-expanded={false}
+              aria-keyshortcuts="T"
+              onClick={() => {
+                setShowFilmstrip(true);
+                stage.current?.focus({ preventScroll: true });
+              }}
+            >
+              <PanelLeftOpen size={17} />
+              <span>照片序列</span>
+              <ChevronRight size={14} />
+            </button>
           </div>
-        </div>
-        <span className="photo-review-toolbar-spacer" aria-hidden="true" />
-        <span className="photo-review-select">
-          <select
-            aria-label="照片排序"
-            value={sort}
-            onChange={(event) => {
-              controller.cancelAdvance();
-              setSort(event.target.value as typeof sort);
-            }}
-          >
-            <option value="name_asc">文件名升序</option>
-            <option value="name_desc">文件名降序</option>
-            <option value="capture_asc">拍摄日期升序</option>
-            <option value="capture_desc">拍摄日期降序</option>
-          </select>
-          <ChevronDown size={14} aria-hidden="true" />
-        </span>
-        {mode === "manual" && (
-          <>
+        )}
+        {showFilmstrip && (
+          <aside className="photo-review-film-wing" aria-label="照片序列">
+            <button
+              title="收起缩略图 (T)"
+              aria-label="收起照片序列"
+              aria-expanded={true}
+              aria-keyshortcuts="T"
+              aria-controls="review-filmstrip"
+              onClick={() => {
+                setShowFilmstrip(false);
+                stage.current?.focus({ preventScroll: true });
+              }}
+            >
+              <PanelLeftClose size={17} />
+            </button>
+            <span className="photo-review-wing-label">照片序列</span>
             <div
-              className="photo-quick-filters"
-              role="group"
-              aria-label="快捷筛选"
+              id="review-filmstrip"
+              className="photo-filmstrip"
+              aria-label="审图胶片带"
+              ref={filmstrip}
+              style={{
+                gridTemplateRows: visible.length
+                  ? `repeat(${visible.length}, var(--photo-thumbnail-height))`
+                  : undefined,
+              }}
+              onScroll={() => updateFilmstrip()}
             >
-              {quickFilters.map((preset) => (
-                <button
-                  key={preset.label}
-                  aria-pressed={
-                    filter === preset.filter &&
-                    (preset.filter !== "all" || minimum === preset.minimum)
-                  }
-                  onClick={() => changeFilter(preset.filter, preset.minimum)}
-                >
-                  {preset.label}
-                </button>
-              ))}
+              {visible
+                .slice(filmstripRange.start, filmstripRange.end)
+                .map((p, offset) => (
+                  <button
+                    key={p.id}
+                    style={{ gridRow: filmstripRange.start + offset + 1 }}
+                    aria-label={`查看 ${rawOnly ? p.files.find((f) => f.kind === "raw")?.path : p.original_path}`}
+                    aria-current={p.id === photo?.id}
+                    className={p.id === photo?.id ? "current" : ""}
+                    onClick={() => controller.select(p.id)}
+                  >
+                    <Thumbnail photo={p} rawOnly={rawOnly} />
+                    <span className="photo-filmstrip-number">
+                      {filmstripRange.start + offset + 1}
+                    </span>
+                    {cacheDebug && <CacheCover id={p.id} rawOnly={rawOnly} />}
+                    <span className="photo-filmstrip-mark">
+                      {p.flag === "pick" && (
+                        <Flag
+                          size={12}
+                          className={p.flag}
+                          fill="currentColor"
+                        />
+                      )}
+                      {p.flag === "reject" && (
+                        <X size={12} className="reject" aria-label="待删除" />
+                      )}
+                      {p.rating > 0 && <span>{"★".repeat(p.rating)}</span>}
+                    </span>
+                  </button>
+                ))}
             </div>
-            <span className="photo-review-select">
-              <select
-                aria-label="星级门槛"
-                value={minimum}
-                onChange={(e) => changeFilter(filter, Number(e.target.value))}
-              >
-                <option value={0}>所有星级</option>
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <option key={n} value={n}>
-                    {n} 星及以上
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={14} aria-hidden="true" />
-            </span>
-          </>
+            <span className="photo-review-wing-label">{visible.length} 张</span>
+          </aside>
         )}
-        {mode === "rating" && (
-          <label className="photo-review-delay">
-            自动下一张
-            <span className="photo-review-select">
-              <select
-                aria-label="星级等待时间"
-                value={ratingDelay}
-                onChange={(event) => {
-                  controller.cancelAdvance();
-                  setRatingDelay(Number(event.target.value));
-                }}
-              >
-                {[200, 500, 800, 1000, 1500, 2000].map((delay) => (
-                  <option key={delay} value={delay}>
-                    {delay} ms
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={14} aria-hidden="true" />
-            </span>
-          </label>
-        )}
-        <label className="photo-review-toggle">
-          <input
-            type="checkbox"
-            role="switch"
-            checked={rawOnly}
-            onChange={(e) => {
-              const value = e.target.checked;
-              const current = controller.current;
-              const eligible = ordered.filter(
-                (p) =>
-                  (!value || hasRaw(p)) &&
-                  matchesPhoto(p, activeFilter, activeMinimum),
-              );
-              controller.setRawOnly(value);
-              controller.select(
-                eligible.find((p) => p.id === current)?.id ??
-                  eligible[0]?.id ??
-                  null,
-              );
-            }}
-          />
-          仅查看 RAW
-        </label>
-        {mode === "manual" && (
-          <label className="photo-review-toggle">
-            <input
-              type="checkbox"
-              role="switch"
-              checked={auto}
-              onChange={(e) => setAuto(e.target.checked)}
-            />
-            自动前进
-          </label>
-        )}
-        <PhotoExportButton
-          session={session}
-          disabled={reloading || controller.pending > 0 || !!failure.message}
-          beforeExport={async () => {
-            await controller.settle();
-            if (positionRef.current) await writePosition(positionRef.current);
-          }}
-        />
-        <button
-          className="icon-button photo-review-fullscreen"
-          title={fullscreen ? "退出全屏" : "全屏审图"}
-          aria-label={fullscreen ? "退出全屏" : "全屏审图"}
-          onClick={() => {
-            const request = document.fullscreenElement
-              ? document.exitFullscreen()
-              : container.current?.requestFullscreen();
-            void request?.catch((error) =>
-              setFailure({ message: errorMessage(error), retry: null }),
-            );
-          }}
-        >
-          {fullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
-        </button>
-        <button
-          className="icon-button photo-review-settings"
-          title="设置"
-          aria-label="审图设置"
-          disabled={reloading || !!exitStatus}
-          onClick={async () => {
-            controller.cancelAdvance();
-            setFeedback(null);
-            settingsViewport.current = {
-              left: stage.current?.scrollLeft ?? 0,
-              top: stage.current?.scrollTop ?? 0,
-            };
-            try {
-              if (document.fullscreenElement) await document.exitFullscreen();
-              useBrowser.getState().openReviewSettings();
-            } catch (error) {
-              settingsViewport.current = null;
-              setFailure({ message: errorMessage(error), retry: null });
-            }
-          }}
-        >
-          <Settings2 size={18} />
-        </button>
-      </div>
-      {dateProgress && (
-        <div className="photo-date-progress" role="status">
-          正在读取拍摄日期
-          {dateProgress.total != null
-            ? ` · ${dateProgress.completed} / ${dateProgress.total}`
-            : "…"}
-          <button onClick={() => setSort("name_asc")}>取消读取</button>
-        </div>
-      )}
-      {failure.message && (
-        <div className="photo-review-error" role="alert">
-          {failure.message}
-          {failure.reload && onReload ? (
-            <button disabled={reloading} onClick={() => void reload()}>
-              {reloading ? "正在重新载入…" : "重新载入目录"}
-            </button>
-          ) : (
-            failure.retry && <button onClick={failure.retry}>重试</button>
+        <div className="photo-review-preview-column">
+          {dateProgress && (
+            <div className="photo-date-progress" role="status">
+              正在读取拍摄日期
+              {dateProgress.total != null
+                ? ` · ${dateProgress.completed} / ${dateProgress.total}`
+                : "…"}
+              <button onClick={() => setSort("name_asc")}>取消读取</button>
+            </div>
           )}
-          <button
-            aria-label="关闭错误提示"
-            onClick={() => setFailure({ message: "", retry: null })}
+          {failure.message && (
+            <div className="photo-review-error" role="alert">
+              {failure.message}
+              {failure.reload && onReload ? (
+                <button disabled={reloading} onClick={() => void reload()}>
+                  {reloading ? "正在重新载入…" : "重新载入目录"}
+                </button>
+              ) : (
+                failure.retry && <button onClick={failure.retry}>重试</button>
+              )}
+              <button
+                aria-label="关闭错误提示"
+                onClick={() => setFailure({ message: "", retry: null })}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
+          <div
+            ref={stage}
+            tabIndex={-1}
+            aria-label="照片预览"
+            className={`photo-stage ${original ? "original" : ""}`}
+            onDoubleClick={() => setOriginal((value) => !value)}
           >
-            <X size={14} />
-          </button>
-        </div>
-      )}
-      <div
-        ref={stage}
-        tabIndex={-1}
-        aria-label="照片预览"
-        className={`photo-stage ${original ? "original" : ""}`}
-        onDoubleClick={() => setOriginal((value) => !value)}
-      >
-        {shownImage ? (
-          <div className="photo-image-surface">
-            <img
-              ref={mainImage}
-              onLoad={centerZoom}
-              src={`data:${shownImage.preview.mime};base64,${shownImage.preview.content}`}
-              alt={photoPath}
-              style={
-                original
-                  ? {
-                      width: shownImage.preview.width,
-                      height: shownImage.preview.height,
-                    }
-                  : undefined
-              }
+            {shownImage ? (
+              <div className="photo-image-surface">
+                <img
+                  ref={mainImage}
+                  onLoad={centerZoom}
+                  src={`data:${shownImage.preview.mime};base64,${shownImage.preview.content}`}
+                  alt={photoPath}
+                  style={
+                    original
+                      ? {
+                          width: shownImage.preview.width,
+                          height: shownImage.preview.height,
+                        }
+                      : undefined
+                  }
+                />
+              </div>
+            ) : (
+              <p>
+                {photo
+                  ? "正在读取预览…"
+                  : rawOnly && !controller.photos.some(hasRaw)
+                    ? "此目录没有 RAW 照片"
+                    : mode === "rating"
+                      ? "还没有留用照片，请先用「旗标快筛」标记留用"
+                      : "没有符合筛选条件的照片"}
+              </p>
+            )}
+            {previewFailure && (
+              <div className="photo-preview-error" role="alert">
+                {previewFailure}
+                <button onClick={retryPreview}>重试预览</button>
+              </div>
+            )}
+            <PhotoFeedback
+              feedback={feedback?.photoId === photo?.id ? feedback : null}
             />
           </div>
-        ) : (
-          <p>
-            {photo
-              ? "正在读取预览…"
-              : rawOnly && !controller.photos.some(hasRaw)
-                ? "此目录没有 RAW 照片"
-                : mode === "rating"
-                  ? "还没有留用照片，请先用「旗标快筛」标记留用"
-                  : "没有符合筛选条件的照片"}
-          </p>
-        )}
-        {previewFailure && (
-          <div className="photo-preview-error" role="alert">
-            {previewFailure}
-            <button onClick={retryPreview}>重试预览</button>
-          </div>
-        )}
-        <PhotoFeedback
-          feedback={feedback?.photoId === photo?.id ? feedback : null}
-        />
-      </div>
-      <div className="photo-review-controls">
-        <button
-          aria-label="上一张"
-          disabled={index <= 0}
-          onClick={() => step(-1)}
-        >
-          <ChevronLeft />
-        </button>
-        <span className="photo-counter">
-          {index < 0 ? 0 : index + 1} / {visible.length}
-        </span>
-        <button
-          aria-label="下一张"
-          disabled={index < 0 || index >= visible.length - 1}
-          onClick={() => step(1)}
-        >
-          <ChevronRight />
-        </button>
-        {mode !== "flags" && (
-          <div className="photo-rating" aria-label="星级">
-            {[1, 2, 3, 4, 5].map((n) => (
-              <button
-                key={`${n}:${feedback?.kind === "up" && n > feedback.from && n <= feedback.rating ? feedback.id : "rest"}`}
-                aria-label={`${n} 星`}
-                disabled={!photo}
-                title={photo?.rating === n ? "再次点击清除星级 (0)" : `${n} 星`}
-                aria-pressed={photo?.rating === n}
-                className={
-                  (photo?.rating ?? 0) >= n
-                    ? `filled ${feedback?.kind === "up" && n > feedback.from && n <= feedback.rating ? "added" : ""}`
-                    : ""
+        </div>
+        <aside className="photo-review-side" aria-label="审图操作">
+          <div className="photo-review-side-heading">
+            <button className="photo-review-back" onClick={() => void back()}>
+              <ArrowLeft size={17} />
+              {backLabel}
+            </button>
+            <button
+              className="icon-button photo-review-settings"
+              title="设置"
+              aria-label="审图设置"
+              disabled={reloading || !!exitStatus}
+              onClick={async () => {
+                controller.cancelAdvance();
+                setFeedback(null);
+                settingsViewport.current = {
+                  left: stage.current?.scrollLeft ?? 0,
+                  top: stage.current?.scrollTop ?? 0,
+                };
+                try {
+                  if (document.fullscreenElement)
+                    await document.exitFullscreen();
+                  useBrowser.getState().openReviewSettings();
+                } catch (error) {
+                  settingsViewport.current = null;
+                  setFailure({ message: errorMessage(error), retry: null });
                 }
-                style={{
-                  animationDelay: `${Math.max(0, n - (feedback?.from ?? n) - 1) * 40}ms`,
-                }}
-                onClick={() => markRating(photo?.rating === n ? 0 : n)}
+              }}
+            >
+              <Settings2 size={18} />
+            </button>
+          </div>
+          <div className="photo-review-file-info">
+            <span title={locationName}>{locationName}</span>
+            <strong title={photoPath}>
+              {filename ?? "没有符合筛选条件的照片"}
+            </strong>
+            <small>
+              {mode === "manual"
+                ? "自由审图"
+                : mode === "flags"
+                  ? "旗标快筛"
+                  : "星级筛选"}
+            </small>
+          </div>
+          <div className="photo-review-controls">
+            <div className="photo-review-navigation" aria-label="照片导航">
+              <button
+                aria-label="上一张"
+                disabled={index <= 0}
+                onClick={() => step(-1)}
               >
-                <Star
-                  size={23}
-                  fill={(photo?.rating ?? 0) >= n ? "currentColor" : "none"}
-                />
+                <ChevronLeft />
               </button>
-            ))}
-          </div>
-        )}
-        {mode === "rating" && (
-          <button
-            disabled={!photo || photo.rating >= 5}
-            onClick={() => markRating((photo?.rating ?? 0) + 1)}
-          >
-            <Plus size={16} />
-            升一星
-          </button>
-        )}
-        {mode !== "rating" && (
-          <div className="photo-flags">
-            <button
-              disabled={!photo}
-              className={photo?.flag === "pick" ? "pick selected" : ""}
-              aria-pressed={photo?.flag === "pick"}
-              aria-keyshortcuts="C P"
-              title={
-                mode !== "flags" && photo?.flag === "pick" ? "取消留用" : "留用"
-              }
-              onClick={() => markFlag("pick")}
-            >
-              <Flag size={17} />
-              留用
-              <kbd aria-hidden="true">C</kbd>
-            </button>
-            <button
-              disabled={!photo}
-              className={photo?.flag === "reject" ? "reject selected" : ""}
-              aria-pressed={photo?.flag === "reject"}
-              aria-keyshortcuts="X"
-              title={
-                mode !== "flags" && photo?.flag === "reject"
-                  ? "取消排除"
-                  : "排除，只标记文件"
-              }
-              onClick={() => markFlag("reject")}
-            >
-              <Flag size={17} />
-              排除
-              <kbd aria-hidden="true">X</kbd>
-            </button>
-          </div>
-        )}
-        <button title="撤销 (Cmd/Ctrl+Z)" aria-label="撤销标记" onClick={undo}>
-          <Undo2 size={18} />
-        </button>
-        <button
-          className={original ? "selected" : ""}
-          title="放大并居中焦点（空格 / Z）"
-          aria-keyshortcuts="Space Z"
-          onClick={() => setOriginal((value) => !value)}
-        >
-          {original ? "适应窗口" : "原尺寸"}
-        </button>
-        <span className="photo-save-status">
-          {controller.hasFailedWrites ||
-          (failure.message && failure.kind !== "dates")
-            ? "保存失败"
-            : controller.pending
-              ? "保存中…"
-              : session.directory
-                ? "已保存到目录"
-                : "本机已保存"}
-        </span>
-      </div>
-      <div
-        className="photo-filmstrip"
-        aria-label="审图胶片带"
-        ref={filmstrip}
-        style={{
-          gridTemplateColumns: visible.length
-            ? `repeat(${visible.length}, var(--photo-thumbnail-width))`
-            : undefined,
-        }}
-        onScroll={() => updateFilmstrip()}
-      >
-        {visible
-          .slice(filmstripRange.start, filmstripRange.end)
-          .map((p, offset) => (
-            <button
-              key={p.id}
-              style={{ gridColumn: filmstripRange.start + offset + 1 }}
-              aria-label={`查看 ${rawOnly ? p.files.find((f) => f.kind === "raw")?.path : p.original_path}`}
-              aria-current={p.id === photo?.id}
-              className={p.id === photo?.id ? "current" : ""}
-              onClick={() => controller.select(p.id)}
-            >
-              <Thumbnail photo={p} rawOnly={rawOnly} />
-              {cacheDebug && <CacheCover id={p.id} rawOnly={rawOnly} />}
-              <span className="photo-filmstrip-mark">
-                {p.flag === "pick" && (
-                  <Flag size={12} className={p.flag} fill="currentColor" />
-                )}
-                {p.flag === "reject" && (
-                  <X size={12} className="reject" aria-label="待删除" />
-                )}
-                {p.rating > 0 && <span>{"★".repeat(p.rating)}</span>}
+              <span className="photo-counter">
+                {index < 0 ? 0 : index + 1} / {visible.length}
               </span>
-            </button>
-          ))}
+              <button
+                aria-label="下一张"
+                disabled={index < 0 || index >= visible.length - 1}
+                onClick={() => step(1)}
+              >
+                <ChevronRight />
+              </button>
+            </div>
+            {mode !== "flags" && (
+              <div className="photo-rating" aria-label="星级">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <button
+                    key={`${n}:${feedback?.kind === "up" && n > feedback.from && n <= feedback.rating ? feedback.id : "rest"}`}
+                    aria-label={`${n} 星`}
+                    disabled={!photo}
+                    title={
+                      photo?.rating === n ? "再次点击清除星级 (0)" : `${n} 星`
+                    }
+                    aria-pressed={photo?.rating === n}
+                    className={
+                      (photo?.rating ?? 0) >= n
+                        ? `filled ${feedback?.kind === "up" && n > feedback.from && n <= feedback.rating ? "added" : ""}`
+                        : ""
+                    }
+                    style={{
+                      animationDelay: `${Math.max(0, n - (feedback?.from ?? n) - 1) * 40}ms`,
+                    }}
+                    onClick={() => markRating(photo?.rating === n ? 0 : n)}
+                  >
+                    <Star
+                      size={23}
+                      fill={(photo?.rating ?? 0) >= n ? "currentColor" : "none"}
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
+            {mode === "rating" && (
+              <button
+                disabled={!photo || photo.rating >= 5}
+                onClick={() => markRating((photo?.rating ?? 0) + 1)}
+              >
+                <Plus size={16} />
+                升一星
+              </button>
+            )}
+            {mode !== "rating" && (
+              <div className="photo-flags">
+                <button
+                  disabled={!photo}
+                  className={photo?.flag === "pick" ? "pick selected" : ""}
+                  aria-pressed={photo?.flag === "pick"}
+                  aria-keyshortcuts="C P"
+                  title={
+                    mode !== "flags" && photo?.flag === "pick"
+                      ? "取消留用"
+                      : "留用"
+                  }
+                  onClick={() => markFlag("pick")}
+                >
+                  <Flag size={17} />
+                  留用
+                  <kbd aria-hidden="true">C</kbd>
+                </button>
+                <button
+                  disabled={!photo}
+                  className={photo?.flag === "reject" ? "reject selected" : ""}
+                  aria-pressed={photo?.flag === "reject"}
+                  aria-keyshortcuts="X"
+                  title={
+                    mode !== "flags" && photo?.flag === "reject"
+                      ? "取消排除"
+                      : "排除，只标记文件"
+                  }
+                  onClick={() => markFlag("reject")}
+                >
+                  <Flag size={17} />
+                  排除
+                  <kbd aria-hidden="true">X</kbd>
+                </button>
+              </div>
+            )}
+            {mode === "manual" && (
+              <label className="photo-review-toggle">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={auto}
+                  onChange={(e) => setAuto(e.target.checked)}
+                />
+                标记后自动前进
+              </label>
+            )}
+            <div className="photo-review-tools">
+              <button
+                title="撤销 (Cmd/Ctrl+Z)"
+                aria-label="撤销标记"
+                onClick={undo}
+              >
+                <Undo2 size={18} />
+              </button>
+              <button
+                className={original ? "selected" : ""}
+                title="放大并居中焦点（空格 / Z）"
+                aria-keyshortcuts="Space Z"
+                onClick={() => setOriginal((value) => !value)}
+              >
+                {original ? "适应窗口" : "原尺寸"}
+              </button>
+            </div>
+            <div className="photo-review-tools">
+              <button
+                className="icon-button photo-review-fullscreen"
+                title={fullscreen ? "退出全屏" : "全屏审图"}
+                aria-label={fullscreen ? "退出全屏" : "全屏审图"}
+                onClick={() => {
+                  const request = document.fullscreenElement
+                    ? document.exitFullscreen()
+                    : container.current?.requestFullscreen();
+                  void request?.catch((error) =>
+                    setFailure({ message: errorMessage(error), retry: null }),
+                  );
+                }}
+              >
+                {fullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
+              </button>
+              <button
+                title={showFilmstrip ? "收起缩略图 (T)" : "显示缩略图 (T)"}
+                aria-label={showFilmstrip ? "收起缩略图" : "显示缩略图"}
+                aria-pressed={showFilmstrip}
+                aria-controls="review-filmstrip"
+                onClick={() => setShowFilmstrip((value) => !value)}
+              >
+                {showFilmstrip ? (
+                  <PanelLeftClose size={18} />
+                ) : (
+                  <PanelLeftOpen size={18} />
+                )}
+              </button>
+            </div>
+          </div>
+          <details className="photo-review-options">
+            <summary>
+              筛选与模式 <ChevronDown size={14} />
+            </summary>
+            <div className="photo-review-toolbar">
+              <div className="photo-review-leading-controls">
+                <div
+                  className="photo-quick-filters"
+                  role="group"
+                  aria-label="审图模式"
+                >
+                  {(
+                    [
+                      ["manual", "自由审图"],
+                      ["flags", "旗标快筛"],
+                      ["rating", "星级筛选"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      aria-pressed={mode === value}
+                      onClick={() => changeMode(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <span className="photo-review-select">
+                <select
+                  aria-label="照片排序"
+                  value={sort}
+                  onChange={(event) => {
+                    controller.cancelAdvance();
+                    setSort(event.target.value as typeof sort);
+                  }}
+                >
+                  <option value="name_asc">文件名升序</option>
+                  <option value="name_desc">文件名降序</option>
+                  <option value="capture_asc">拍摄日期升序</option>
+                  <option value="capture_desc">拍摄日期降序</option>
+                </select>
+                <ChevronDown size={14} aria-hidden="true" />
+              </span>
+              {mode === "manual" && (
+                <>
+                  <div
+                    className="photo-quick-filters"
+                    role="group"
+                    aria-label="快捷筛选"
+                  >
+                    {quickFilters.map((preset) => (
+                      <button
+                        key={preset.label}
+                        aria-pressed={
+                          filter === preset.filter &&
+                          (preset.filter !== "all" ||
+                            minimum === preset.minimum)
+                        }
+                        onClick={() =>
+                          changeFilter(preset.filter, preset.minimum)
+                        }
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="photo-review-select">
+                    <select
+                      aria-label="星级门槛"
+                      value={minimum}
+                      onChange={(e) =>
+                        changeFilter(filter, Number(e.target.value))
+                      }
+                    >
+                      <option value={0}>所有星级</option>
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <option key={n} value={n}>
+                          {n} 星及以上
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={14} aria-hidden="true" />
+                  </span>
+                </>
+              )}
+              {mode === "rating" && (
+                <label className="photo-review-delay">
+                  自动下一张
+                  <span className="photo-review-select">
+                    <select
+                      aria-label="星级等待时间"
+                      value={ratingDelay}
+                      onChange={(event) => {
+                        controller.cancelAdvance();
+                        setRatingDelay(Number(event.target.value));
+                      }}
+                    >
+                      {[200, 500, 800, 1000, 1500, 2000].map((delay) => (
+                        <option key={delay} value={delay}>
+                          {delay} ms
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={14} aria-hidden="true" />
+                  </span>
+                </label>
+              )}
+              <label className="photo-review-toggle">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={rawOnly}
+                  onChange={(e) => {
+                    const value = e.target.checked;
+                    const current = controller.current;
+                    const eligible = ordered.filter(
+                      (p) =>
+                        (!value || hasRaw(p)) &&
+                        matchesPhoto(p, activeFilter, activeMinimum),
+                    );
+                    controller.setRawOnly(value);
+                    controller.select(
+                      eligible.find((p) => p.id === current)?.id ??
+                        eligible[0]?.id ??
+                        null,
+                    );
+                  }}
+                />
+                仅查看 RAW
+              </label>
+              <PhotoExportButton
+                session={session}
+                disabled={
+                  reloading || controller.pending > 0 || !!failure.message
+                }
+                beforeExport={async () => {
+                  await controller.settle();
+                  if (positionRef.current)
+                    await writePosition(positionRef.current);
+                }}
+              />
+            </div>
+          </details>
+          <p className="photo-review-shortcuts">
+            ← → 切换照片
+            <br />
+            1–5 星级 · 0 清空
+            <br />C 留用 · X 排除
+            <br />
+            空格 / Z 缩放 · T 缩略图
+          </p>
+          <span className="photo-save-status" role="status">
+            {controller.hasFailedWrites ||
+            (failure.message && failure.kind !== "dates")
+              ? "保存失败"
+              : controller.pending
+                ? "保存中…"
+                : session.directory
+                  ? "已保存到目录"
+                  : "本机已保存"}
+          </span>
+        </aside>
       </div>
     </section>
   );

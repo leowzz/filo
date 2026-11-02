@@ -122,7 +122,7 @@ await page.keyboard.press("ArrowRight");
 await page.waitForFunction(
   () => window.positionCalls.at(-1)?.position.current === "two",
 );
-await page.click('.photo-review-toolbar button:has-text("返回文件夹")');
+await page.click('.photo-review-back');
 await page.waitForSelector('tr[data-entry-path="trip/trip"]');
 assert.match(
   await page.evaluate(() => document.querySelector(".pathbar").textContent),
@@ -139,7 +139,7 @@ assert.equal(
   "查看 two.jpg",
 );
 assert.equal(await page.evaluate(() => window.catalog.photos[0].rating), 4);
-await page.click('.photo-review-toolbar button:has-text("返回文件夹")');
+await page.click('.photo-review-back');
 await page.waitForSelector('tr[data-entry-path="trip/trip"]');
 await page.click('button[aria-label="trip 操作菜单"]');
 await page.click('.entry-menu button:has-text("进入审图")');
@@ -167,7 +167,7 @@ assert.equal(
   await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
   true,
 );
-await page.click('.photo-review-toolbar button:has-text("返回文件夹")');
+await page.click('.photo-review-back');
 // Recent folder reviews must not start a save/refetch loop in the library UI.
 await page.click('.main-nav button:has-text("审图")');
 if (
