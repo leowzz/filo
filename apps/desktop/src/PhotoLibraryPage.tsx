@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ArrowLeft,
-  Camera,
-  ChevronRight,
-  FolderOpen,
-  RefreshCw,
-} from "lucide-react";
+import { Camera, ChevronRight, FolderOpen } from "lucide-react";
 import { desktop, errorMessage } from "./api";
 import { Modal } from "./components";
 import {
@@ -16,7 +10,6 @@ import {
   type PhotoCatalog,
   type PhotoDirectory,
 } from "./photoApi";
-import { PhotoExportButton } from "./PhotoExportButton";
 import { PhotoReview } from "./PhotoReview";
 import { useReviewScan } from "./useReviewScan";
 import { ReviewScanStatus } from "./ReviewScanStatus";
@@ -200,18 +193,19 @@ export function PhotoLibraryPage() {
     },
     [client, scheduleSync],
   );
-  const startReview = async () => {
-    if (!session || syncing || openingReview) return;
+  const startReview = async (target = session) => {
+    if (!target || syncing || openingReview) return;
+    setSelected(target.id);
     setOpeningReview(true);
     setError("");
     try {
-      if (session.directory) {
+      if (target.directory) {
         const reopened = await resumeScan.open({
-          name: session.name,
-          jpg: session.directory,
+          name: target.name,
+          jpg: target.directory,
           raw: null,
           directory: true,
-          raw_only: session.position.raw_only,
+          raw_only: target.position.raw_only,
         });
         if (!reopened) {
           setReview(false);
@@ -269,7 +263,7 @@ export function PhotoLibraryPage() {
           photos={photos}
           onSaved={saved}
           onPositionSaved={scheduleSync}
-          onReload={session.directory ? startReview : undefined}
+          onReload={session.directory ? () => startReview(session) : undefined}
           onBack={() => {
             setReview(false);
             void refresh();
@@ -280,22 +274,7 @@ export function PhotoLibraryPage() {
   return (
     <section className="photo-workspace-body">
       <div className="photo-page-actions">
-        {session ? (
-          <>
-            <button
-              className="secondary"
-              onClick={() => {
-                setSelected(null);
-              }}
-            >
-              <ArrowLeft size={16} />
-              全部审图记录
-            </button>
-            <h2>{session.name}</h2>
-          </>
-        ) : (
-          <h2>审图记录</h2>
-        )}
+        <h2>审图记录</h2>
         <div className="photo-page-action-spacer" />
         <button
           className="primary"
@@ -319,112 +298,48 @@ export function PhotoLibraryPage() {
           {errorMessage(query.error)}
           <button onClick={() => void query.refetch()}>重试</button>
         </div>
-      ) : !session ? (
-        query.data?.sessions.length ? (
-          <div className="photo-session-list">
-            {query.data.sessions
-              .slice()
-              .reverse()
-              .map((s) => (
-                <button
-                  key={s.id}
-                  onClick={() => {
-                    setSelected(s.id);
-                  }}
-                >
-                  <Camera size={22} />
-                  <span>
-                    <strong>{s.name}</strong>
-                    <small>{s.photo_ids.length} 张照片</small>
-                  </span>
-                  <span className="photo-sync-status">
-                    {s.directory
-                      ? "已保存到目录"
-                      : s.sync_error
-                        ? "NAS 同步失败"
-                        : s.revision > s.synced_revision
-                          ? "NAS 待同步"
-                          : "NAS 已同步"}
-                  </span>
-                  <ChevronRight size={18} />
-                </button>
-              ))}
-          </div>
-        ) : (
-          <div className="photo-empty">
-            <Camera size={42} />
-            <h3>打开照片目录，开始初选</h3>
-            <p>为照片评分，将 3 星及以上 RAW 导出到目录。</p>
-            <button
-              className="primary"
-              disabled={!desktop}
-              onClick={() => setOpen(true)}
-            >
-              打开照片目录
-            </button>
-          </div>
-        )
+      ) : query.data?.sessions.length ? (
+        <div className="photo-session-list">
+          {query.data.sessions
+            .slice()
+            .reverse()
+            .map((s) => (
+              <button
+                key={s.id}
+                disabled={syncing || openingReview}
+                onClick={() => void startReview(s)}
+              >
+                <Camera size={22} />
+                <span>
+                  <strong>{s.name}</strong>
+                  <small>{s.photo_ids.length} 张照片</small>
+                </span>
+                <span className="photo-sync-status">
+                  {s.directory
+                    ? "已保存到目录"
+                    : s.sync_error
+                      ? "NAS 同步失败"
+                      : s.revision > s.synced_revision
+                        ? "NAS 待同步"
+                        : "NAS 已同步"}
+                </span>
+                <ChevronRight size={18} />
+              </button>
+            ))}
+        </div>
       ) : (
-        <>
-          <div className="photo-session-toolbar">
-            <span
-              className={`photo-sync-status ${session.sync_error ? "error" : ""}`}
-            >
-              {status}
-            </span>
-            <button
-              className="secondary"
-              disabled={syncing}
-              onClick={() => void sync(session.id, true)}
-            >
-              <RefreshCw size={15} />
-              {session.directory ? "保存到目录" : "同步到 NAS"}
-            </button>
-            <PhotoExportButton session={session} disabled={syncing} />
-            <button
-              className="primary"
-              disabled={syncing}
-              onClick={() => void startReview()}
-            >
-              继续审图
-            </button>
-          </div>
-          {session.sync_error && (
-            <div className="photo-notice error">{session.sync_error}</div>
-          )}
-          <div className="photo-review-summary">
-            <span>{photos.filter((p) => p.flag === "pick").length} 张保留</span>
-            <span>
-              {photos.filter((p) => p.flag === "reject").length}{" "}
-              张待删除（仅旗标）
-            </span>
-          </div>
-          {session.last_export && (
-            <div className="photo-handoff">
-              <h3>上次导出</h3>
-              <p className="photo-export-path">
-                {session.last_export.directory}
-              </p>
-              <p>
-                {new Date(session.last_export.exported_at).toLocaleString()} ·
-                已复制 {session.last_export.copied} 个，跳过{" "}
-                {session.last_export.skipped} 个相同文件
-              </p>
-              {session.last_export.failures.length > 0 && (
-                <details>
-                  <summary>
-                    {session.last_export.failures.length} 个文件未导出
-                  </summary>
-                  {session.last_export.failures.map((failure, index) => (
-                    <p className="form-error" key={index}>
-                      {failure}
-                    </p>
-                  ))}
-                </details>
-              )}
-            </div>
-          )}
-        </>
+        <div className="photo-empty">
+          <Camera size={42} />
+          <h3>打开照片目录，开始初选</h3>
+          <p>为照片评分，将 3 星及以上 RAW 导出到目录。</p>
+          <button
+            className="primary"
+            disabled={!desktop}
+            onClick={() => setOpen(true)}
+          >
+            打开照片目录
+          </button>
+        </div>
       )}
       {open && (
         <OpenReviewDialog

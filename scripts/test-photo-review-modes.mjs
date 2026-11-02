@@ -46,7 +46,7 @@ await page.cdp("Emulation.setDeviceMetricsOverride", {
 });
 await page.goto(globalThis.filoReviewModesUrl ?? "http://127.0.0.1:1420");
 await page.click('.main-nav button:text-is("审图")');
-await page.click('button:text-is("继续审图")');
+await page.click('.photo-session-list button');
 await page.waitForSelector(".photo-stage img");
 const panelLayout = await page.evaluate(() => {
   const back = document.querySelector('.photo-review-back').getBoundingClientRect();
@@ -54,13 +54,13 @@ const panelLayout = await page.evaluate(() => {
   const handle = document.querySelector('.photo-review-side-collapse').getBoundingClientRect();
   const side = document.querySelector('.photo-review-side-container').getBoundingClientRect();
   return {
-    backAboveCollapse: back.bottom <= collapse.top,
+    backBesideCollapse: Math.abs(back.top - collapse.top) < 1 && back.right <= collapse.left,
     tools: [...document.querySelectorAll('.photo-review-tools > button')].map(button => button.getBoundingClientRect().top),
     handleCenterOffset: Math.abs(handle.top + handle.height / 2 - side.top - side.height / 2),
     hasRedundantLabel: [...document.querySelectorAll('.photo-review-film-wing .photo-review-wing-label')].some(label => label.textContent === '照片序列'),
   };
 });
-assert.equal(panelLayout.backAboveCollapse, true);
+assert.equal(panelLayout.backBesideCollapse, true);
 assert.equal(panelLayout.tools.length, 4);
 assert.equal(new Set(panelLayout.tools).size, 1, "all four tools share one row");
 assert.ok(panelLayout.handleCenterOffset < 1, "right collapse handle sits at the edge midpoint");

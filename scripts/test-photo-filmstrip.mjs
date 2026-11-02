@@ -51,7 +51,7 @@ await page.cdp("Emulation.setDeviceMetricsOverride", {
 });
 await page.goto("http://127.0.0.1:1420");
 await page.click('.main-nav button:text-is("审图")');
-await page.click('button:text-is("继续审图")');
+await page.click('.photo-session-list button');
 await page.waitForSelector(".photo-stage img");
 const centered = () => {
   const strip = document.querySelector(".photo-filmstrip");

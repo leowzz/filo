@@ -65,7 +65,9 @@ await page.cdp("Page.addScriptToEvaluateOnNewDocument", {source: `(() => {
 })();`});
 await page.goto("http://127.0.0.1:1420");
 await page.click('.main-nav button:text-is("审图")');
-await page.click('.photo-session-toolbar button:text-is("继续审图")');
+await page.waitForSelector('.photo-session-list');
+assert.equal(await page.evaluate(()=>!!document.querySelector('.photo-review-summary')),false);
+await page.click('.photo-session-list button');
 await page.waitForSelector('.photo-stage img');
 assert.equal(await page.evaluate(()=>window.scanCalls.length),1);
 assert.equal(await page.evaluate(()=>document.querySelector('button[aria-label="4 星"]').getAttribute('aria-pressed')),"true");
@@ -87,7 +89,7 @@ assert.equal(await page.evaluate(()=>window.catalog.photos.find(p=>p.id==='two')
 await page.click('.main-nav button:text-is("拷卡")');
 await page.click('.main-nav button:text-is("审图")');
 await page.evaluate(()=>{window.conflict=true;window.externalCurrent='one';window.externalRating=2;});
-await page.click('.photo-session-toolbar button:text-is("继续审图")');
+await page.click('.photo-session-list button');
 await page.waitForSelector('.photo-stage img');
 assert.equal(await page.evaluate(()=>window.scanCalls.length),3);
 assert.equal(await page.evaluate(()=>document.querySelector('button[aria-label="2 星"]').getAttribute('aria-pressed')),"true");

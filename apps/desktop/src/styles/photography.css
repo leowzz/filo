@@ -583,13 +583,23 @@
   padding: 9px 0;
   gap: 10px;
 }
-.photo-review-film-wing > button {
-  align-self: center;
+.photo-review-film-heading {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px;
+}
+.photo-review-film-wing .photo-review-film-heading {
+  padding: 0 3px;
+}
+.photo-review-film-heading > button {
+  flex: 0 0 31px;
+  min-height: 31px;
   padding: 7px;
   border-radius: 6px;
 }
-.photo-review-film-wing > .photo-review-back,
-.photo-review-film-rail > .photo-review-back {
+.photo-review-film-heading > .photo-review-back {
+  flex: 1;
   align-self: stretch;
   min-height: 31px;
   padding: 7px 3px;
@@ -725,7 +735,7 @@
     --photo-review-film-width: 70px;
     --photo-review-side-width: 260px;
   }
-  .photo-review-film-wing .photo-review-back span {
+  .photo-review-film-wing .photo-review-back > svg {
     display: none;
   }
   .photo-review-side-scroll {

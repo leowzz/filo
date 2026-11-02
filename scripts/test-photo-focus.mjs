@@ -52,7 +52,7 @@ await page.cdp("Emulation.setDeviceMetricsOverride", {
 });
 await page.goto(globalThis.filoFocusUrl ?? "http://127.0.0.1:1420");
 await page.click('.sidebar button[aria-label="审图"]');
-await page.click('button:text-is("继续审图")');
+await page.click('.photo-session-list button');
 await page.waitForSelector(".photo-stage img");
 
 const centered = (x, y) => page.waitForFunction(({x,y}) => {
@@ -101,7 +101,7 @@ assert.deepEqual(fit,{width:true,height:true,ratio:true,centered:true});
 // A previous photo's slow focus result cannot move the current image.
 await page.reload();
 await page.click('.sidebar button[aria-label="审图"]');
-await page.click('button:text-is("继续审图")');
+await page.click('.photo-session-list button');
 await page.waitForSelector('.photo-stage img');
 await page.evaluate(()=>window.reviewFixture.hold=true);
 await page.keyboard.press('Space');

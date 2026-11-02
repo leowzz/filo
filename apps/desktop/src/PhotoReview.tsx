@@ -132,7 +132,6 @@ export function PhotoReview({
   onBack,
   onPositionSaved,
   onReload,
-  backLabel = "审图记录",
 }: {
   session: PhotoSession;
   photos: Photo[];
@@ -140,7 +139,6 @@ export function PhotoReview({
   onBack: () => void;
   onPositionSaved: () => void;
   onReload?: () => Promise<void>;
-  backLabel?: string;
 }) {
   const [, render] = useReducer((n) => n + 1, 0);
   const suspended = useBrowser((state) => state.page === "settings");
@@ -825,17 +823,17 @@ export function PhotoReview({
           }
           aria-label="照片序列"
         >
-          <button
-            className="photo-review-back"
-            title={backLabel}
-            aria-label={backLabel}
-            onClick={() => void back()}
-          >
-            <ArrowLeft size={17} />
-            {showFilmstrip && <span>{backLabel}</span>}
-          </button>
-          {showFilmstrip ? (
-            <>
+          <div className="photo-review-film-heading">
+            <button
+              className="photo-review-back"
+              title="返回"
+              aria-label="返回"
+              onClick={() => void back()}
+            >
+              <ArrowLeft size={17} />
+              {showFilmstrip && <span>返回</span>}
+            </button>
+            {showFilmstrip && (
               <button
                 title="收起缩略图 (T)"
                 aria-label="收起照片序列"
@@ -849,6 +847,10 @@ export function PhotoReview({
               >
                 <PanelLeftClose size={17} />
               </button>
+            )}
+          </div>
+          {showFilmstrip ? (
+            <>
               <div
                 id="review-filmstrip"
                 className="photo-filmstrip"

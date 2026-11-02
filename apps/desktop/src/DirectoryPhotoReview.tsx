@@ -92,7 +92,6 @@ export function DirectoryPhotoReview({
           query.data?.photos.filter((p) => session.photo_ids.includes(p.id)) ??
           []
         }
-        backLabel="返回文件夹"
         onBack={onBack}
         onPositionSaved={() => {}}
         onReload={reload}

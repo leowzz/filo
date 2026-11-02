@@ -76,7 +76,7 @@ await page.cdp("Emulation.setDeviceMetricsOverride", {
 });
 await page.goto(globalThis.filoExportUrl ?? "http://127.0.0.1:1420");
 await page.click('.main-nav button:text-is("审图")');
-await page.click('.photo-session-toolbar button:text-is("继续审图")');
+await page.click('.photo-session-list button');
 await page.waitForSelector(".photo-stage img");
 await page.click('.photo-review-toolbar button:text-is("导出到目录")');
 await page.waitForSelector("dialog[open]");
@@ -205,14 +205,9 @@ assert.equal(layout.selects[0].height, layout.selects[1].height);
 assert.ok(layout.selects[0].height >= 36, "export form styles must be loaded");
 await page.click('dialog .modal-actions button:text-is("关闭")');
 await page.click(".photo-review-back");
-await page.waitForSelector(".photo-handoff");
-assert.match(
-  await page.evaluate(
-    () => document.querySelector(".photo-handoff").textContent,
-  ),
-  /second\/精修/,
-);
-await page.click('.photo-session-toolbar button:text-is("导出到目录")');
+await page.waitForSelector('.photo-session-list');
+await page.click('.photo-session-list button');
+await page.click('.photo-review-toolbar button:text-is("导出到目录")');
 await page.waitForSelector("dialog[open]");
 assert.equal(
   await page.evaluate(
@@ -261,7 +256,8 @@ assert.equal(
 await page.click('dialog .modal-actions button:text-is("关闭")');
 await page.goto(globalThis.filoExportUrl ?? "http://127.0.0.1:1420");
 await page.click('.main-nav button:text-is("审图")');
-await page.click('.photo-session-toolbar button:text-is("导出到目录")');
+await page.click('.photo-session-list button');
+await page.click('.photo-review-toolbar button:text-is("导出到目录")');
 await page.waitForSelector("dialog[open]");
 assert.equal(
   await page.evaluate(
@@ -336,7 +332,7 @@ await page.click('dialog button:text-is("开始导出")');
 await page.waitForSelector('dialog details');
 assert.deepEqual(await page.evaluate(() => window.exportCalls[0].destination), {volume_id:'nas',logical_path:'相册',version_id:null});
 await page.click('dialog .modal-actions button:text-is("关闭")');
-await page.click('.photo-session-toolbar button:text-is("导出到目录")');
+await page.click('.photo-review-toolbar button:text-is("导出到目录")');
 await page.waitForSelector('.photo-export-directory-choice[aria-pressed="true"]');
 assert.match(await page.evaluate(() => document.querySelector('.photo-export-directory-choice[aria-pressed="true"]').textContent), /NAS \/相册/);
 await page.evaluate(() =>

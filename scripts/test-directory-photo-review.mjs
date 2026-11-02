@@ -177,7 +177,6 @@ if (
 ) {
   await page.click(".photo-session-list button");
 }
-await page.click('.photo-session-toolbar button:has-text("继续审图")');
 await page.waitForSelector('section[aria-label="照片审图"]');
 const positionCount = await page.evaluate(() => window.positionCalls.length);
 await page.waitForFunction(

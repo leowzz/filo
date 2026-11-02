@@ -50,7 +50,7 @@ await page.cdp("Emulation.setDeviceMetricsOverride", {
 });
 await page.goto(globalThis.filoReviewExitUrl ?? "http://127.0.0.1:1420");
 await page.click('.main-nav button:text-is("审图")');
-await page.click('button:text-is("继续审图")');
+await page.click('.photo-session-list button');
 await page.waitForSelector(".photo-stage img");
 
 // A failed final position write must offer a usable exit.
@@ -72,7 +72,7 @@ await page.waitForFunction(()=>document.querySelector('dialog[open]')?.textConte
 await page.click('dialog button:text-is("退出审图")');
 await page.waitForFunction(()=>!document.querySelector('.photo-review'));
 await page.evaluate(()=>{window.reviewFixture.failPosition=false;});
-await page.click('button:text-is("继续审图")');
+await page.click('.photo-session-list button');
 await page.waitForSelector('.photo-stage img');
 // Dismissing a failed mark's banner must not report saved or lose the exit warning.
 await page.evaluate(()=>{window.reviewFixture.fail=true;});
@@ -85,7 +85,7 @@ await page.waitForFunction(()=>document.querySelector('dialog[open]')?.textConte
 await page.click('dialog button:text-is("退出审图")');
 await page.waitForFunction(()=>!document.querySelector('.photo-review'));
 await page.evaluate(()=>{window.reviewFixture.fail=false;window.reviewFixture.holdMark=true;});
-await page.click('button:text-is("继续审图")');
+await page.click('.photo-session-list button');
 await page.waitForSelector('.photo-stage img');
 await page.keyboard.press('4');
 await page.waitForFunction(()=>!!window.releaseMark);
@@ -109,7 +109,7 @@ await page.waitForFunction(()=>!document.querySelector('.photo-review'));
 await page.evaluate(()=>{window.reviewFixture.holdPosition=false;window.releasePosition();});
 assert.equal(await page.evaluate(()=>!!document.querySelector('.photo-review')),false);
 // Healthy saves retain the normal direct return behavior.
-await page.click('button:text-is("继续审图")');
+await page.click('.photo-session-list button');
 await page.waitForSelector('.photo-stage img');
 await page.click('.photo-review-back');
 await page.waitForFunction(()=>!document.querySelector('.photo-review'));
