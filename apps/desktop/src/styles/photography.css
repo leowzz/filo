@@ -442,22 +442,33 @@
   height: 100vh;
 }
 .photo-review-workspace {
+  --photo-review-film-width: 108px;
+  --photo-review-side-width: 320px;
   display: grid;
-  grid-template-columns: 108px minmax(0, 1fr) 180px;
+  grid-template-columns: var(--photo-review-film-width) minmax(0, 1fr) var(
+      --photo-review-side-width
+    );
   flex: 1;
   min-height: 0;
   min-width: 0;
 }
 .photo-review-workspace.no-filmstrip {
-  grid-template-columns: 36px minmax(0, 1fr) 180px;
+  --photo-review-film-width: 36px;
+}
+.photo-review-workspace.side-hidden {
+  --photo-review-side-width: 36px;
 }
 .photo-review-film-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   min-height: 0;
   padding-top: 9px;
   background: var(--photo-review-panel);
   border-right: 1px solid var(--photo-review-line);
 }
-.photo-review-film-expand {
+.photo-review-film-expand,
+.photo-review-side-expand {
   width: 100%;
   min-height: 120px;
   flex-direction: column;
@@ -465,15 +476,22 @@
   padding: 7px 0;
   color: var(--photo-review-accent);
 }
-.photo-review-film-expand span {
+.photo-review-film-expand span,
+.photo-review-side-expand span {
   writing-mode: vertical-rl;
   font-size: 11px;
   letter-spacing: 2px;
 }
-.photo-review-film-expand:hover {
+.photo-review-film-expand:hover,
+.photo-review-side-expand:hover,
+.photo-review-side-collapse:hover,
+.photo-review-film-rail .photo-review-back:hover {
   background: #ffffff0c;
 }
-.photo-review-film-expand:focus-visible {
+.photo-review-film-expand:focus-visible,
+.photo-review-side-expand:focus-visible,
+.photo-review-side-collapse:focus-visible,
+.photo-review-film-rail .photo-review-back:focus-visible {
   outline: 2px solid var(--photo-review-accent);
   outline-offset: -2px;
 }
@@ -492,11 +510,73 @@
   background: var(--photo-review-panel);
 }
 .photo-review-side {
+  height: 100%;
   border-left: 1px solid var(--photo-review-line);
-  padding: 12px;
+  overflow: hidden;
+}
+.photo-review-side[hidden] {
+  display: none;
+}
+.photo-review-side-container {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+.photo-review-side-collapse {
+  position: absolute;
+  z-index: 3;
+  left: -24px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 25px;
+  height: 64px;
+  padding: 0;
+  border: 1px solid var(--photo-review-line);
+  border-right: 0;
+  border-radius: 6px 0 0 6px;
+  background: var(--photo-review-panel);
+  color: var(--photo-review-muted);
+}
+.photo-review-side-rail {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  border-left: 1px solid var(--photo-review-line);
+  background: var(--photo-review-panel);
+}
+.photo-review-side-scroll {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
   gap: 16px;
   overflow-y: auto;
   scrollbar-width: thin;
+}
+.photo-review-side-scroll > * {
+  flex-shrink: 0;
+}
+.photo-review-side-footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--photo-review-line);
+  background: var(--photo-review-panel);
+}
+.photo-review-side-footer .photo-save-status {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.photo-review-mode-switch .photo-quick-filters {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  font-size: 11px;
+}
+.photo-review-mode-switch .photo-quick-filters button {
+  height: 32px;
 }
 .photo-review-film-wing {
   border-right: 1px solid var(--photo-review-line);
@@ -508,6 +588,15 @@
   padding: 7px;
   border-radius: 6px;
 }
+.photo-review-film-wing > .photo-review-back,
+.photo-review-film-rail > .photo-review-back {
+  align-self: stretch;
+  min-height: 31px;
+  padding: 7px 3px;
+  gap: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+}
 .photo-review-wing-label {
   text-align: center;
   font-size: 10px;
@@ -517,16 +606,13 @@
 .photo-review-side-heading {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 4px;
 }
 .photo-review-side-heading > button {
   padding: 6px 2px;
   font-size: 11px;
   border-radius: 6px;
-}
-.photo-review-side-heading .photo-review-back {
-  flex-shrink: 1;
 }
 .photo-review-file-info {
   display: flex;
@@ -563,13 +649,15 @@
   font-size: 11px;
 }
 .photo-review-tools {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: center;
   gap: 3px;
 }
 .photo-review-tools > button {
-  flex: 1;
   font-size: 11px;
+  white-space: nowrap;
+  padding-inline: 3px;
 }
 .photo-review-controls .photo-review-toggle {
   justify-content: space-between;
@@ -583,27 +671,13 @@
   color: var(--photo-review-muted);
 }
 .photo-review-options {
+  margin-top: auto;
   border-top: 1px solid var(--photo-review-line);
   padding-top: 12px;
 }
-.photo-review-options > summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  cursor: pointer;
+.photo-review-options-title {
   font-size: 11px;
   color: var(--photo-review-muted);
-  list-style: none;
-  border-radius: 3px;
-}
-.photo-review-options > summary::-webkit-details-marker {
-  display: none;
-}
-.photo-review-options[open] > summary > svg {
-  transform: rotate(180deg);
-}
-.photo-review-leading-controls .photo-quick-filters {
-  grid-template-columns: 1fr;
 }
 .photo-review-shortcuts {
   margin: 0;
@@ -616,8 +690,7 @@
   background-color: #ffffff0c;
 }
 .photo-review-side button:focus-visible,
-.photo-review-film-wing button:focus-visible,
-.photo-review-options > summary:focus-visible {
+.photo-review-film-wing button:focus-visible {
   outline: 2px solid var(--photo-review-accent);
   outline-offset: -2px;
 }
@@ -633,32 +706,29 @@
 }
 @media (min-width: 1900px) {
   .photo-review-workspace {
-    grid-template-columns: 124px minmax(0, 1fr) 204px;
-  }
-  .photo-review-workspace.no-filmstrip {
-    grid-template-columns: 36px minmax(0, 1fr) 204px;
+    --photo-review-film-width: 124px;
+    --photo-review-side-width: 352px;
   }
 }
 @media (max-width: 1100px) {
   .photo-review-workspace {
-    grid-template-columns: 94px minmax(0, 1fr) 168px;
+    --photo-review-film-width: 94px;
+    --photo-review-side-width: 288px;
   }
-  .photo-review-workspace.no-filmstrip {
-    grid-template-columns: 36px minmax(0, 1fr) 168px;
-  }
-  .photo-review-side {
-    padding: 10px;
+  .photo-review-side-scroll,
+  .photo-review-side-footer {
+    padding: 12px;
   }
 }
 @media (max-width: 760px) {
   .photo-review-workspace {
-    grid-template-columns: 70px minmax(0, 1fr) 150px;
+    --photo-review-film-width: 70px;
+    --photo-review-side-width: 260px;
   }
-  .photo-review-workspace.no-filmstrip {
-    grid-template-columns: 36px minmax(0, 1fr) 150px;
+  .photo-review-film-wing .photo-review-back span {
+    display: none;
   }
-  .photo-review-side {
-    padding: 8px;
+  .photo-review-side-scroll {
     gap: 12px;
   }
   .photo-review-film-wing .photo-filmstrip {
@@ -716,7 +786,6 @@
   flex-shrink: 0;
 }
 .photo-review-toolbar > button,
-.photo-review-leading-controls > button,
 .photo-review-select select,
 .photo-review-toggle {
   height: 34px;
@@ -733,13 +802,11 @@
   color: #cbd3df;
   white-space: nowrap;
 }
-.photo-review-toolbar > button,
-.photo-review-leading-controls > button {
+.photo-review-toolbar > button {
   padding: 0 10px;
   flex-shrink: 0;
 }
 .photo-review-toolbar > button:hover,
-.photo-review-leading-controls > button:hover,
 .photo-review-select select:hover,
 .photo-review-toggle:hover {
   background: #ffffff0c;
@@ -750,13 +817,6 @@
 .photo-review-toggle:has(input:focus-visible) {
   outline: 2px solid #8eaee0;
   outline-offset: 2px;
-}
-.photo-review-leading-controls {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
-  flex-shrink: 0;
 }
 .photo-review-back {
   flex-shrink: 0;

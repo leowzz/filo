@@ -152,12 +152,34 @@ for (const [width, height] of [[940, 850], [2048, 1000], [700, 850]]) {
 }
 
 // Both mouse directions stay on the left, including after the wing disappears.
+const panelsBefore = await page.evaluate(() => ({
+  stageWidth: document.querySelector('.photo-stage').clientWidth,
+  current: document.querySelector('.photo-stage img').alt,
+  modeTop: document.querySelector('[aria-label="审图模式"]').getBoundingClientRect().top,
+}));
+await page.click('button[aria-label="收起右侧栏"]');
+await page.waitForSelector('button[aria-label="展开右侧栏"]');
+const rightCollapsed = await page.evaluate(() => ({
+  hidden: document.querySelector('#review-side-panel').hidden,
+  width: document.querySelector('.photo-review-side-container').clientWidth,
+  stageWidth: document.querySelector('.photo-stage').clientWidth,
+}));
+assert.equal(rightCollapsed.hidden, true);
+assert.equal(rightCollapsed.width, 36);
+assert.ok(rightCollapsed.stageWidth > panelsBefore.stageWidth);
 await page.click('button[aria-label="收起照片序列"]');
 await page.waitForSelector('button[aria-label="展开照片序列"]');
 assert.equal(await page.evaluate(() => !!document.querySelector(".photo-filmstrip")), false);
+assert.equal(await page.evaluate(() => !!document.querySelector('.photo-review-film-rail .photo-review-back')), true, "back remains available with both panels collapsed");
+await page.click('button[aria-label="展开右侧栏"]');
 await page.click('button[aria-label="展开照片序列"]');
 await page.waitForFunction(centered);
 assert.equal((await metrics()).current, "查看 DSC_6195.JPG");
+assert.deepEqual(await page.evaluate(() => ({
+  stageWidth: document.querySelector('.photo-stage').clientWidth,
+  current: document.querySelector('.photo-stage img').alt,
+  modeTop: document.querySelector('[aria-label="审图模式"]').getBoundingClientRect().top,
+})), panelsBefore, "restoring both panels preserves the photo and fixed mode position");
 
 await page.keyboard.press("t");
 assert.equal(await page.evaluate(() => !!document.querySelector(".photo-filmstrip")), false);
@@ -188,7 +210,6 @@ await page.evaluate(() => {
 await page.waitForSelector('button[aria-label="查看 DSC_6166.JPG"]');
 await page.click('button[aria-label="查看 DSC_6166.JPG"]');
 assert.equal((await metrics()).top, 0);
-await page.click('.photo-review-options > summary');
 await page.click('.photo-quick-filters button:text-is("≥3 星")');
 await page.waitForFunction(
   () => document.querySelectorAll(".photo-filmstrip button").length === 1,

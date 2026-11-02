@@ -48,7 +48,37 @@ await page.goto(globalThis.filoReviewModesUrl ?? "http://127.0.0.1:1420");
 await page.click('.main-nav button:text-is("审图")');
 await page.click('button:text-is("继续审图")');
 await page.waitForSelector(".photo-stage img");
-await page.click('.photo-review-options > summary');
+const panelLayout = await page.evaluate(() => {
+  const back = document.querySelector('.photo-review-back').getBoundingClientRect();
+  const collapse = document.querySelector('[aria-label="收起照片序列"]').getBoundingClientRect();
+  const handle = document.querySelector('.photo-review-side-collapse').getBoundingClientRect();
+  const side = document.querySelector('.photo-review-side-container').getBoundingClientRect();
+  return {
+    backAboveCollapse: back.bottom <= collapse.top,
+    tools: [...document.querySelectorAll('.photo-review-tools > button')].map(button => button.getBoundingClientRect().top),
+    handleCenterOffset: Math.abs(handle.top + handle.height / 2 - side.top - side.height / 2),
+    hasRedundantLabel: [...document.querySelectorAll('.photo-review-film-wing .photo-review-wing-label')].some(label => label.textContent === '照片序列'),
+  };
+});
+assert.equal(panelLayout.backAboveCollapse, true);
+assert.equal(panelLayout.tools.length, 4);
+assert.equal(new Set(panelLayout.tools).size, 1, "all four tools share one row");
+assert.ok(panelLayout.handleCenterOffset < 1, "right collapse handle sits at the edge midpoint");
+assert.equal(panelLayout.hasRedundantLabel, false);
+const modePositions = [];
+for (const name of ["自由审图", "旗标快筛", "星级筛选", "自由审图"]) {
+  await page.click(`button:text-is("${name}")`);
+  modePositions.push(await page.evaluate(() => {
+    const modes = document.querySelector('[aria-label="审图模式"]').getBoundingClientRect();
+    const side = document.querySelector('.photo-review-side').getBoundingClientRect();
+    return { top: modes.top, left: modes.left, bottom: modes.bottom, sideBottom: side.bottom };
+  }));
+}
+assert.ok(modePositions.every(position =>
+  Math.abs(position.top - modePositions[0].top) < 1 &&
+  Math.abs(position.left - modePositions[0].left) < 1 &&
+  position.bottom <= position.sideBottom && position.sideBottom - position.bottom <= 16
+), "mode switching stays anchored at the bottom across all three modes");
 await page.click('button:text-is("星级筛选")');
 assert.match(await page.evaluate(() => document.querySelector(".photo-stage").textContent), /还没有留用照片/);
 assert.equal(await page.evaluate(() => document.querySelector(".photo-counter").textContent), "0 / 0");
@@ -155,11 +185,11 @@ for (const width of [1280, 760]) {
         const rect = document.querySelector(selector).getBoundingClientRect();
         return { selector, x: rect.x, right: rect.right, top: rect.top, bottom: rect.bottom, height: rect.height };
       }),
-      modes: [...document.querySelectorAll('[aria-label="审图模式"] button')].map(e => e.getBoundingClientRect().left),
+      modes: [...document.querySelectorAll('[aria-label="审图模式"] button')].map(e => e.getBoundingClientRect().top),
     };
   });
   assert.ok(metrics.fits, `viewport ${width} must not overflow`);
-  assert.equal(new Set(metrics.modes).size, 1, "mode buttons align in the sidebar");
+  assert.equal(new Set(metrics.modes).size, 1, "mode buttons share a fixed bottom row");
   assert.ok(metrics.rows.every(row => row.bottom <= 850 && row.height > 0), "both wings and the image stage fit the viewport");
   const [workspace, side, stage, film] = metrics.rows;
   assert.ok(film.right <= stage.x && stage.right <= side.x, "the photo sits between two non-overlapping wings");
