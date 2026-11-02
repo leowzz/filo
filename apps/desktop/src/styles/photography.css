@@ -484,13 +484,11 @@
 }
 .photo-review-film-expand:hover,
 .photo-review-side-expand:hover,
-.photo-review-side-collapse:hover,
 .photo-review-film-rail .photo-review-back:hover {
   background: #ffffff0c;
 }
 .photo-review-film-expand:focus-visible,
 .photo-review-side-expand:focus-visible,
-.photo-review-side-collapse:focus-visible,
 .photo-review-film-rail .photo-review-back:focus-visible {
   outline: 2px solid var(--photo-review-accent);
   outline-offset: -2px;
@@ -522,25 +520,11 @@
   min-width: 0;
   min-height: 0;
 }
-.photo-review-side-collapse {
-  position: absolute;
-  z-index: 3;
-  left: -24px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 25px;
-  height: 64px;
-  padding: 0;
-  border: 1px solid var(--photo-review-line);
-  border-right: 0;
-  border-radius: 6px 0 0 6px;
-  background: var(--photo-review-panel);
-  color: var(--photo-review-muted);
-}
 .photo-review-side-rail {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   height: 100%;
+  padding-top: 9px;
   border-left: 1px solid var(--photo-review-line);
   background: var(--photo-review-panel);
 }
@@ -616,11 +600,13 @@
 .photo-review-side-heading {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 4px;
 }
 .photo-review-side-heading > button {
-  padding: 6px 2px;
+  width: 31px;
+  height: 31px;
+  padding: 6px;
   font-size: 11px;
   border-radius: 6px;
 }

@@ -18,6 +18,7 @@ import {
   Minimize,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
   PanelRightOpen,
   Plus,
   Settings2,
@@ -992,21 +993,7 @@ export function PhotoReview({
           </div>
         </div>
         <div className="photo-review-side-container">
-          {showSidebar ? (
-            <button
-              className="photo-review-side-collapse"
-              title="收起右侧栏"
-              aria-label="收起右侧栏"
-              aria-expanded={true}
-              aria-controls="review-side-panel"
-              onClick={() => {
-                setShowSidebar(false);
-                stage.current?.focus({ preventScroll: true });
-              }}
-            >
-              <ChevronRight size={18} />
-            </button>
-          ) : (
+          {!showSidebar && (
             <div className="photo-review-side-rail">
               <button
                 className="photo-review-side-expand"
@@ -1033,6 +1020,19 @@ export function PhotoReview({
           >
             <div className="photo-review-side-scroll">
               <div className="photo-review-side-heading">
+                <button
+                  className="icon-button photo-review-side-toggle"
+                  title="收起右侧栏"
+                  aria-label="收起右侧栏"
+                  aria-expanded={true}
+                  aria-controls="review-side-panel"
+                  onClick={() => {
+                    setShowSidebar(false);
+                    stage.current?.focus({ preventScroll: true });
+                  }}
+                >
+                  <PanelRightClose size={17} />
+                </button>
                 <button
                   className="icon-button photo-review-settings"
                   title="设置"

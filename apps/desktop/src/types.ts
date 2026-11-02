@@ -121,6 +121,16 @@ export type TransferSettings = {
   upload_kib_per_second: number;
   download_kib_per_second: number;
 };
+export type RemovableVolume = {
+  id: string;
+  drive_letter: string;
+  path: string;
+  label: string;
+  file_system: string;
+  volume_serial: string;
+  size: number;
+};
+export type CopyDirectoryResult = { files: number; bytes: number };
 export type DeleteMode = "default" | "permanent";
 export type DeleteOutcome = "trashed" | "permanently_deleted";
 export type TransferJob = {

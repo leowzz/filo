@@ -9,6 +9,7 @@ use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 mod credentials;
+mod card_copy;
 mod diagnostics;
 mod dropped_files;
 mod errors;
@@ -60,6 +61,17 @@ async fn save_transfer_settings(
     settings: TransferSettings,
 ) -> StorageResult<TransferSettings> {
     service.save_transfer_settings(settings).await
+}
+
+async fn list_removable_volumes() -> StorageResult<Vec<card_copy::RemovableVolume>> {
+    card_copy::list_removable_volumes().await
+}
+
+async fn copy_local_directory(
+    source: String,
+    destination: String,
+) -> StorageResult<card_copy::CopyDirectoryResult> {
+    card_copy::copy_local_directory(source, destination).await
 }
 
 async fn save_s3_storage(
@@ -537,6 +549,8 @@ fn main() {
             manage_s3,
             get_transfer_settings,
             save_transfer_settings,
+            list_removable_volumes,
+            copy_local_directory,
             save_s3_storage,
             test_s3_connection,
             save_remote_storage,

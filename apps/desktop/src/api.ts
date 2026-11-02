@@ -17,6 +17,8 @@ import type {
   SftpPrivateKey,
   SftpHostKeyInspection,
   TransferSettings,
+  RemovableVolume,
+  CopyDirectoryResult,
   PreviewCacheInfo,
   PreviewCacheSettings,
 } from "./types";
@@ -44,6 +46,12 @@ export const api = {
         }),
   saveTransferSettings: (settings: TransferSettings) =>
     invoke<TransferSettings>("save_transfer_settings", { settings }),
+  removableVolumes: () =>
+    desktop
+      ? invoke<RemovableVolume[]>("list_removable_volumes")
+      : Promise.resolve([]),
+  copyLocalDirectory: (source: string, destination: string) =>
+    invoke<CopyDirectoryResult>("copy_local_directory", { source, destination }),
   connections: () =>
     desktop ? invoke<Connection[]>("list_connections") : Promise.resolve([]),
   saveS3: (volumeId: string | null, input: S3Input) =>

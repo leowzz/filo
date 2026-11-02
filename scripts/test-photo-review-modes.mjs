@@ -51,19 +51,22 @@ await page.waitForSelector(".photo-stage img");
 const panelLayout = await page.evaluate(() => {
   const back = document.querySelector('.photo-review-back').getBoundingClientRect();
   const collapse = document.querySelector('[aria-label="收起照片序列"]').getBoundingClientRect();
-  const handle = document.querySelector('.photo-review-side-collapse').getBoundingClientRect();
-  const side = document.querySelector('.photo-review-side-container').getBoundingClientRect();
+  const handle = document.querySelector('[aria-label="收起右侧栏"]').getBoundingClientRect();
+  const settings = document.querySelector('[aria-label="审图设置"]').getBoundingClientRect();
+  const heading = document.querySelector('.photo-review-side-heading').getBoundingClientRect();
   return {
     backBesideCollapse: Math.abs(back.top - collapse.top) < 1 && back.right <= collapse.left,
     tools: [...document.querySelectorAll('.photo-review-tools > button')].map(button => button.getBoundingClientRect().top),
-    handleCenterOffset: Math.abs(handle.top + handle.height / 2 - side.top - side.height / 2),
+    sideButtonsAligned: Math.abs(handle.top - settings.top) < 1 && handle.right < settings.left,
+    sideButtonsSymmetric: Math.abs((handle.left - heading.left) - (heading.right - settings.right)) < 1 && handle.width === settings.width,
     hasRedundantLabel: [...document.querySelectorAll('.photo-review-film-wing .photo-review-wing-label')].some(label => label.textContent === '照片序列'),
   };
 });
 assert.equal(panelLayout.backBesideCollapse, true);
 assert.equal(panelLayout.tools.length, 4);
 assert.equal(new Set(panelLayout.tools).size, 1, "all four tools share one row");
-assert.ok(panelLayout.handleCenterOffset < 1, "right collapse handle sits at the edge midpoint");
+assert.ok(panelLayout.sideButtonsAligned, "right collapse and settings share the first row");
+assert.ok(panelLayout.sideButtonsSymmetric, "right collapse and settings sit at opposite ends with matching widths");
 assert.equal(panelLayout.hasRedundantLabel, false);
 const modePositions = [];
 for (const name of ["自由审图", "旗标快筛", "星级筛选", "自由审图"]) {
