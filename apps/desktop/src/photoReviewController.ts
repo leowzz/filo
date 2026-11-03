@@ -59,6 +59,7 @@ export class PhotoReviewController {
   photos: Photo[];
   current: string | null;
   pending = 0;
+  slowSave = false;
   rawOnly: boolean;
   private committed = new Map<string, Photo>();
   private latest = new Map<string, number>();
@@ -69,6 +70,9 @@ export class PhotoReviewController {
   private queue = Promise.resolve();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
+  private queuedMarks = new Map<string, { superseded: boolean }>();
+  private saveStarted: number | null = null;
+  private saveTimer: ReturnType<typeof setTimeout> | undefined;
   constructor(
     photos: Photo[],
     current: string | null,
@@ -102,6 +106,27 @@ export class PhotoReviewController {
   }
   activate() {
     this.disposed = false;
+    this.watchSave();
+  }
+  private watchSave() {
+    clearTimeout(this.saveTimer);
+    if (this.saveStarted === null || this.disposed) return;
+    this.saveTimer = setTimeout(
+      () => {
+        this.slowSave = true;
+        this.deps.changed();
+      },
+      Math.max(0, 10_000 - (Date.now() - this.saveStarted)),
+    );
+  }
+  private startSave() {
+    this.saveStarted = Date.now();
+    this.watchSave();
+  }
+  private finishSave() {
+    clearTimeout(this.saveTimer);
+    this.saveStarted = null;
+    this.slowSave = false;
   }
   private replace(photo: Photo) {
     this.photos = this.photos.map((p) => (p.id === photo.id ? photo : p));
@@ -191,6 +216,18 @@ export class PhotoReviewController {
     const id = ++this.sequence;
     const navigation = this.navigation;
     this.latest.set(photo.id, id);
+    const queued = { superseded: false };
+    if (options?.background) {
+      const previous = this.queuedMarks.get(photo.id);
+      if (previous) {
+        previous.superseded = true;
+        this.pending--;
+      }
+      this.queuedMarks.set(photo.id, queued);
+    } else {
+      // Explicit manual edits and undo are ordering barriers.
+      this.queuedMarks.clear();
+    }
     this.pending++;
     this.replace({ ...photo, ...desired });
     this.deps.changed();
@@ -228,6 +265,10 @@ export class PhotoReviewController {
     if (options?.background) scheduleAdvance();
     this.queue = this.queue.then(async () => {
       try {
+        if (queued.superseded) return;
+        if (this.queuedMarks.get(photo.id) === queued)
+          this.queuedMarks.delete(photo.id);
+        this.startSave();
         const saved = await this.deps.save(photo.id, desired);
         this.committed.set(photo.id, saved);
         this.deps.saved(saved);
@@ -254,18 +295,21 @@ export class PhotoReviewController {
             );
         }
       } finally {
-        this.pending--;
+        this.finishSave();
+        if (!queued.superseded) this.pending--;
         if (!this.disposed) this.deps.changed();
       }
     });
   }
   undo() {
     clearTimeout(this.timer);
+    this.queuedMarks.clear();
     const id = ++this.sequence;
     this.pending++;
     this.deps.changed();
     this.queue = this.queue.then(async () => {
       try {
+        this.startSave();
         const photo = await this.deps.undo();
         this.undoFailed = false;
         if (photo) {
@@ -296,6 +340,7 @@ export class PhotoReviewController {
             isReviewConflict(error),
           );
       } finally {
+        this.finishSave();
         this.pending--;
         if (!this.disposed) this.deps.changed();
       }
@@ -307,6 +352,7 @@ export class PhotoReviewController {
   dispose() {
     this.disposed = true;
     clearTimeout(this.timer);
+    clearTimeout(this.saveTimer);
     this.deps.feedback(null);
   }
 }

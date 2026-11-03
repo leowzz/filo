@@ -171,8 +171,8 @@ export function PhotoReview({
     );
     return write;
   };
-  const callbacks = useRef({ onSaved });
-  callbacks.current = { onSaved };
+  const callbacks = useRef({ onSaved, onPositionSaved });
+  callbacks.current = { onSaved, onPositionSaved };
   const [controller] = useState(
     () =>
       new PhotoReviewController(
@@ -573,7 +573,7 @@ export function PhotoReview({
       if (positionRef.current && !reloadRef.current)
         void writePosition(positionRef.current)
           .then(() => {
-            if (!reloadRef.current) onPositionSaved();
+            if (!reloadRef.current) callbacks.current.onPositionSaved();
           })
           .catch((error) => {
             if (!reloadRef.current)
@@ -589,16 +589,7 @@ export function PhotoReview({
           });
     }, 500);
     return () => clearTimeout(timer);
-  }, [
-    controller.current,
-    filter,
-    sort,
-    minimum,
-    auto,
-    rawOnly,
-    session.id,
-    onPositionSaved,
-  ]);
+  }, [controller.current, filter, sort, minimum, auto, rawOnly, session.id]);
   useEffect(() => {
     if (suspended) {
       photoPreviews.clearWindow();
@@ -1374,11 +1365,13 @@ export function PhotoReview({
                 {controller.hasFailedWrites ||
                 (failure.message && failure.kind !== "dates")
                   ? "保存失败"
-                  : controller.pending
-                    ? "保存中…"
-                    : session.directory
-                      ? "已保存到目录"
-                      : "本机已保存"}
+                  : controller.slowSave
+                    ? `等待存储响应 · ${controller.pending} 项待保存`
+                    : controller.pending
+                      ? "保存中…"
+                      : session.directory
+                        ? "已保存到目录"
+                        : "本机已保存"}
               </span>
               <div className="photo-review-mode-switch">
                 <div

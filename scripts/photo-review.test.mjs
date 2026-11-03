@@ -19,6 +19,69 @@ function setup(photos = [photo("a"), photo("b")], save = async (id, mark) => ({ 
 const key = (code, key, extra = {}) => ({ code,key,repeat:false,altKey:false,ctrlKey:false,metaKey:false,shiftKey:false,...extra });
 const delay = ms => new Promise(resolve => setTimeout(resolve,ms));
 
+test("slow NAS saves coalesce queued background marks and recover after a settings pause", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const { controller, calls } = setup(undefined, async (id, mark) => {
+    await gate;
+    return { ...photo(id), ...mark };
+  });
+  const options = { delayMs: 200, background: true };
+  const next = () => controller.select("b");
+  controller.mark({ rating: 1, flag: "pick" }, true, next, options);
+  await Promise.resolve();
+  for (const rating of [2, 3, 4, 5])
+    controller.mark({ rating, flag: "pick" }, true, next, options);
+  assert.equal(controller.pending, 2, "only the active write and the latest queued mark remain");
+  controller.cancelAdvance(); // Opening settings cancels navigation, never persistence.
+  t.mock.timers.tick(9999);
+  assert.equal(controller.slowSave, false);
+  t.mock.timers.tick(1);
+  assert.equal(controller.slowSave, true);
+  assert.equal(controller.current, "a");
+  assert.equal(controller.photo.rating, 5, "keep the unsaved desired mark visible");
+  release();
+  await controller.settle();
+  assert.deepEqual(calls.map(call => call.rating), [1, 5]);
+  assert.equal(controller.pending, 0);
+  assert.equal(controller.slowSave, false);
+  assert.equal(controller.photo.rating, 5);
+  t.mock.timers.tick(1000);
+  assert.equal(controller.current, "a", "returning from settings never revives cancelled navigation");
+  controller.dispose();
+});
+
+test("coalesced NAS failures retain a retry for the final desired mark", async () => {
+  const { controller, calls, errors } = setup(undefined, async (id, mark) => {
+    if (mark.rating === 5 && calls.length === 1) throw new Error("NAS disconnected");
+    return { ...photo(id), ...mark };
+  });
+  for (const rating of [1, 2, 3, 4, 5])
+    controller.mark({ rating, flag: "pick" }, false, () => {}, { delayMs: 200, background: true });
+  await controller.settle();
+  assert.deepEqual(calls.map(call => call.rating), [5]);
+  assert.equal(controller.pending, 0);
+  assert.equal(controller.hasFailedWrites, true);
+  errors.at(-1).retry();
+  await controller.settle();
+  assert.equal(controller.hasFailedWrites, false);
+  assert.equal(controller.photo.rating, 5);
+  controller.dispose();
+});
+
+test("undo keeps queued background marks in their original order", async () => {
+  const { controller, calls } = setup();
+  controller.mark({ rating: 1, flag: "pick" }, false, () => {}, { delayMs: 200, background: true });
+  controller.undo();
+  controller.mark({ rating: 5, flag: "pick" }, false, () => {}, { delayMs: 200, background: true });
+  await controller.settle();
+  assert.deepEqual(calls.map(call => call.rating), [1, 5]);
+  assert.equal(controller.photo.rating, 5);
+  assert.equal(controller.pending, 0);
+  controller.dispose();
+});
+
 test("quick flags finish their animation before advancing, including repeated marks without saving again", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
   for (const photoFeedbackDuration of [100, 500, 1500]) {
