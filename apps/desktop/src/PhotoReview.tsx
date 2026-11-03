@@ -300,7 +300,7 @@ export function PhotoReview({
     (p) =>
       (!rawOnly || hasRaw(p)) &&
       (matchesPhoto(p, activeFilter, activeMinimum) ||
-        (mode === "manual" && p.id === controller.current)),
+        p.id === controller.current),
   );
   const changeMode = (nextMode: ReviewMode) => {
     setMode(nextMode);
@@ -376,21 +376,27 @@ export function PhotoReview({
       () => actions.current.step(1),
       mode === "rating"
         ? {
-            delayMs: Math.max(ratingDelay, animationDuration),
-            immediateFeedback: true,
+            delayMs: ratingDelay,
+            background: true,
           }
         : { delayMs: animationDuration, immediateFeedback: true },
     );
   };
   const markFlag = (flag: Photo["flag"], advance = auto) => {
     const current = controller.photo;
-    if (!current || mode === "rating") return;
-    const desired = mode !== "flags" && current.flag === flag ? "none" : flag;
+    if (!current) return;
+    const desired = mode === "manual" && current.flag === flag ? "none" : flag;
+    // Keep the current photo through its feedback animation, then remove rejected
+    // photos from the picked-only list without losing our place in that list.
+    const nextId =
+      ids[index + 1] ??
+      (desired === "pick" ? current.id : (ids[index - 1] ?? null));
     controller.mark(
       { rating: current.rating, flag: desired },
-      mode === "flags" ? desired !== "none" : advance,
-      () => actions.current.step(1),
-      mode === "flags"
+      mode !== "manual" ? desired !== "none" : advance,
+      () =>
+        mode === "rating" ? controller.select(nextId) : actions.current.step(1),
+      mode !== "manual"
         ? {
             delayMs: animationDuration,
             background: true,
@@ -1133,44 +1139,42 @@ export function PhotoReview({
                     升一星
                   </button>
                 )}
-                {mode !== "rating" && (
-                  <div className="photo-flags">
-                    <button
-                      disabled={!photo}
-                      className={photo?.flag === "pick" ? "pick selected" : ""}
-                      aria-pressed={photo?.flag === "pick"}
-                      aria-keyshortcuts="C P"
-                      title={
-                        mode !== "flags" && photo?.flag === "pick"
-                          ? "取消留用"
-                          : "留用"
-                      }
-                      onClick={() => markFlag("pick")}
-                    >
-                      <Flag size={17} />
-                      留用
-                      <kbd aria-hidden="true">C</kbd>
-                    </button>
-                    <button
-                      disabled={!photo}
-                      className={
-                        photo?.flag === "reject" ? "reject selected" : ""
-                      }
-                      aria-pressed={photo?.flag === "reject"}
-                      aria-keyshortcuts="X"
-                      title={
-                        mode !== "flags" && photo?.flag === "reject"
-                          ? "取消排除"
-                          : "排除，只标记文件"
-                      }
-                      onClick={() => markFlag("reject")}
-                    >
-                      <Flag size={17} />
-                      排除
-                      <kbd aria-hidden="true">X</kbd>
-                    </button>
-                  </div>
-                )}
+                <div className="photo-flags">
+                  <button
+                    disabled={!photo}
+                    className={photo?.flag === "pick" ? "pick selected" : ""}
+                    aria-pressed={photo?.flag === "pick"}
+                    aria-keyshortcuts="C P"
+                    title={
+                      mode === "manual" && photo?.flag === "pick"
+                        ? "取消留用"
+                        : "留用"
+                    }
+                    onClick={() => markFlag("pick")}
+                  >
+                    <Flag size={17} />
+                    留用
+                    <kbd aria-hidden="true">C</kbd>
+                  </button>
+                  <button
+                    disabled={!photo}
+                    className={
+                      photo?.flag === "reject" ? "reject selected" : ""
+                    }
+                    aria-pressed={photo?.flag === "reject"}
+                    aria-keyshortcuts="X"
+                    title={
+                      mode === "manual" && photo?.flag === "reject"
+                        ? "取消排除"
+                        : "排除，只标记文件"
+                    }
+                    onClick={() => markFlag("reject")}
+                  >
+                    <Flag size={17} />
+                    排除
+                    <kbd aria-hidden="true">X</kbd>
+                  </button>
+                </div>
                 {mode === "manual" && (
                   <label className="photo-review-toggle">
                     <input
@@ -1239,6 +1243,8 @@ export function PhotoReview({
                 ← → 切换照片
                 <br />
                 1–5 星级 · 0 清空
+                <br />
+                [ 降星 · ] 升星
                 <br />C 留用 · X 排除
                 <br />
                 空格 / Z 缩放 · T 缩略图

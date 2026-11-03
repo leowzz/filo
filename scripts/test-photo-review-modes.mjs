@@ -118,7 +118,7 @@ await page.click('button[aria-label="查看 1-one.JPG"]');
 await page.click('button:text-is("星级筛选")');
 assert.equal(await page.evaluate(() => document.querySelector(".photo-counter").textContent), "1 / 2");
 assert.equal(await page.evaluate(() => document.querySelector('select[aria-label="星级等待时间"]').value), "500");
-assert.equal(await page.evaluate(() => document.querySelectorAll(".photo-flags").length), 0);
+assert.equal(await page.evaluate(() => document.querySelectorAll(".photo-flags").length), 1);
 // Drive two DOM clicks in one browser round; external action receipts can exceed 500 ms.
 await page.evaluate(async () => {
   const increase = () => [...document.querySelectorAll("button")].find(button => button.textContent === "升一星").click();
@@ -140,7 +140,8 @@ await page.evaluate(() => { window.reviewFixture.fail = true; });
 await page.click('button[aria-label="4 星"]');
 await page.waitForSelector(".photo-review-error");
 await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 1600)));
-assert.equal(await page.evaluate(() => document.querySelector(".photo-counter").textContent), "1 / 2");
+assert.equal(await page.evaluate(() => document.querySelector(".photo-counter").textContent), "2 / 2");
+await page.click('button[aria-label="上一张"]');
 assert.equal(await page.evaluate(() => document.querySelector('button[aria-label="2 星"]').getAttribute("aria-pressed")), "true");
 await page.evaluate(() => { window.reviewFixture.fail = false; });
 await page.click('button[aria-label="关闭错误提示"]');
@@ -172,8 +173,75 @@ assert.match(animations[1].kind, /\bdown\b/);
 assert.ok(animations[1].animations.includes("photo-down"));
 assert.ok(animations.every(animation => animation.width > 0 && animation.height > 0 && animation.savedRating === 2), "both animations render before remote persistence");
 await page.waitForFunction(() => document.querySelector(".photo-counter").textContent === "2 / 2");
-assert.equal(await page.evaluate(() => window.reviewFixture.photos[0].rating), 1);
+await page.waitForFunction(() => window.reviewFixture.photos[0].rating === 1);
 await page.evaluate(() => { window.reviewFixture.delay = 0; });
+// The idle deadline is independent of both remote persistence and animation.
+for (const delayMs of [200, 500]) {
+  await page.click('button[aria-label="查看 1-one.JPG"]');
+  const timing = await page.evaluate(async (delayMs) => {
+    const { useAppSettings } = await import('/src/appSettings.ts');
+    useAppSettings.getState().setRatingAdvanceDelay(delayMs);
+    useAppSettings.getState().setReviewAnimationDuration(2000);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    window.reviewFixture.delay = 1200;
+    const before = window.reviewFixture.calls.length;
+    document.querySelector('button[aria-label="2 星"]').click();
+    await new Promise(resolve => setTimeout(resolve, delayMs - 50));
+    document.querySelector('button[aria-label="1 星"]').click();
+    await new Promise(resolve => setTimeout(resolve, delayMs - 50));
+    const beforeDeadline = document.querySelector('.photo-counter').textContent;
+    await new Promise(resolve => setTimeout(resolve, 150));
+    return {
+      beforeDeadline,
+      afterDeadline: document.querySelector('.photo-counter').textContent,
+      saving: document.querySelector('.photo-review-side').textContent.includes('保存中'),
+      calls: window.reviewFixture.calls.length - before,
+    };
+  }, delayMs);
+  assert.deepEqual(timing, { beforeDeadline: "1 / 2", afterDeadline: "2 / 2", saving: true, calls: 1 });
+  await page.waitForFunction(() => !document.querySelector('.photo-review-side').textContent.includes('保存中'));
+  assert.equal(await page.evaluate(() => window.reviewFixture.photos[0].rating), 1);
+  assert.equal(await page.evaluate(() => document.querySelector('.photo-counter').textContent), "2 / 2");
+}
+await page.evaluate(async () => {
+  window.reviewFixture.delay = 0;
+  const { useAppSettings } = await import('/src/appSettings.ts');
+  useAppSettings.getState().setRatingAdvanceDelay(500);
+  useAppSettings.getState().setReviewAnimationDuration(500);
+});
+// In rating mode, C confirms an existing pick and X removes it from the picked
+// list. Both advance without clearing its rating or jumping back to the start.
+await page.click('button:text-is("旗标快筛")');
+await page.click('button[aria-label="查看 3-three.JPG"]');
+await page.click(".photo-flags button:first-child");
+await page.waitForFunction(() => document.querySelector(".photo-counter").textContent === "4 / 4");
+await page.click(".photo-flags button:first-child");
+await page.waitForFunction(() => window.reviewFixture.photos[3].flag === "pick");
+await page.click('button[aria-label="查看 1-one.JPG"]');
+await page.click('button:text-is("星级筛选")');
+const beforeConfirm = await page.evaluate(() => window.reviewFixture.calls.length);
+await page.evaluate(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true })));
+await page.waitForFunction(() => document.querySelector(".photo-counter").textContent === "2 / 4");
+assert.deepEqual(await page.evaluate(() => ({
+  flag: window.reviewFixture.photos[0].flag,
+  rating: window.reviewFixture.photos[0].rating,
+  calls: window.reviewFixture.calls.length,
+})), { flag: "pick", rating: 1, calls: beforeConfirm });
+await page.evaluate(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "x", bubbles: true })));
+await page.waitForFunction(() => document.querySelector(".photo-counter").textContent === "2 / 3");
+assert.equal(await page.evaluate(() => document.querySelector('.photo-filmstrip button[aria-current="true"]').getAttribute("aria-label")), "查看 3-three.JPG");
+assert.equal(await page.evaluate(() => window.reviewFixture.photos[1].flag), "reject");
+assert.equal(await page.evaluate(() => window.reviewFixture.photos[1].rating), 3);
+await page.evaluate(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "C", shiftKey: true, bubbles: true })));
+await page.waitForFunction(() => document.querySelector(".photo-counter").textContent === "3 / 3");
+// Rejecting the last photo falls back to the previous remaining pick.
+await page.click(".photo-flags button:last-child");
+await page.waitForFunction(() => document.querySelector(".photo-counter").textContent === "2 / 2");
+await page.click(".photo-flags button:last-child");
+await page.waitForFunction(() => document.querySelector(".photo-counter").textContent === "1 / 1");
+await page.click(".photo-flags button:last-child");
+await page.waitForFunction(() => document.querySelector(".photo-counter").textContent === "0 / 0");
+assert.match(await page.evaluate(() => document.querySelector(".photo-stage").textContent), /还没有留用照片/);
 const measurements = [];
 for (const width of [1280, 760]) {
   await page.cdp("Emulation.setDeviceMetricsOverride", {

@@ -146,6 +146,23 @@ function startDevelopment(args) {
     ];
   }
   const desktop = join(root, "apps/desktop");
+  if (!args.includes("--help") && !args.includes("-h")) {
+    // Vite transpiles without type-checking. Invalid named imports otherwise
+    // leave the WebView blank before React's error boundary can even mount.
+    const check = spawnSync(
+      process.execPath,
+      [
+        createRequire(join(desktop, "package.json")).resolve("typescript/bin/tsc"),
+        "-b",
+        "--pretty",
+        "false",
+      ],
+      { cwd: desktop, stdio: "inherit" },
+    );
+    if (check.error) throw check.error;
+    if (check.status !== 0)
+      throw new Error("前端类型检查失败，未启动开发应用。请先修复以上错误。");
+  }
   const windows = process.platform === "win32";
   // Windows pnpm installations expose a .cmd shim, which spawn cannot execute
   // directly. Run the installed Tauri JS entry with Node to preserve arguments

@@ -304,11 +304,11 @@ test("rating mode debounces from the latest action and honors the configured del
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
   const { controller, calls } = setup();
   const next = () => controller.step(1, ["a", "b"]);
-  controller.mark({ rating: 1, flag: "pick" }, true, next, { delayMs: 500 });
+  controller.mark({ rating: 1, flag: "pick" }, true, next, { delayMs: 500, background: true });
   await controller.settle();
   t.mock.timers.tick(400);
   assert.equal(controller.current, "a");
-  controller.mark({ rating: 2, flag: "pick" }, true, next, { delayMs: 500 });
+  controller.mark({ rating: 2, flag: "pick" }, true, next, { delayMs: 500, background: true });
   await controller.settle();
   t.mock.timers.tick(499);
   assert.equal(controller.current, "a");
@@ -316,7 +316,7 @@ test("rating mode debounces from the latest action and honors the configured del
   assert.equal(controller.current, "b");
   assert.deepEqual(calls.map(p => [p.id, p.rating]), [["a", 1], ["a", 2]]);
   controller.select("a");
-  controller.mark({ rating: 3, flag: "pick" }, true, next, { delayMs: 1500 });
+  controller.mark({ rating: 3, flag: "pick" }, true, next, { delayMs: 1500, background: true });
   await controller.settle();
   t.mock.timers.tick(1499);
   assert.equal(controller.current, "a");
@@ -325,7 +325,45 @@ test("rating mode debounces from the latest action and honors the configured del
   controller.dispose();
 });
 
-test("a slow save does not add another rating delay and interaction cancels late navigation", async (t) => {
+test("rating idle deadlines reset while saves are stalled and late saves never advance again", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+  for (const delayMs of [200, 500]) {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const { controller, calls } = setup([photo("a"), photo("b"), photo("c")], async (id, mark) => {
+      await gate;
+      return { ...photo(id), ...mark };
+    });
+    let advances = 0;
+    const next = () => { advances++; controller.step(1, ["a", "b", "c"]); };
+    const options = { delayMs, background: true };
+    controller.mark({ rating: 1, flag: "pick" }, true, next, options);
+    await Promise.resolve();
+    t.mock.timers.tick(delayMs - 1);
+    controller.mark({ rating: 2, flag: "pick" }, true, next, options);
+    t.mock.timers.tick(delayMs - 1);
+    assert.equal(controller.current, "a", "a new rating restarts the idle deadline");
+    // Repeating a rating must reset the timer even if that rating is not saved yet.
+    controller.mark({ rating: 2, flag: "pick" }, true, next, options);
+    t.mock.timers.tick(delayMs - 1);
+    assert.equal(controller.current, "a");
+    t.mock.timers.tick(1);
+    assert.equal(controller.current, "b");
+    assert.equal(controller.pending, 2, "both marks are still waiting on the remote write");
+    controller.mark({ rating: 4, flag: "pick" }, true, next, options);
+    t.mock.timers.tick(delayMs);
+    assert.equal(controller.current, "c", "the next photo can be rated while earlier writes are pending");
+    release();
+    await controller.settle();
+    t.mock.timers.tick(2000);
+    assert.equal(advances, 2, "save completion must never trigger extra navigation");
+    assert.deepEqual(calls.map(({ id, rating }) => [id, rating]), [["a", 1], ["a", 2], ["b", 4]]);
+    assert.deepEqual(controller.photos.map(p => p.rating), [2, 4, 0]);
+    controller.dispose();
+  }
+});
+
+test("manual auto-advance waits for persistence and interaction cancels late navigation", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
   let release;
   const { controller } = setup(undefined, (id, mark) => new Promise(resolve => {
@@ -358,13 +396,13 @@ test("rating mode animates each increase and decrease immediately during slow sa
     release = () => resolve({ ...photo(id), ...mark });
   }));
   const next = () => controller.select("b");
-  const options = { delayMs: 500, immediateFeedback: true };
+  const options = { delayMs: 500, background: true };
   controller.mark({ rating: 3, flag: "none" }, true, next, options);
   assert.equal(feedback.at(-1).kind, "up");
   assert.equal(feedback.at(-1).from, 2);
   await Promise.resolve();
   t.mock.timers.tick(700);
-  assert.equal(controller.current, "a", "persistence still gates navigation");
+  assert.equal(controller.current, "b", "background persistence must not gate navigation");
   release();
   await controller.settle();
   assert.equal(feedback.filter(Boolean).length, 1, "save completion must not restart animation");

@@ -1,6 +1,10 @@
 import { FloatingNotice } from "./FloatingNotice";
 import { PhotoLibraryPage } from "./PhotoLibraryPage";
-import { PhotoImportPage } from "./PhotoImportPage";
+import {
+  CardCopyPrompt,
+  CardCopyWatcher,
+  PhotoImportPage,
+} from "./PhotoImportPage";
 import { DirectoryPhotoReview } from "./DirectoryPhotoReview";
 import { reviewApi } from "./photoApi";
 import { useReviewScan } from "./useReviewScan";
@@ -41,6 +45,7 @@ import {
   type TransferJob,
   type TransferKind,
   type Volume,
+  type RemovableVolume,
 } from "./types";
 import { UploadDialog } from "./UploadDialog";
 import type { ConflictPolicy } from "./types";
@@ -88,6 +93,9 @@ export default function App() {
   const state = useBrowser();
   const client = useQueryClient();
   const [directoryReview, setDirectoryReview] = useState<string | null>(null);
+  const [cardCopyPrompt, setCardCopyPrompt] = useState<RemovableVolume | null>(
+    null,
+  );
   const [reviewPending, setReviewPending] = useState(false);
   const reviewScan = useReviewScan();
   const reviewRequest = useRef(0);
@@ -193,6 +201,9 @@ export default function App() {
   const [renamePolicy, setRenamePolicy] = useState<ConflictPolicy>("reject");
   const [readOnly, setReadOnly] = useState(false);
   const [notice, setNotice] = useState("");
+  const handleNewCard = useCallback((volume: RemovableVolume) => {
+    setCardCopyPrompt((current) => current ?? volume);
+  }, []);
   const [menu, setMenu] = useState<string | null>(null);
   const [menuPosition, setMenuPosition] = useState<{
     x: number;
@@ -1097,7 +1108,7 @@ export default function App() {
         )}
         {state.page === "photo-import" && (
           <div className="photography-page">
-            <PhotoImportPage volumes={volumes} />
+            <PhotoImportPage />
           </div>
         )}
         {state.page === "transfers" && (
@@ -1239,6 +1250,13 @@ export default function App() {
             setMenu(null);
             state.setPage("transfers");
           }}
+        />
+      )}
+      <CardCopyWatcher onNewVolume={handleNewCard} />
+      {cardCopyPrompt && (
+        <CardCopyPrompt
+          volume={cardCopyPrompt}
+          onClose={() => setCardCopyPrompt(null)}
         />
       )}
       {locationMenu && (
