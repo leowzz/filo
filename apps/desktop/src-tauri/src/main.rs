@@ -8,8 +8,8 @@ use storage_repository::Repository;
 use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
-mod credentials;
 mod card_copy;
+mod credentials;
 mod diagnostics;
 mod dropped_files;
 mod errors;
