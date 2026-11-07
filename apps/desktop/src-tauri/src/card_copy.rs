@@ -13,6 +13,7 @@ pub struct RemovableVolume {
     pub size: u64,
 }
 
+#[cfg(target_os = "windows")]
 #[derive(Clone, Debug, Deserialize)]
 struct WindowsLogicalDisk {
     #[serde(rename = "DeviceID")]
@@ -58,7 +59,10 @@ pub async fn list_removable_volumes() -> StorageResult<Vec<RemovableVolume>> {
         .map_err(|_| StorageError::new(StorageErrorCode::Internal, "读取可移动磁盘时任务中断"))?
         .map_err(|_| StorageError::new(StorageErrorCode::Io, "无法读取可移动磁盘"))?;
         if !output.status.success() {
-            return Err(StorageError::new(StorageErrorCode::Io, "无法读取可移动磁盘"));
+            return Err(StorageError::new(
+                StorageErrorCode::Io,
+                "无法读取可移动磁盘",
+            ));
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
         let trimmed = stdout.trim();
@@ -120,7 +124,10 @@ fn copy_directory(source: &Path, destination: &Path) -> StorageResult<CopyDirect
     let source = std::fs::canonicalize(source)
         .map_err(|_| StorageError::new(StorageErrorCode::AccessDenied, "无法访问源目录"))?;
     if !source.is_dir() {
-        return Err(StorageError::new(StorageErrorCode::InvalidPath, "源路径不是目录"));
+        return Err(StorageError::new(
+            StorageErrorCode::InvalidPath,
+            "源路径不是目录",
+        ));
     }
 
     let destination = if destination.exists() {
