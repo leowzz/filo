@@ -37,6 +37,13 @@ pub async fn list_removable_volumes() -> StorageResult<Vec<RemovableVolume>> {
     #[cfg(target_os = "windows")]
     {
         let output = tokio::task::spawn_blocking(|| {
+            use std::os::windows::process::CommandExt;
+
+            // The watcher calls this every two seconds. Keep the PowerShell
+            // helper in the background instead of letting Windows attach a
+            // console window to each invocation.
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+
             std::process::Command::new("powershell.exe")
                 .args([
                     "-NoProfile",
@@ -44,6 +51,7 @@ pub async fn list_removable_volumes() -> StorageResult<Vec<RemovableVolume>> {
                     "-Command",
                     r#"$items = Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=2' | Select-Object DeviceID,VolumeName,VolumeSerialNumber,FileSystem,Size; if ($items) { $items | ConvertTo-Json -Compress }"#,
                 ])
+                .creation_flags(CREATE_NO_WINDOW)
                 .output()
         })
         .await
