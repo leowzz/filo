@@ -18,6 +18,9 @@ target/
 # Test output
 coverage/
 
+# Local image-generation drafts, API responses, and previews
+/output/imagegen/
+
 # Local environment configuration (keep shareable templates)
 .env
 .env.*

@@ -14,6 +14,7 @@ import { useBrowser } from "./store";
 import { type Volume } from "./types";
 import { FavoriteFolders } from "./FavoriteFolders";
 import { isTauri } from "@tauri-apps/api/core";
+import filoIcon from "../src-tauri/icons/source.svg";
 
 const SdCard = createLucideIcon("SdCard", [
   [
@@ -77,6 +78,7 @@ export function Sidebar({
           })}
         </nav>
         <span className="sidebar-brand" data-tauri-drag-region>
+          <img src={filoIcon} alt="" width={24} height={24} draggable={false} />
           Filo
         </span>
       </div>

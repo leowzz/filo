@@ -7,6 +7,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:web": "pnpm --filter @filo/desktop dev",
     "build": "pnpm --filter @filo/desktop build",
+    "icons": "node scripts/generate-icons.mjs",
     "check": "pnpm --filter @filo/desktop check",
     "lint": "pnpm --filter @filo/desktop lint"
   }

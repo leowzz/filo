@@ -33,6 +33,16 @@
   padding-left: 9px;
   padding-right: 0;
 }
+.sidebar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.sidebar-brand img {
+  display: block;
+  pointer-events: none;
+}
 .sidebar-windows .sidebar-brand {
   order: -1;
 }
